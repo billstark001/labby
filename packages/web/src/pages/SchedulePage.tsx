@@ -18,7 +18,14 @@ import { solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan } from '@labby/core';
 import * as s from '../styles/components.css.js';
 import { Button } from '../components/ui.js';
-import { copyScheduleTable, downloadScheduleCsv, downloadScheduleHtml } from '../lib/scheduleExport.js';
+import {
+  copyScheduleTable,
+  copyScheduleHtml,
+  copyScheduleCsv,
+  downloadScheduleCsv,
+  downloadScheduleHtml,
+  downloadScheduleIcs,
+} from '../lib/scheduleExport.js';
 import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
 import { i18n } from '@/i18n.js';
 
@@ -65,7 +72,6 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
       endDate,
     });
   }
-
 
   return (
     <div>
@@ -166,7 +172,11 @@ export function SchedulePage() {
     configs[0]?.id ?? '',
   );
   const [changeDate, setChangeDate] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copiedTsv, setCopiedTsv] = useState(false);
+  const [copiedHtml, setCopiedHtml] = useState(false);
+  const [copiedCsv, setCopiedCsv] = useState(false);
+
+  const activePersonCount = persons.filter(p => !p.disabled).length;
 
   async function handleSaveConfig(c: ScheduleConfig) {
     await db.configs.put(c);
@@ -178,10 +188,9 @@ export function SchedulePage() {
 
   async function handleGenerate() {
     const config = configs.find(c => c.id === selectedConfigId);
-    if (!config || persons.length === 0) return;
+    if (!config || activePersonCount === 0) return;
     isComputingSignal.value = true;
     try {
-      // Run in a microtask to allow UI to update
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       const plan = solveFull({
         persons,
@@ -220,11 +229,34 @@ export function SchedulePage() {
 
   const personMap = personMapSignal.value;
 
-  async function handleCopySchedule() {
+  async function handleCopyTsv() {
     if (!current) return;
     await copyScheduleTable(current, personMap, displayName);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    setCopiedTsv(true);
+    window.setTimeout(() => setCopiedTsv(false), 1500);
+  }
+
+  async function handleCopyHtml() {
+    if (!current) return;
+    await copyScheduleHtml(current, personMap, displayName);
+    setCopiedHtml(true);
+    window.setTimeout(() => setCopiedHtml(false), 1500);
+  }
+
+  async function handleCopyCsv() {
+    if (!current) return;
+    await copyScheduleCsv(current, personMap, displayName);
+    setCopiedCsv(true);
+    window.setTimeout(() => setCopiedCsv(false), 1500);
+  }
+
+  function handleExportIcs() {
+    if (!current) return;
+    const config = configs.find(c => c.id === current.configId);
+    downloadScheduleIcs(current, personMap, displayName, config, {
+      presenter: t('presenter'),
+      questioners: t('questioners'),
+    });
   }
 
   async function handleDeleteHistory(plan: SchedulePlan) {
@@ -241,6 +273,8 @@ export function SchedulePage() {
     });
   }
 
+  const selectedConfig = configs.find(c => c.id === selectedConfigId);
+
   return (
     <div>
       <div class={s.toolbar}>
@@ -251,9 +285,22 @@ export function SchedulePage() {
       <div class={`${s.card} ${s.mb24}`}>
         <div class={`${s.flexBetween} ${s.mb12}`}>
           <strong>{t('configTitle')}</strong>
-          <Button variant="secondary" onClick={() => setShowConfigForm(true)}>
-            + New Config
-          </Button>
+          <div class={s.flexGapSm}>
+            {selectedConfig && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setEditingConfig(selectedConfig);
+                  setShowConfigForm(true);
+                }}
+              >
+                {t('editConfig')}
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => { setEditingConfig(null); setShowConfigForm(true); }}>
+              + {t('newConfig')}
+            </Button>
+          </div>
         </div>
 
         {configs.length === 0 ? (
@@ -286,7 +333,7 @@ export function SchedulePage() {
             setEditingConfig(null);
           }}
           closeOnOverlayClick={false}
-          title={t('configTitle')}
+          title={editingConfig ? t('editConfig') : t('newConfig')}
         >
           <ConfigForm
             initial={editingConfig ?? undefined}
@@ -299,17 +346,28 @@ export function SchedulePage() {
         </Dialog>
       )}
 
-      {/* Generate / Incremental */}
-      <div class={`${s.toolbar} ${s.mb24}`}>
+      {/* Generate / Incremental row */}
+      <div class={`${s.toolbar} ${s.mb8}`}>
         <Button
           variant="primary"
           onClick={handleGenerate}
-          disabled={isComputing || configs.length === 0 || persons.length === 0}
+          disabled={isComputing || configs.length === 0 || activePersonCount === 0}
+          title={activePersonCount === 0 ? t('notEnoughPersons') : undefined}
         >
           {isComputing ? t('computing') : t('generateSchedule')}
         </Button>
+        {activePersonCount === 0 && persons.length > 0 && (
+          <span class={`${s.text12} ${s.textDanger}`}>{t('notEnoughPersons')}</span>
+        )}
         {current && (
           <>
+            <Button
+              variant="ghost"
+              onClick={() => setChangeDate(new Date().toISOString().slice(0, 10))}
+              title={t('today')}
+            >
+              {t('today')}
+            </Button>
             <input
               class={`${s.input} ${s.autoWidthInput}`}
               type="date"
@@ -325,20 +383,31 @@ export function SchedulePage() {
             </Button>
           </>
         )}
-        {current && (
-          <>
-            <Button variant="secondary" onClick={handleCopySchedule}>
-              {copied ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}
-            </Button>
-            <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>
-              {t('exportHtml')}
-            </Button>
-            <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>
-              {t('exportCsv')}
-            </Button>
-          </>
-        )}
       </div>
+
+      {/* Copy / Export row */}
+      {current && (
+        <div class={`${s.toolbar} ${s.mb24}`}>
+          <Button variant="secondary" onClick={handleCopyTsv}>
+            {copiedTsv ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}
+          </Button>
+          <Button variant="secondary" onClick={handleCopyHtml}>
+            {copiedHtml ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}
+          </Button>
+          <Button variant="secondary" onClick={handleCopyCsv}>
+            {copiedCsv ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}
+          </Button>
+          <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>
+            {t('exportHtml')}
+          </Button>
+          <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>
+            {t('exportCsv')}
+          </Button>
+          <Button variant="secondary" onClick={handleExportIcs}>
+            {t('exportIcs')}
+          </Button>
+        </div>
+      )}
 
       {/* History sidebar */}
       {schedules.length > 0 && (
@@ -384,6 +453,10 @@ export function SchedulePage() {
               </span>
             </h3>
             <table class={s.table}>
+              <colgroup>
+                <col style={{ width: '30%' }} />
+                <col style={{ width: '70%' }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th class={s.th}>{t('presenter')}</th>

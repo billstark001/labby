@@ -154,32 +154,49 @@ function computeCost(
 // ---------------------------------------------------------------------------
 
 /**
- * Build a random valid schedule: assign presenters round-robin and
- * randomly pick questioners from the other presenters in the session plus overflow.
+ * Build a random valid schedule: assign presenters round-robin (no duplicate
+ * presenter within the same session) and randomly pick questioners.
+ *
+ * If there are fewer people than presentersPerSession, the number of
+ * presentations per session is capped at the person count, ensuring no one
+ * presents twice on the same day.  If personIds is empty the sessions are
+ * returned with empty presentations.
  */
 function buildRandomSchedule(
   personIds: string[],
   dates: string[],
   config: ScheduleConfig,
 ): Session[] {
+  if (personIds.length === 0) {
+    return dates.map(date => ({ date, presentations: [] }));
+  }
+
+  const n = personIds.length;
+  // Cap to avoid forcing the same person to present twice in one session.
+  const numPresenters = Math.min(config.presentersPerSession, n);
+
   const shuffled = [...personIds].sort(() => Math.random() - 0.5);
   const sessions: Session[] = [];
-  let personIdx = 0;
+  let startIdx = 0;
+
   for (const date of dates) {
-    const presentations: Presentation[] = [];
-    const presenters: string[] = [];
-    for (let i = 0; i < config.presentersPerSession; i++) {
-      if (personIdx >= shuffled.length) personIdx = 0;
-      presenters.push(shuffled[personIdx++]);
+    // Slice numPresenters unique people in round-robin order.
+    // Because numPresenters <= n the slice never repeats an entry.
+    const sessionPresenters: string[] = [];
+    for (let i = 0; i < numPresenters; i++) {
+      sessionPresenters.push(shuffled[(startIdx + i) % n]);
     }
-    for (const presenter of presenters) {
+    startIdx = (startIdx + numPresenters) % n;
+
+    const presentations: Presentation[] = sessionPresenters.map(presenter => {
       const pool = personIds.filter(id => id !== presenter);
       const questionerIds = sampleWithoutReplacement(
         pool,
         config.questionersPerPresenter,
       );
-      presentations.push({ presenterId: presenter, questionerIds });
-    }
+      return { presenterId: presenter, questionerIds };
+    });
+
     sessions.push({ date, presentations });
   }
   return sessions;
@@ -316,8 +333,9 @@ function hammingDistance(a: Session[], b: Session[]): number {
  */
 export function solveFull(input: SolverInput): SchedulePlan {
   const { persons, similarities, config } = input;
-  const personIds = persons.map(p => p.id);
-  const personKeywords = new Map(persons.map(p => [p.id, p.keywordIds]));
+  const activePeople = persons.filter(p => !p.disabled);
+  const personIds = activePeople.map(p => p.id);
+  const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
   const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius };
 
   const dates = generateSessionDates(config);
@@ -344,8 +362,9 @@ export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
     .filter(s => s.date >= changeDate)
     .map(s => s.date);
 
-  const personIds = persons.map(p => p.id);
-  const personKeywords = new Map(persons.map(p => [p.id, p.keywordIds]));
+  const activePeople = persons.filter(p => !p.disabled);
+  const personIds = activePeople.map(p => p.id);
+  const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
   const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius };
 
   // Reference sessions from previous plan for Hamming penalty

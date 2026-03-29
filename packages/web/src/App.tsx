@@ -86,9 +86,9 @@ export function App() {
           </button>
         ))}
         <div class={s.flex1} />
-        {/* Theme toggle */}
+        {/* Theme toggle – hidden on mobile because the topbar already has one */}
         <button
-          class={s.navIconButton}
+          class={`${s.navIconButton} ${s.hideOnMobile}`}
           onClick={toggleTheme}
           title={theme === 'light' ? t('darkMode') : t('lightMode')}
         >

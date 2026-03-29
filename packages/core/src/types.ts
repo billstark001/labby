@@ -6,11 +6,13 @@ export interface BaseEntity {
   name: string; // default display name
   names: Record<string, string>; // multilingual name map, e.g. { zh: "小明", en: "Ming" }
   metadata: Record<string, unknown>; // arbitrary extension metadata
+  disabled?: boolean; // when true, excluded from scheduling
+  notes?: string; // free-form notes
 }
 
 /** A seminar participant. */
 export interface Person extends BaseEntity {
-  keywordIds: string[]; // associated keyword IDs
+  keywordIds: string[]; // associated keyword IDs (max 10)
 }
 
 /** A research keyword / topic tag. */

@@ -238,7 +238,7 @@ export function KeywordGraph() {
       <div class={s.graphLayout}>
         <svg ref={svgRef} class={s.graphCanvas} />
         <aside class={s.graphSidebar}>
-          <div class={s.card}>
+          <div class={`${s.card} ${s.graphSidebarCard}`}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Distance Summary</h3>
             <div class={s.metricList}>
               {relationshipRows.length === 0 ? (

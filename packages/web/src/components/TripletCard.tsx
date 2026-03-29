@@ -18,17 +18,21 @@ import * as s from '../styles/components.css.js';
 import { Button } from './ui.js';
 import { i18n } from '@/i18n.js';
 
+/** Max number of recently answered pair keys to exclude from next query. */
+const RECENT_PAIR_LIMIT = 5;
+
 export function TripletCard() {
   const { t } = i18n;
   const keywords = keywordsSignal.value;
   const keywordMap = new Map(keywords.map(k => [k.id, k]));
 
   const [answered, setAnswered] = useState(0);
+  // Track recently asked pair keys to avoid immediate repetition
+  const [recentPairs, setRecentPairs] = useState<string[]>([]);
 
   function ensureEmbeddings() {
     const current = embeddingsSignal.value;
     const ids = keywords.map(k => k.id);
-    // Add missing embeddings
     let changed = false;
     const copy = cloneEmbeddings(current);
     for (const id of ids) {
@@ -43,29 +47,46 @@ export function TripletCard() {
 
   const embeddings = ensureEmbeddings();
   const ids = keywords.map(k => k.id);
-  const query = nextTripletQuery(embeddings, ids);
+  const recentPairSet = new Set(recentPairs);
+  const query = nextTripletQuery(embeddings, ids, recentPairSet);
 
-  async function handleAnswer(isPositive: boolean) {
+  /** Record the pair from this query as recently answered. */
+  function addRecentPair(q: TripletQuery) {
+    const [a, b] = [q.anchorId, q.positiveId].sort();
+    const key = `${a}|${b}`;
+    setRecentPairs(prev => {
+      const next = [key, ...prev.filter(k => k !== key)];
+      return next.slice(0, RECENT_PAIR_LIMIT);
+    });
+  }
+
+  async function handleAnswer(choice: 'positive' | 'negative' | 'equal') {
     if (!query) return;
-    const effectiveQuery: TripletQuery = isPositive
-      ? query
-      : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
 
-    const updated = cloneEmbeddings(embeddingsSignal.value);
-    applyTripletStep(updated, effectiveQuery);
-    embeddingsSignal.value = updated;
+    if (choice !== 'equal') {
+      const effectiveQuery: TripletQuery =
+        choice === 'positive'
+          ? query
+          : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
 
-    // Persist updated similarities
-    const simMap = embeddingsToSimilarities(updated);
-    await db.similarities.clear();
-    const newEdges: SimilarityEdge[] = [];
-    for (const [key, weight] of simMap) {
-      const [sourceId, targetId] = key.split('|');
-      const edge: SimilarityEdge = { sourceId, targetId, weight };
-      newEdges.push(edge);
-      await db.similarities.put(edge);
+      const updated = cloneEmbeddings(embeddingsSignal.value);
+      applyTripletStep(updated, effectiveQuery);
+      embeddingsSignal.value = updated;
+
+      // Persist updated similarities
+      const simMap = embeddingsToSimilarities(updated);
+      await db.similarities.clear();
+      const newEdges: SimilarityEdge[] = [];
+      for (const [key, weight] of simMap) {
+        const [sourceId, targetId] = key.split('|');
+        const edge: SimilarityEdge = { sourceId, targetId, weight };
+        newEdges.push(edge);
+        await db.similarities.put(edge);
+      }
+      similarityEdgesSignal.value = newEdges;
     }
-    similarityEdgesSignal.value = newEdges;
+
+    addRecentPair(query);
     setAnswered(n => n + 1);
   }
 
@@ -84,22 +105,22 @@ export function TripletCard() {
   const negative = keywordMap.get(query.negativeId);
   if (!anchor || !positive || !negative) return null;
 
-  const question = t(
-    'tripletQuestion',
-    displayName(anchor),
-    displayName(positive),
-    displayName(negative),
-  );
+  const question = t('tripletQuestion', displayName(anchor));
+  const optA = t('tripletOptionA', displayName(positive));
+  const optB = t('tripletOptionB', displayName(negative));
 
   return (
     <div class={`${s.card} ${s.mb24}`}>
       <p class={`${s.mb16} ${s.text16}`}>{question}</p>
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={() => handleAnswer(true)}>
-          {t('tripletYes')}
+        <Button variant="primary" onClick={() => handleAnswer('positive')}>
+          {optA}
         </Button>
-        <Button variant="secondary" onClick={() => handleAnswer(false)}>
-          {t('tripletNo')}
+        <Button variant="secondary" onClick={() => handleAnswer('negative')}>
+          {optB}
+        </Button>
+        <Button variant="ghost" onClick={() => handleAnswer('equal')}>
+          {t('tripletOptionEqual')}
         </Button>
       </div>
       {answered > 0 && (

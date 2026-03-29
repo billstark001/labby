@@ -5,6 +5,7 @@ import {
   personsSignal,
   keywordsSignal,
   keywordMapSignal,
+  schedulesSignal,
 } from '../store/index.js';
 import { fallbackEntityId } from '@/i18n.js';
 import { displayName } from '@/i18n.js';
@@ -14,6 +15,8 @@ import { Button } from '../components/ui.js';
 import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
 import type { Person, Keyword } from '@labby/core';
 import { i18n } from '@/i18n.js';
+
+const MAX_KEYWORDS = 10;
 
 // ---------------------------------------------------------------------------
 // PersonForm
@@ -35,13 +38,21 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>(initial?.keywordIds ?? []);
   const [newKeywordName, setNewKeywordName] = useState('');
   const [newKeywords, setNewKeywords] = useState<Keyword[]>([]);
+  const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [keywordLimitHit, setKeywordLimitHit] = useState(false);
 
   const allKeywords = [...keywords, ...newKeywords];
 
   function toggle(id: string) {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
-    );
+    setKeywordLimitHit(false);
+    setSelectedIds(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= MAX_KEYWORDS) {
+        setKeywordLimitHit(true);
+        return prev;
+      }
+      return [...prev, id];
+    });
   }
 
   function handleSave() {
@@ -52,6 +63,8 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() },
       metadata: initial?.metadata ?? {},
       keywordIds: selectedIds,
+      disabled: initial?.disabled,
+      notes: notes.trim() || undefined,
     }, newKeywords);
   }
 
@@ -61,8 +74,19 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
     const existing = allKeywords.find(keyword => keyword.name.toLowerCase() === normalized.toLowerCase());
     if (existing) {
       if (!selectedIds.includes(existing.id)) {
+        if (selectedIds.length >= MAX_KEYWORDS) {
+          setKeywordLimitHit(true);
+          setNewKeywordName('');
+          return;
+        }
         setSelectedIds(prev => [...prev, existing.id]);
       }
+      setNewKeywordName('');
+      return;
+    }
+
+    if (selectedIds.length >= MAX_KEYWORDS) {
+      setKeywordLimitHit(true);
       setNewKeywordName('');
       return;
     }
@@ -106,7 +130,12 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
         />
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>{t('keywords')}</label>
+        <label class={s.label}>
+          {t('keywords')} ({selectedIds.length}/{MAX_KEYWORDS})
+        </label>
+        {keywordLimitHit && (
+          <p class={`${s.text12} ${s.textDanger}`}>{t('keywordLimitReached')}</p>
+        )}
         <div class={s.tagList}>
           {allKeywords.map(kw => (
             <button
@@ -132,6 +161,15 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
           </Button>
         </div>
       </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('notes')}</label>
+        <textarea
+          class={s.input}
+          rows={3}
+          value={notes}
+          onInput={e => setNotes((e.target as HTMLTextAreaElement).value)}
+        />
+      </div>
       <div class={s.flexGapSm}>
         <Button variant="primary" onClick={handleSave}>
           {t('save')}
@@ -151,7 +189,19 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
 export function PersonsPage() {
   const { t } = i18n;
   const persons = personsSignal.value;
+  const schedules = schedulesSignal.value;
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
+
+  /** Check if a person is referenced in any schedule */
+  function isPersonReferenced(id: string): boolean {
+    return schedules.some(plan =>
+      plan.sessions.some(sess =>
+        sess.presentations.some(
+          p => p.presenterId === id || p.questionerIds.includes(id),
+        ),
+      ),
+    );
+  }
 
   async function handleSave(p: Person, newKeywords: Keyword[]) {
     await Promise.all(newKeywords.map(keyword => db.keywords.put(keyword)));
@@ -161,9 +211,19 @@ export function PersonsPage() {
     setEditing(null);
   }
 
-  async function handleDelete(id: string) {
-    confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
-      await db.persons.delete(id);
+  async function handleDisableToggle(p: Person) {
+    const updated: Person = { ...p, disabled: !p.disabled };
+    await db.persons.put(updated);
+    personsSignal.value = await db.persons.getAll();
+  }
+
+  async function handleDelete(p: Person) {
+    const referenced = isPersonReferenced(p.id);
+    const message = referenced
+      ? `${t('deleteReferencedWarning')}\n\n${t('deleteHistory')}`
+      : t('deleteHistory');
+    confirmDialog(t('confirmDelete'), message, async () => {
+      await db.persons.delete(p.id);
       personsSignal.value = await db.persons.getAll();
     });
   }
@@ -195,13 +255,21 @@ export function PersonsPage() {
           <tr>
             <th class={s.th}>{t('name')}</th>
             <th class={s.th}>{t('keywords')}</th>
+            <th class={s.th}>{t('notes')}</th>
             <th class={s.th}></th>
           </tr>
         </thead>
         <tbody>
           {persons.map(p => (
-            <tr key={p.id}>
-              <td class={s.td}>{displayName(p)}</td>
+            <tr key={p.id} style={{ opacity: p.disabled ? 0.5 : 1 }}>
+              <td class={s.td}>
+                <div class={s.flexGapXs}>
+                  {displayName(p)}
+                  {p.disabled && (
+                    <span class={s.badgeDisabled}>{t('disabled')}</span>
+                  )}
+                </div>
+              </td>
               <td class={s.td}>
                 <div class={s.tagList}>
                   {p.keywordIds.map(kid => {
@@ -214,12 +282,18 @@ export function PersonsPage() {
                   })}
                 </div>
               </td>
+              <td class={`${s.td} ${s.notesCell}`}>
+                {p.notes && <span class={s.textMuted}>{p.notes}</span>}
+              </td>
               <td class={s.td}>
                 <div class={s.flexGapXs}>
                   <Button variant="ghost" onClick={() => setEditing(p)}>
                     {t('edit')}
                   </Button>
-                  <Button variant="danger" onClick={() => handleDelete(p.id)}>
+                  <Button variant="ghost" onClick={() => handleDisableToggle(p)}>
+                    {p.disabled ? t('enable') : t('disable')}
+                  </Button>
+                  <Button variant="danger" onClick={() => handleDelete(p)}>
                     {t('delete')}
                   </Button>
                 </div>
