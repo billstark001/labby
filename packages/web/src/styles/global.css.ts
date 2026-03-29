@@ -56,10 +56,3 @@ globalStyle('a', {
 globalStyle('h1, h2, h3, h4, h5, h6', {
   margin: '0',
 });
-
-// Spin animation for loading indicators
-import { globalKeyframes } from '@vanilla-extract/css';
-globalKeyframes('spin', {
-  from: { transform: 'rotate(0deg)' },
-  to: { transform: 'rotate(360deg)' },
-});

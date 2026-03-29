@@ -643,7 +643,10 @@ export function SchedulePage() {
                   <MenuContent>
                     <MenuItem onSelect={() => {
                       const txt = `${new Date(p.createdAt).toLocaleString()}${p.notes ? ' — ' + p.notes : ''}`;
-                      navigator.clipboard?.writeText(txt);
+                      navigator.clipboard?.writeText(txt).then(
+                        () => toast.success(t('copyToClipboard')),
+                        () => toast.error(t('importError')),
+                      );
                     }}>
                       {t('copySchedule')}
                     </MenuItem>

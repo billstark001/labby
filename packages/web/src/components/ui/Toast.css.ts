@@ -7,6 +7,14 @@ const slideIn = keyframes({
   to: { transform: 'translateX(0)', opacity: 1 },
 });
 
+// Local spin keyframe so this module is self-contained
+const spin = keyframes({
+  from: { transform: 'rotate(0deg)' },
+  to: { transform: 'rotate(360deg)' },
+});
+
+export { spin };
+
 export const toastContainer = style({
   position: 'fixed',
   bottom: vars.space.lg,

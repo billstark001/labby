@@ -52,7 +52,7 @@ function ToastEntry({ id, message, type }: ToastItem) {
   const cls = css.toastVariants[type];
   return (
     <div class={cls} onClick={() => toast.dismiss(id)}>
-      {type === 'loading' && <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />}
+      {type === 'loading' && <Loader size={14} style={{ animation: `${css.spin} 1s linear infinite` }} />}
       <span class={css.toastMessage}>{message}</span>
       <span class={css.toastClose} aria-hidden="true"><X size={14} /></span>
     </div>

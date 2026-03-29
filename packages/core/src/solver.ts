@@ -34,14 +34,16 @@ function buildUnavailMap(
   const map = new Map<string, Set<string>>();
   for (const u of unavailabilities) {
     if (u.configId !== configId) continue;
-    const start = new Date(u.startDate + 'T00:00:00Z');
-    const end = new Date(u.endDate + 'T00:00:00Z');
-    const cur = new Date(start);
-    while (cur <= end) {
-      const dateStr = cur.toISOString().slice(0, 10);
+    // Use UTC to avoid local-timezone date skew – dates are stored as YYYY-MM-DD strings
+    const [sy, sm, sd] = u.startDate.split('-').map(Number);
+    const [ey, em, ed] = u.endDate.split('-').map(Number);
+    const start = Date.UTC(sy, sm - 1, sd);
+    const end   = Date.UTC(ey, em - 1, ed);
+    for (let t = start; t <= end; t += 86400_000) {
+      const d = new Date(t);
+      const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
       if (!map.has(dateStr)) map.set(dateStr, new Set());
       map.get(dateStr)!.add(u.personId);
-      cur.setUTCDate(cur.getUTCDate() + 1);
     }
   }
   return map;
