@@ -1,0 +1,16 @@
+{
+  "name": "labby",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Academic seminar scheduling system",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @labby/web dev",
+    "preview": "pnpm --filter @labby/web preview",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}
