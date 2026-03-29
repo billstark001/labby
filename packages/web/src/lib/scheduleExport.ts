@@ -253,5 +253,3 @@ export async function copyScheduleCsv(
   }
   throw new Error('Clipboard API not available');
 }
-
-
