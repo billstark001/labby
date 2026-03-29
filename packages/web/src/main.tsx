@@ -8,6 +8,7 @@ import {
   configsSignal,
   schedulesSignal,
   currentScheduleSignal,
+  unavailabilitiesSignal,
 } from './store/index.js';
 import { db } from './db/index.js';
 import { initEmbeddings } from '@labby/core';
@@ -18,12 +19,13 @@ import './styles/global.css.js';
 
 async function bootstrap() {
   // Load all data from IndexedDB into signals
-  const [persons, keywords, similarities, configs, schedules] = await Promise.all([
+  const [persons, keywords, similarities, configs, schedules, unavailabilities] = await Promise.all([
     db.persons.getAll(),
     db.keywords.getAll(),
     db.similarities.getAll(),
     db.configs.getAll(),
     db.schedules.getAll(),
+    db.unavailabilities.getAll(),
   ]);
 
   personsSignal.value = persons;
@@ -31,6 +33,7 @@ async function bootstrap() {
   similarityEdgesSignal.value = similarities;
   configsSignal.value = configs;
   schedulesSignal.value = schedules;
+  unavailabilitiesSignal.value = unavailabilities;
 
   // Set most-recent schedule as current
   if (schedules.length > 0) {

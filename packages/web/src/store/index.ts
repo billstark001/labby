@@ -1,5 +1,5 @@
 import { signal, computed } from '@preact/signals';
-import type { Person, Keyword, SchedulePlan, ScheduleConfig, SimilarityEdge } from '@labby/core';
+import type { Person, Keyword, SchedulePlan, ScheduleConfig, SimilarityEdge, PersonUnavailability } from '@labby/core';
 import type { EmbeddingMap } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
@@ -26,6 +26,7 @@ export const configsSignal = signal<ScheduleConfig[]>([]);
 export const schedulesSignal = signal<SchedulePlan[]>([]);
 export const currentScheduleSignal = signal<SchedulePlan | null>(null);
 export const isComputingSignal = signal(false);
+export const unavailabilitiesSignal = signal<PersonUnavailability[]>([]);
 
 /** Currently active nav section. */
 export type NavSection = 'persons' | 'keywords' | 'schedule' | 'graph' | 'settings';

@@ -226,14 +226,8 @@ export async function copyScheduleHtml(
   personMap: Map<string, Person>,
   displayName: (person: Person) => string,
 ) {
+  // Write the HTML source as plain text so it pastes as readable HTML markup
   const html = buildScheduleHtml(plan, personMap, displayName);
-  if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-    const item = new ClipboardItem({
-      'text/html': new Blob([html], { type: 'text/html' }),
-    });
-    await navigator.clipboard.write([item]);
-    return;
-  }
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(html);
     return;

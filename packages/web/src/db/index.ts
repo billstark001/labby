@@ -1,12 +1,12 @@
 /**
  * IndexedDB abstraction using the `idb` library.
- * Object stores: persons, keywords, similarities, configs, schedules.
+ * Object stores: persons, keywords, similarities, configs, schedules, unavailabilities.
  */
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Person, Keyword, SimilarityEdge, ScheduleConfig, SchedulePlan } from '@labby/core';
+import type { Person, Keyword, SimilarityEdge, ScheduleConfig, SchedulePlan, PersonUnavailability } from '@labby/core';
 
 const DB_NAME = 'labby';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface LabbyDB {
   persons: Person;
@@ -14,6 +14,7 @@ export interface LabbyDB {
   similarities: SimilarityEdge;
   configs: ScheduleConfig;
   schedules: SchedulePlan;
+  unavailabilities: PersonUnavailability;
 }
 
 let _db: IDBPDatabase | null = null;
@@ -21,23 +22,31 @@ let _db: IDBPDatabase | null = null;
 export async function getDB(): Promise<IDBPDatabase> {
   if (_db) return _db;
   _db = await openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains('persons')) {
-        db.createObjectStore('persons', { keyPath: 'id' });
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        if (!db.objectStoreNames.contains('persons')) {
+          db.createObjectStore('persons', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('keywords')) {
+          db.createObjectStore('keywords', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('similarities')) {
+          db.createObjectStore('similarities', { keyPath: ['sourceId', 'targetId'] });
+        }
+        if (!db.objectStoreNames.contains('configs')) {
+          db.createObjectStore('configs', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('schedules')) {
+          const schedStore = db.createObjectStore('schedules', { keyPath: 'id' });
+          schedStore.createIndex('createdAt', 'createdAt');
+        }
       }
-      if (!db.objectStoreNames.contains('keywords')) {
-        db.createObjectStore('keywords', { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('similarities')) {
-        // Compound key [sourceId, targetId]
-        db.createObjectStore('similarities', { keyPath: ['sourceId', 'targetId'] });
-      }
-      if (!db.objectStoreNames.contains('configs')) {
-        db.createObjectStore('configs', { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('schedules')) {
-        const schedStore = db.createObjectStore('schedules', { keyPath: 'id' });
-        schedStore.createIndex('createdAt', 'createdAt');
+      if (oldVersion < 2) {
+        if (!db.objectStoreNames.contains('unavailabilities')) {
+          const store = db.createObjectStore('unavailabilities', { keyPath: 'id' });
+          store.createIndex('configId', 'configId');
+          store.createIndex('personId', 'personId');
+        }
       }
     },
   });
@@ -100,6 +109,11 @@ export const db = {
     put: (s: SchedulePlan) => put('schedules', s),
     delete: (id: string) => del('schedules', id),
   },
+  unavailabilities: {
+    getAll: () => getAll<PersonUnavailability>('unavailabilities'),
+    put: (u: PersonUnavailability) => put('unavailabilities', u),
+    delete: (id: string) => del('unavailabilities', id),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -112,38 +126,33 @@ export interface DatabaseDump {
   similarities: SimilarityEdge[];
   configs: ScheduleConfig[];
   schedules: SchedulePlan[];
+  unavailabilities?: PersonUnavailability[];
 }
 
 export async function dumpDatabase(): Promise<DatabaseDump> {
-  const [persons, keywords, similarities, configs, schedules] = await Promise.all([
+  const [persons, keywords, similarities, configs, schedules, unavailabilities] = await Promise.all([
     db.persons.getAll(),
     db.keywords.getAll(),
     db.similarities.getAll(),
     db.configs.getAll(),
     db.schedules.getAll(),
+    db.unavailabilities.getAll(),
   ]);
-  return { persons, keywords, similarities, configs, schedules };
+  return { persons, keywords, similarities, configs, schedules, unavailabilities };
 }
 
 export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
   const dbInst = await getDB();
-  const tx = dbInst.transaction(
-    ['persons', 'keywords', 'similarities', 'configs', 'schedules'],
-    'readwrite',
-  );
-  await Promise.all([
-    tx.objectStore('persons').clear(),
-    tx.objectStore('keywords').clear(),
-    tx.objectStore('similarities').clear(),
-    tx.objectStore('configs').clear(),
-    tx.objectStore('schedules').clear(),
-  ]);
+  const storeNames = ['persons', 'keywords', 'similarities', 'configs', 'schedules', 'unavailabilities'] as const;
+  const tx = dbInst.transaction(storeNames, 'readwrite');
+  await Promise.all(storeNames.map(n => tx.objectStore(n).clear()));
   await Promise.all([
     ...dump.persons.map(p => tx.objectStore('persons').put(p)),
     ...dump.keywords.map(k => tx.objectStore('keywords').put(k)),
     ...dump.similarities.map(e => tx.objectStore('similarities').put(e)),
     ...dump.configs.map(c => tx.objectStore('configs').put(c)),
     ...dump.schedules.map(s => tx.objectStore('schedules').put(s)),
+    ...(dump.unavailabilities ?? []).map(u => tx.objectStore('unavailabilities').put(u)),
   ]);
   await tx.done;
 }

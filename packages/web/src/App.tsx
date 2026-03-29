@@ -9,6 +9,7 @@ import * as s from './styles/components.css.js';
 import { navigate, useRoute, useSyncRoute, type AppRoute } from './lib/router.js';
 import { renderRoute } from './route';
 import { ConfirmDialogComponent } from './components/ui/Dialog.js';
+import { Toaster } from './components/ui/Toast.js';
 
 const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrings }[] = [
   { key: '/schedule', icon: Calendar, labelKey: 'navSchedule' },
@@ -101,6 +102,7 @@ export function App() {
         {renderRoute(route)}
       </main>
       <ConfirmDialogComponent />
+      <Toaster />
     </div>
   );
 }

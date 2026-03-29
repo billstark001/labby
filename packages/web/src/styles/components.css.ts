@@ -597,3 +597,21 @@ export const hideOnMobile = style({
   },
 });
 
+
+// ---------------------------------------------------------------------------
+// Editable cell (manual edit mode)
+// ---------------------------------------------------------------------------
+
+export const editableCell = style({
+  cursor: 'context-menu',
+  borderRadius: vars.radius.sm,
+  transition: 'background 0.1s',
+  padding: '1px 3px',
+  selectors: {
+    '&:hover': {
+      background: `${vars.color.accent}22`,
+      outline: `1px dashed ${vars.color.accent}`,
+    },
+  },
+});
+
