@@ -11,7 +11,7 @@ import {
 } from './store/index.js';
 import { db } from './db/index.js';
 import { initEmbeddings } from '@labby/core';
-import { App } from './components/App.js';
+import { App } from './App.js';
 
 // Import vanilla-extract global styles (registers CSS via side-effects)
 import './styles/global.css.js';

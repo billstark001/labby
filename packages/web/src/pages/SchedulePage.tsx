@@ -1,24 +1,26 @@
 /** Schedule configuration form and schedule view. */
-import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
+import { Calendar, X } from 'lucide-preact';
 import {
   personsSignal,
-  keywordsSignal,
   configsSignal,
   schedulesSignal,
   currentScheduleSignal,
   similarityMapSignal,
   isComputingSignal,
   personMapSignal,
-  t,
-  displayName,
 } from '../store/index.js';
+import { fallbackEntityId } from '@/i18n.js';
+import { displayName } from '@/i18n.js';
 import { db } from '../db/index.js';
 import { solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan } from '@labby/core';
 import * as s from '../styles/components.css.js';
-import { Button } from './ui.js';
+import { Button } from '../components/ui.js';
+import { copyScheduleTable, downloadScheduleCsv, downloadScheduleHtml } from '../lib/scheduleExport.js';
+import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
+import { i18n } from '@/i18n.js';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -33,7 +35,7 @@ interface ConfigFormProps {
 }
 
 function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
-  const strings = t.value;
+  const { t } = i18n;
   const [daysStr, setDaysStr] = useState(
     initial ? initial.daysOfWeek.join(',') : '5',
   );
@@ -68,18 +70,18 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   return (
     <div>
       <div class={s.formGroup}>
-        <label class={s.label}>{strings.configDays} (0=Sun…6=Sat, comma-separated)</label>
+        <label class={s.label}>{t('configDays')} (0=Sun…6=Sat, comma-separated)</label>
         <input
           class={s.input}
           value={daysStr}
           onInput={e => setDaysStr((e.target as HTMLInputElement).value)}
         />
-        <div style={{ fontSize: '12px', color: '#64748b' }}>
+        <div class={`${s.text12} ${s.textMuted}`}>
           {DAY_NAMES.map((d, i) => `${i}=${d}`).join(' ')}
         </div>
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>{strings.configStart}</label>
+        <label class={s.label}>{t('configStart')}</label>
         <input
           class={s.input}
           type="date"
@@ -88,7 +90,7 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         />
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>{strings.configEnd}</label>
+        <label class={s.label}>{t('configEnd')}</label>
         <input
           class={s.input}
           type="date"
@@ -97,7 +99,7 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         />
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>{strings.configPresenters}</label>
+        <label class={s.label}>{t('configPresenters')}</label>
         <input
           class={s.input}
           type="number"
@@ -109,7 +111,7 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         />
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>{strings.configQuestioners}</label>
+        <label class={s.label}>{t('configQuestioners')}</label>
         <input
           class={s.input}
           type="number"
@@ -121,7 +123,7 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         />
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>{strings.configRadius}</label>
+        <label class={s.label}>{t('configRadius')}</label>
         <input
           class={s.input}
           type="number"
@@ -134,12 +136,12 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           }
         />
       </div>
-      <div style={{ display: 'flex', gap: '8px' }}>
+      <div class={s.flexGapSm}>
         <Button variant="primary" onClick={handleSave}>
-          {strings.save}
+          {t('save')}
         </Button>
         <Button variant="secondary" onClick={onCancel}>
-          {strings.cancel}
+          {t('cancel')}
         </Button>
       </div>
     </div>
@@ -150,8 +152,8 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
 // SchedulePanel
 // ---------------------------------------------------------------------------
 
-export function SchedulePanel() {
-  const strings = t.value;
+export function SchedulePage() {
+  const { t } = i18n;
   const configs = configsSignal.value;
   const persons = personsSignal.value;
   const schedules = schedulesSignal.value;
@@ -164,6 +166,7 @@ export function SchedulePanel() {
     configs[0]?.id ?? '',
   );
   const [changeDate, setChangeDate] = useState('');
+  const [copied, setCopied] = useState(false);
 
   async function handleSaveConfig(c: ScheduleConfig) {
     await db.configs.put(c);
@@ -217,30 +220,44 @@ export function SchedulePanel() {
 
   const personMap = personMapSignal.value;
 
+  async function handleCopySchedule() {
+    if (!current) return;
+    await copyScheduleTable(current, personMap, displayName);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function handleDeleteHistory(plan: SchedulePlan) {
+    confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
+      await db.schedules.delete(plan.id);
+      const next = await db.schedules.getAll();
+      schedulesSignal.value = next;
+      if (currentScheduleSignal.value?.id === plan.id) {
+        const latest = next.length > 0
+          ? next.reduce((a, b) => (a.createdAt > b.createdAt ? a : b))
+          : null;
+        currentScheduleSignal.value = latest;
+      }
+    });
+  }
+
   return (
     <div>
       <div class={s.toolbar}>
-        <h2 class={s.sectionTitle}>{strings.navSchedule}</h2>
+        <h2 class={s.sectionTitle}>{t('navSchedule')}</h2>
       </div>
 
       {/* Config section */}
-      <div class={s.card} style={{ marginBottom: '24px' }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '12px',
-          }}
-        >
-          <strong>{strings.configTitle}</strong>
+      <div class={`${s.card} ${s.mb24}`}>
+        <div class={`${s.flexBetween} ${s.mb12}`}>
+          <strong>{t('configTitle')}</strong>
           <Button variant="secondary" onClick={() => setShowConfigForm(true)}>
             + New Config
           </Button>
         </div>
 
         {configs.length === 0 ? (
-          <p style={{ color: '#64748b', fontSize: '14px' }}>
+          <p class={`${s.text14} ${s.textMuted}`}>
             No configuration yet. Create one to get started.
           </p>
         ) : (
@@ -262,45 +279,62 @@ export function SchedulePanel() {
       </div>
 
       {showConfigForm && (
-        <div class={s.modalOverlay}>
-          <div class={s.modalBox}>
-            <h3 style={{ marginBottom: '16px' }}>{strings.configTitle}</h3>
-            <ConfigForm
-              initial={editingConfig ?? undefined}
-              onSave={handleSaveConfig}
-              onCancel={() => {
-                setShowConfigForm(false);
-                setEditingConfig(null);
-              }}
-            />
-          </div>
-        </div>
+        <Dialog
+          open={true}
+          onClose={() => {
+            setShowConfigForm(false);
+            setEditingConfig(null);
+          }}
+          closeOnOverlayClick={false}
+          title={t('configTitle')}
+        >
+          <ConfigForm
+            initial={editingConfig ?? undefined}
+            onSave={handleSaveConfig}
+            onCancel={() => {
+              setShowConfigForm(false);
+              setEditingConfig(null);
+            }}
+          />
+        </Dialog>
       )}
 
       {/* Generate / Incremental */}
-      <div class={s.toolbar} style={{ marginBottom: '24px' }}>
+      <div class={`${s.toolbar} ${s.mb24}`}>
         <Button
           variant="primary"
           onClick={handleGenerate}
           disabled={isComputing || configs.length === 0 || persons.length === 0}
         >
-          {isComputing ? strings.computing : strings.generateSchedule}
+          {isComputing ? t('computing') : t('generateSchedule')}
         </Button>
         {current && (
           <>
             <input
-              class={s.input}
+              class={`${s.input} ${s.autoWidthInput}`}
               type="date"
               value={changeDate}
               onInput={e => setChangeDate((e.target as HTMLInputElement).value)}
-              style={{ width: 'auto' }}
             />
             <Button
               variant="secondary"
               onClick={handleIncremental}
               disabled={isComputing || !changeDate}
             >
-              {strings.incrementalReschedule}
+              {t('incrementalReschedule')}
+            </Button>
+          </>
+        )}
+        {current && (
+          <>
+            <Button variant="secondary" onClick={handleCopySchedule}>
+              {copied ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}
+            </Button>
+            <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>
+              {t('exportHtml')}
+            </Button>
+            <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>
+              {t('exportCsv')}
             </Button>
           </>
         )}
@@ -308,30 +342,28 @@ export function SchedulePanel() {
 
       {/* History sidebar */}
       {schedules.length > 0 && (
-        <div style={{ marginBottom: '24px' }}>
-          <strong style={{ fontSize: '14px' }}>{strings.historyTitle}</strong>
-          <div
-            style={{
-              display: 'flex',
-              gap: '8px',
-              flexWrap: 'wrap',
-              marginTop: '8px',
-            }}
-          >
+        <div class={s.mb24}>
+          <strong class={s.text14}>{t('historyTitle')}</strong>
+          <div class={`${s.flexGapSm} ${s.flexWrap} ${s.mt8}`}>
             {[...schedules]
               .sort((a, b) => b.createdAt - a.createdAt)
               .map(p => (
-                <button
-                  key={p.id}
-                  class={s.badge}
-                  style={{
-                    cursor: 'pointer',
-                    opacity: current?.id === p.id ? 1 : 0.5,
-                  }}
-                  onClick={() => (currentScheduleSignal.value = p)}
-                >
-                  {new Date(p.createdAt).toLocaleString()}
-                </button>
+                <div key={p.id} class={s.historyItem}>
+                  <button
+                    class={`${s.badgeButton} ${current?.id === p.id ? '' : s.badgeButtonDimmed}`}
+                    onClick={() => (currentScheduleSignal.value = p)}
+                  >
+                    {new Date(p.createdAt).toLocaleString()}
+                  </button>
+                  <button
+                    class={s.historyDeleteButton}
+                    onClick={() => void handleDeleteHistory(p)}
+                    title={t('delete')}
+                    aria-label={t('delete')}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               ))}
           </div>
         </div>
@@ -339,20 +371,23 @@ export function SchedulePanel() {
 
       {/* Schedule table */}
       {!current ? (
-        <div class={s.card} style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
-          {strings.noSchedule}
+        <div class={s.cardNoScheduke}>
+          {t('noSchedule')}
         </div>
       ) : (
         current.sessions.map(sess => (
-          <div key={sess.date} class={s.card} style={{ marginBottom: '16px' }}>
-            <h3 style={{ marginBottom: '12px', fontSize: '16px', fontWeight: 700 }}>
-              📅 {sess.date}
+          <div key={sess.date} class={`${s.card} ${s.mb16}`}>
+            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>
+              <span class={s.flexGapXs}>
+                <Calendar size={16} />
+                {sess.date}
+              </span>
             </h3>
             <table class={s.table}>
               <thead>
                 <tr>
-                  <th class={s.th}>{strings.presenter}</th>
-                  <th class={s.th}>{strings.questioners}</th>
+                  <th class={s.th}>{t('presenter')}</th>
+                  <th class={s.th}>{t('questioners')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -361,7 +396,7 @@ export function SchedulePanel() {
                   return (
                     <tr key={i}>
                       <td class={s.td}>
-                        {presenter ? displayName(presenter) : pres.presenterId}
+                        {presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)}
                       </td>
                       <td class={s.td}>
                         <div class={s.tagList}>
@@ -369,7 +404,7 @@ export function SchedulePanel() {
                             const q = personMap.get(qid);
                             return (
                               <span key={qid} class={s.badge}>
-                                {q ? displayName(q) : qid}
+                                {q ? displayName(q) : fallbackEntityId(qid)}
                               </span>
                             );
                           })}

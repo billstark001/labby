@@ -1,28 +1,25 @@
 /** Triplet comparison Q&A card for building keyword similarity. */
-import { h } from 'preact';
 import { useState } from 'preact/hooks';
 import {
   keywordsSignal,
   embeddingsSignal,
   similarityEdgesSignal,
-  t,
-  displayName,
 } from '../store/index.js';
+import { displayName } from '@/i18n.js';
 import { db } from '../db/index.js';
 import {
   nextTripletQuery,
   applyTripletStep,
   cloneEmbeddings,
   embeddingsToSimilarities,
-  initEmbeddings,
 } from '@labby/core';
 import type { SimilarityEdge, TripletQuery } from '@labby/core';
 import * as s from '../styles/components.css.js';
 import { Button } from './ui.js';
-import { format } from '../i18n/translations.js';
+import { i18n } from '@/i18n.js';
 
 export function TripletCard() {
-  const strings = t.value;
+  const { t } = i18n;
   const keywords = keywordsSignal.value;
   const keywordMap = new Map(keywords.map(k => [k.id, k]));
 
@@ -74,7 +71,7 @@ export function TripletCard() {
 
   if (keywords.length < 3) {
     return (
-      <div class={s.card} style={{ padding: '24px', color: '#64748b' }}>
+      <div class={`${s.card} ${s.mb24} ${s.textMuted}`}>
         Add at least 3 keywords to start similarity training.
       </div>
     );
@@ -87,26 +84,26 @@ export function TripletCard() {
   const negative = keywordMap.get(query.negativeId);
   if (!anchor || !positive || !negative) return null;
 
-  const question = format(
-    strings.tripletQuestion,
+  const question = t(
+    'tripletQuestion',
     displayName(anchor),
     displayName(positive),
     displayName(negative),
   );
 
   return (
-    <div class={s.card} style={{ marginBottom: '24px' }}>
-      <p style={{ marginBottom: '16px', fontSize: '16px' }}>{question}</p>
-      <div style={{ display: 'flex', gap: '8px' }}>
+    <div class={`${s.card} ${s.mb24}`}>
+      <p class={`${s.mb16} ${s.text16}`}>{question}</p>
+      <div class={s.flexGapSm}>
         <Button variant="primary" onClick={() => handleAnswer(true)}>
-          {strings.tripletYes}
+          {t('tripletYes')}
         </Button>
         <Button variant="secondary" onClick={() => handleAnswer(false)}>
-          {strings.tripletNo}
+          {t('tripletNo')}
         </Button>
       </div>
       {answered > 0 && (
-        <p style={{ marginTop: '8px', fontSize: '12px', color: '#64748b' }}>
+        <p class={`${s.mt16} ${s.text12} ${s.textMuted}`}>
           {answered} comparison{answered > 1 ? 's' : ''} answered this session
         </p>
       )}

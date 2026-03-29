@@ -1,14 +1,23 @@
 import { signal, computed } from '@preact/signals';
 import type { Person, Keyword, SchedulePlan, ScheduleConfig, SimilarityEdge } from '@labby/core';
-import type { Locale } from '../i18n/translations.js';
-import { translations } from '../i18n/translations.js';
 import type { EmbeddingMap } from '@labby/core';
+
+function readPersistedTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  try {
+    const raw = localStorage.getItem('theme');
+    if (raw === 'light' || raw === 'dark') return raw;
+  } catch {
+    // Ignore storage access errors.
+  }
+  return 'light';
+}
 
 // ---------------------------------------------------------------------------
 // Application state signals
 // ---------------------------------------------------------------------------
 
-export const localeSignal = signal<Locale>('en');
+export const themeSignal = signal<'light' | 'dark'>(readPersistedTheme());
 export const personsSignal = signal<Person[]>([]);
 export const keywordsSignal = signal<Keyword[]>([]);
 export const similarityEdgesSignal = signal<SimilarityEdge[]>([]);
@@ -25,9 +34,6 @@ export const navSignal = signal<NavSection>('schedule');
 // ---------------------------------------------------------------------------
 // Derived state
 // ---------------------------------------------------------------------------
-
-/** UI string dictionary for the current locale. */
-export const t = computed(() => translations[localeSignal.value]);
 
 /** Person lookup map by ID. */
 export const personMapSignal = computed(() => {
@@ -68,10 +74,3 @@ export const presentationCountSignal = computed(() => {
   }
   return counts;
 });
-
-/** Get localised display name for any entity. */
-export function displayName(
-  entity: { name: string; names: Record<string, string> },
-): string {
-  return entity.names[localeSignal.value] ?? entity.name;
-}

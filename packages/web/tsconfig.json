@@ -1,17 +1,4 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "strict": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "preact",
-    "skipLibCheck": true,
-    "noEmit": true,
-    "paths": {
-      "@labby/core": ["../core/src/index.ts"]
-    }
-  },
+  "extends": "./tsconfig.app.json",
   "include": ["src"]
 }

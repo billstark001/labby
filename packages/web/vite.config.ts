@@ -7,6 +7,7 @@ export default defineConfig({
   plugins: [preact(), vanillaExtractPlugin()],
   resolve: {
     alias: {
+      '@': resolve(__dirname, './src'),
       '@labby/core': resolve(__dirname, '../core/src/index.ts'),
     },
   },
@@ -15,4 +16,10 @@ export default defineConfig({
     target: 'es2022',
   },
   base: './',
+  server: {
+    port: 4400, // Set your desired port here
+  },
+  preview: {
+    port: 4401, // Set the port for the production preview server
+  }
 });

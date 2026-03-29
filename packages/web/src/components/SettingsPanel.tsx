@@ -1,35 +1,34 @@
 /** Settings panel: language and config management. */
-import { h } from 'preact';
-import { localeSignal, t } from '../store/index.js';
-import type { Locale } from '../i18n/translations.js';
+import { i18n } from '../i18n.js';
+import type { Locale } from '../i18n.js';
 import * as s from '../styles/components.css.js';
 
 export function SettingsPanel() {
-  const strings = t.value;
-  const locales: Locale[] = ['en', 'zh', 'ja'];
+  const { t, lang, setLang } = i18n.useTranslation();
+  const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];
   const localeLabels: Record<Locale, string> = {
     en: 'English',
-    zh: '中文',
-    ja: '日本語',
+    'zh-CN': '中文',
+    'ja-JP': '日本語',
   };
 
   return (
     <div>
-      <h2 class={s.sectionTitle}>{strings.settingsTitle}</h2>
+      <h2 class={s.sectionTitle}>{t('settingsTitle')}</h2>
 
       <div class={s.card}>
         <div class={s.formGroup}>
-          <label class={s.label}>{strings.languageLabel}</label>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <label class={s.label}>{t('languageLabel')}</label>
+          <div class={s.flexGapSm}>
             {locales.map(locale => (
               <button
                 key={locale}
                 class={
-                  localeSignal.value === locale
+                  lang === locale
                     ? s.btnVariants.primary
                     : s.btnVariants.secondary
                 }
-                onClick={() => (localeSignal.value = locale)}
+                onClick={() => setLang(locale)}
               >
                 {localeLabels[locale]}
               </button>
