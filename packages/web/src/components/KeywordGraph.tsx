@@ -112,6 +112,9 @@ export function KeywordGraph() {
         );
       });
 
+    // SVG title elements provide native tooltips
+    node.append('title').text(d => d.label);
+
     const label = g
       .append('g')
       .selectAll('text')
@@ -217,8 +220,8 @@ export function KeywordGraph() {
           <h2 class={s.sectionTitle}>{t('navGraph')}</h2>
           <p class={s.mutedParagraph}>
             {selected.length > 0
-              ? `${selected.length} selected. Links and side metrics now reflect actual similarity distance.`
-              : 'Select keywords to inspect pairwise distance and adjust the embedding without rebuilding the graph.'}
+              ? t('graphSelected', String(selected.length))
+              : t('graphHint')}
           </p>
         </div>
         {selected.length >= 2 && (
@@ -238,11 +241,11 @@ export function KeywordGraph() {
       <div class={s.graphLayout}>
         <svg ref={svgRef} class={s.graphCanvas} />
         <aside class={s.graphSidebar}>
-          <div class={s.card}>
-            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Distance Summary</h3>
+          <div class={`${s.card} ${s.graphSidebarCard}`}>
+            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>{t('distanceSummary')}</h3>
             <div class={s.metricList}>
               {relationshipRows.length === 0 ? (
-                <p class={s.mutedParagraph}>No relationship data yet.</p>
+                <p class={s.mutedParagraph}>{t('noRelationshipData')}</p>
               ) : (
                 relationshipRows.map(row => (
                   <div key={row.id} class={s.metricRow}>

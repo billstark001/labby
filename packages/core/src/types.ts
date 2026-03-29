@@ -6,11 +6,13 @@ export interface BaseEntity {
   name: string; // default display name
   names: Record<string, string>; // multilingual name map, e.g. { zh: "小明", en: "Ming" }
   metadata: Record<string, unknown>; // arbitrary extension metadata
+  disabled?: boolean; // when true, excluded from scheduling
+  notes?: string; // free-form notes
 }
 
 /** A seminar participant. */
 export interface Person extends BaseEntity {
-  keywordIds: string[]; // associated keyword IDs
+  keywordIds: string[]; // associated keyword IDs (max 10)
 }
 
 /** A research keyword / topic tag. */
@@ -43,6 +45,16 @@ export interface SchedulePlan {
   createdAt: number; // epoch ms – used for timeline history
   configId: string;
   sessions: Session[];
+  notes?: string; // user-written notes for this history entry
+}
+
+/** A period when a person is unavailable (cannot present or question). */
+export interface PersonUnavailability {
+  id: string;
+  personId: string;
+  configId: string;
+  startDate: string; // ISO date
+  endDate: string;   // ISO date (inclusive)
 }
 
 /** One seminar session on a calendar date. */
@@ -63,6 +75,8 @@ export interface SolverInput {
   /** Flat similarity map: key = `${sourceId}|${targetId}`, value = weight */
   similarities: Map<string, number>;
   config: ScheduleConfig;
+  /** Optional: persons unavailable on certain date ranges */
+  unavailabilities?: PersonUnavailability[];
 }
 
 /** Input bundle for the incremental solver. */

@@ -539,3 +539,79 @@ export const cardNoScheduke = style([
   },
 ]);
 
+// ---------------------------------------------------------------------------
+// Graph sidebar card with max-height matching the canvas
+// ---------------------------------------------------------------------------
+
+export const graphSidebarCard = style([
+  card,
+  {
+    maxHeight: '500px',
+    overflowY: 'auto',
+  },
+]);
+
+// ---------------------------------------------------------------------------
+// Disabled badge
+// ---------------------------------------------------------------------------
+
+export const badgeDisabled = style({
+  display: 'inline-block',
+  padding: `2px ${vars.space.sm}`,
+  borderRadius: vars.radius.full,
+  fontSize: vars.font.size.xs,
+  fontWeight: vars.font.weight.medium,
+  background: `${vars.color.textMuted}28`,
+  color: vars.color.textMuted,
+});
+
+// ---------------------------------------------------------------------------
+// Notes cell
+// ---------------------------------------------------------------------------
+
+export const notesCell = style({
+  maxWidth: '200px',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  fontSize: vars.font.size.xs,
+});
+
+// ---------------------------------------------------------------------------
+// Danger text
+// ---------------------------------------------------------------------------
+
+export const textDanger = style({
+  color: vars.color.danger,
+});
+
+// ---------------------------------------------------------------------------
+// Hide on mobile
+// ---------------------------------------------------------------------------
+
+export const hideOnMobile = style({
+  '@media': {
+    [`(max-width: ${breakpoints.tablet})`]: {
+      display: 'none',
+    },
+  },
+});
+
+
+// ---------------------------------------------------------------------------
+// Editable cell (manual edit mode)
+// ---------------------------------------------------------------------------
+
+export const editableCell = style({
+  cursor: 'context-menu',
+  borderRadius: vars.radius.sm,
+  transition: 'background 0.1s',
+  padding: '1px 3px',
+  selectors: {
+    '&:hover': {
+      background: `${vars.color.accent}22`,
+      outline: `1px dashed ${vars.color.accent}`,
+    },
+  },
+});
+

@@ -1,7 +1,7 @@
 /** Keyword management panel. */
 import { useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import { keywordsSignal } from '../store/index.js';
+import { keywordsSignal, personsSignal } from '../store/index.js';
 import { displayName } from '@/i18n.js';
 import { db } from '../db/index.js';
 import * as s from '../styles/components.css.js';
@@ -21,6 +21,7 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
   const [nameEn, setNameEn] = useState(initial?.names?.['en'] ?? initial?.name ?? '');
   const [nameZh, setNameZh] = useState(initial?.names?.['zh'] ?? '');
   const [nameJa, setNameJa] = useState(initial?.names?.['ja'] ?? '');
+  const [notes, setNotes] = useState(initial?.notes ?? '');
 
   function handleSave() {
     if (!nameEn.trim()) return;
@@ -29,6 +30,8 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
       name: nameEn.trim(),
       names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() },
       metadata: initial?.metadata ?? {},
+      disabled: initial?.disabled,
+      notes: notes.trim() || undefined,
     });
   }
 
@@ -58,6 +61,15 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
           onInput={e => setNameJa((e.target as HTMLInputElement).value)}
         />
       </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('notes')}</label>
+        <textarea
+          class={s.input}
+          rows={3}
+          value={notes}
+          onInput={e => setNotes((e.target as HTMLTextAreaElement).value)}
+        />
+      </div>
       <div class={s.flexGapSm}>
         <Button variant="primary" onClick={handleSave}>
           {t('save')}
@@ -73,7 +85,13 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
 export function KeywordList() {
   const { t } = i18n;
   const keywords = keywordsSignal.value;
+  const persons = personsSignal.value;
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
+
+  /** Check if a keyword is referenced by any person */
+  function isKeywordReferenced(id: string): boolean {
+    return persons.some(p => p.keywordIds.includes(id));
+  }
 
   async function handleSave(k: Keyword) {
     await db.keywords.put(k);
@@ -81,9 +99,19 @@ export function KeywordList() {
     setEditing(null);
   }
 
-  async function handleDelete(id: string) {
-    confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
-      await db.keywords.delete(id);
+  async function handleDisableToggle(k: Keyword) {
+    const updated: Keyword = { ...k, disabled: !k.disabled };
+    await db.keywords.put(updated);
+    keywordsSignal.value = await db.keywords.getAll();
+  }
+
+  async function handleDelete(k: Keyword) {
+    const referenced = isKeywordReferenced(k.id);
+    const message = referenced
+      ? `${t('deleteReferencedWarning')}\n\n${t('deleteHistory')}`
+      : t('deleteHistory');
+    confirmDialog(t('confirmDelete'), message, async () => {
+      await db.keywords.delete(k.id);
       keywordsSignal.value = await db.keywords.getAll();
     });
   }
@@ -114,19 +142,33 @@ export function KeywordList() {
         <thead>
           <tr>
             <th class={s.th}>{t('name')}</th>
+            <th class={s.th}>{t('notes')}</th>
             <th class={s.th}></th>
           </tr>
         </thead>
         <tbody>
           {keywords.map(kw => (
-            <tr key={kw.id}>
-              <td class={s.td}>{displayName(kw)}</td>
+            <tr key={kw.id} style={{ opacity: kw.disabled ? 0.5 : 1 }}>
+              <td class={s.td}>
+                <div class={s.flexGapXs}>
+                  {displayName(kw)}
+                  {kw.disabled && (
+                    <span class={s.badgeDisabled}>{t('disabled')}</span>
+                  )}
+                </div>
+              </td>
+              <td class={`${s.td} ${s.notesCell}`}>
+                {kw.notes && <span class={s.textMuted}>{kw.notes}</span>}
+              </td>
               <td class={s.td}>
                 <div class={s.flexGapXs}>
                   <Button variant="ghost" onClick={() => setEditing(kw)}>
                     {t('edit')}
                   </Button>
-                  <Button variant="danger" onClick={() => handleDelete(kw.id)}>
+                  <Button variant="ghost" onClick={() => handleDisableToggle(kw)}>
+                    {kw.disabled ? t('enable') : t('disable')}
+                  </Button>
+                  <Button variant="danger" onClick={() => handleDelete(kw)}>
                     {t('delete')}
                   </Button>
                 </div>

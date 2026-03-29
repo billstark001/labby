@@ -16,11 +16,38 @@ import type {
   SolverInput,
   IncrementalSolverInput,
   ScheduleConfig,
+  PersonUnavailability,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a lookup: date → Set of unavailable personIds.
+ * Only includes unavailabilities for the given configId.
+ */
+function buildUnavailMap(
+  unavailabilities: PersonUnavailability[],
+  configId: string,
+): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const u of unavailabilities) {
+    if (u.configId !== configId) continue;
+    // Use UTC to avoid local-timezone date skew – dates are stored as YYYY-MM-DD strings
+    const [sy, sm, sd] = u.startDate.split('-').map(Number);
+    const [ey, em, ed] = u.endDate.split('-').map(Number);
+    const start = Date.UTC(sy, sm - 1, sd);
+    const end   = Date.UTC(ey, em - 1, ed);
+    for (let t = start; t <= end; t += 86400_000) {
+      const d = new Date(t);
+      const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      if (!map.has(dateStr)) map.set(dateStr, new Set());
+      map.get(dateStr)!.add(u.personId);
+    }
+  }
+  return map;
+}
 
 /** Generate a UUID-like string (not cryptographically strong, sufficient for IDs). */
 export function generateId(): string {
@@ -154,32 +181,65 @@ function computeCost(
 // ---------------------------------------------------------------------------
 
 /**
- * Build a random valid schedule: assign presenters round-robin and
- * randomly pick questioners from the other presenters in the session plus overflow.
+ * Build a random valid schedule: assign presenters round-robin (no duplicate
+ * presenter within the same session) and randomly pick questioners.
+ *
+ * If there are fewer people than presentersPerSession, the number of
+ * presentations per session is capped at the person count, ensuring no one
+ * presents twice on the same day.  If personIds is empty the sessions are
+ * returned with empty presentations.
  */
 function buildRandomSchedule(
   personIds: string[],
   dates: string[],
   config: ScheduleConfig,
+  unavailMap: Map<string, Set<string>> = new Map(),
 ): Session[] {
+  if (personIds.length === 0) {
+    return dates.map(date => ({ date, presentations: [] }));
+  }
+
+  const n = personIds.length;
+  // Cap to avoid forcing the same person to present twice in one session.
+  const numPresenters = Math.min(config.presentersPerSession, n);
+
   const shuffled = [...personIds].sort(() => Math.random() - 0.5);
   const sessions: Session[] = [];
-  let personIdx = 0;
+  let startIdx = 0;
+
   for (const date of dates) {
-    const presentations: Presentation[] = [];
-    const presenters: string[] = [];
-    for (let i = 0; i < config.presentersPerSession; i++) {
-      if (personIdx >= shuffled.length) personIdx = 0;
-      presenters.push(shuffled[personIdx++]);
+    const unavail = unavailMap.get(date) ?? new Set<string>();
+    const availableIds = personIds.filter(id => !unavail.has(id));
+    const numPres = Math.min(numPresenters, availableIds.length);
+
+    if (numPres === 0) {
+      sessions.push({ date, presentations: [] });
+      startIdx = (startIdx + numPresenters) % n;
+      continue;
     }
-    for (const presenter of presenters) {
-      const pool = personIds.filter(id => id !== presenter);
+
+    // Build session presenters from available pool in round-robin order
+    const sessionPresenters: string[] = [];
+    const availSet = new Set(availableIds);
+    let attempts = 0;
+    while (sessionPresenters.length < numPres && attempts < n * 2) {
+      const candidate = shuffled[(startIdx + sessionPresenters.length + attempts) % n];
+      if (availSet.has(candidate) && !sessionPresenters.includes(candidate)) {
+        sessionPresenters.push(candidate);
+      }
+      attempts++;
+    }
+    startIdx = (startIdx + numPresenters) % n;
+
+    const presentations: Presentation[] = sessionPresenters.map(presenter => {
+      const pool = availableIds.filter(id => id !== presenter);
       const questionerIds = sampleWithoutReplacement(
         pool,
         config.questionersPerPresenter,
       );
-      presentations.push({ presenterId: presenter, questionerIds });
-    }
+      return { presenterId: presenter, questionerIds };
+    });
+
     sessions.push({ date, presentations });
   }
   return sessions;
@@ -208,6 +268,7 @@ function simulatedAnnealing(
   config: ScheduleConfig,
   hammingRef: Session[] | null,
   hammingWeight: number,
+  unavailMap: Map<string, Set<string>> = new Map(),
   maxIter = 5000,
 ): Session[] {
   let current = deepCloneSessions(initial);
@@ -223,7 +284,7 @@ function simulatedAnnealing(
 
   for (let iter = 0; iter < maxIter; iter++) {
     const temperature = 1.0 * Math.pow(0.995, iter);
-    const neighbor = mutate(current, personIds, config);
+    const neighbor = mutate(current, personIds, config, unavailMap);
     let neighborCost = computeCost(neighbor, ctx, historicalSessions);
     if (hammingRef) neighborCost += hammingWeight * hammingDistance(neighbor, hammingRef);
 
@@ -248,12 +309,13 @@ function mutate(
   sessions: Session[],
   personIds: string[],
   config: ScheduleConfig,
+  unavailMap: Map<string, Set<string>> = new Map(),
 ): Session[] {
   const clone = deepCloneSessions(sessions);
   if (clone.length === 0) return clone;
 
   if (Math.random() < 0.5) {
-    // Swap two presenters across two random sessions
+    // Swap two presenters across two random sessions if both are available
     const i = Math.floor(Math.random() * clone.length);
     const j = Math.floor(Math.random() * clone.length);
     const si = clone[i];
@@ -261,9 +323,13 @@ function mutate(
     if (si.presentations.length === 0 || sj.presentations.length === 0) return clone;
     const pi = Math.floor(Math.random() * si.presentations.length);
     const pj = Math.floor(Math.random() * sj.presentations.length);
-    const tmp = si.presentations[pi].presenterId;
-    si.presentations[pi].presenterId = sj.presentations[pj].presenterId;
-    sj.presentations[pj].presenterId = tmp;
+    const candidateA = sj.presentations[pj].presenterId;
+    const candidateB = si.presentations[pi].presenterId;
+    const unavailI = unavailMap.get(si.date) ?? new Set<string>();
+    const unavailJ = unavailMap.get(sj.date) ?? new Set<string>();
+    if (unavailI.has(candidateA) || unavailJ.has(candidateB)) return clone;
+    si.presentations[pi].presenterId = candidateA;
+    sj.presentations[pj].presenterId = candidateB;
   } else {
     // Reassign questioners for a random presentation
     const si = Math.floor(Math.random() * clone.length);
@@ -271,7 +337,8 @@ function mutate(
     if (sess.presentations.length === 0) return clone;
     const pi = Math.floor(Math.random() * sess.presentations.length);
     const pres = sess.presentations[pi];
-    const pool = personIds.filter(id => id !== pres.presenterId);
+    const unavail = unavailMap.get(sess.date) ?? new Set<string>();
+    const pool = personIds.filter(id => id !== pres.presenterId && !unavail.has(id));
     pres.questionerIds = sampleWithoutReplacement(pool, config.questionersPerPresenter);
   }
   return clone;
@@ -315,14 +382,16 @@ function hammingDistance(a: Session[], b: Session[]): number {
  * Full solver: generate a schedule from scratch.
  */
 export function solveFull(input: SolverInput): SchedulePlan {
-  const { persons, similarities, config } = input;
-  const personIds = persons.map(p => p.id);
-  const personKeywords = new Map(persons.map(p => [p.id, p.keywordIds]));
+  const { persons, similarities, config, unavailabilities = [] } = input;
+  const activePeople = persons.filter(p => !p.disabled);
+  const personIds = activePeople.map(p => p.id);
+  const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
   const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius };
 
   const dates = generateSessionDates(config);
-  const initial = buildRandomSchedule(personIds, dates, config);
-  const optimised = simulatedAnnealing(initial, ctx, [], config, null, 0);
+  const unavailMap = buildUnavailMap(unavailabilities, config.id);
+  const initial = buildRandomSchedule(personIds, dates, config, unavailMap);
+  const optimised = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap);
 
   return {
     id: generateId(),
@@ -337,28 +406,31 @@ export function solveFull(input: SolverInput): SchedulePlan {
  * minimising divergence from the previous plan.
  */
 export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
-  const { persons, similarities, config, previousPlan, changeDate } = input;
+  const { persons, similarities, config, previousPlan, changeDate, unavailabilities = [] } = input;
 
   const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
   const mutableDates = previousPlan.sessions
     .filter(s => s.date >= changeDate)
     .map(s => s.date);
 
-  const personIds = persons.map(p => p.id);
-  const personKeywords = new Map(persons.map(p => [p.id, p.keywordIds]));
+  const activePeople = persons.filter(p => !p.disabled);
+  const personIds = activePeople.map(p => p.id);
+  const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
   const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius };
 
   // Reference sessions from previous plan for Hamming penalty
   const hammingRef = previousPlan.sessions.filter(s => s.date >= changeDate);
+  const unavailMap = buildUnavailMap(unavailabilities, config.id);
 
-  const initial = buildRandomSchedule(personIds, mutableDates, config);
+  const initial = buildRandomSchedule(personIds, mutableDates, config, unavailMap);
   const optimised = simulatedAnnealing(
     initial,
     ctx,
     frozenSessions,
     config,
     hammingRef,
-    3, // hamming weight
+    10, // increased Hamming weight for minimal churn
+    unavailMap,
   );
 
   return {

@@ -176,21 +176,36 @@ export function cloneEmbeddings(map: EmbeddingMap): EmbeddingMap {
  * Generate the next triplet query for the user to answer.
  * Picks the pair with the most uncertain similarity (closest to 0.5)
  * as the anchor–positive pair, then picks a random negative.
+ *
+ * @param recentPairs - optional set of pair keys (`"idA|idB"`, sorted) to skip,
+ *   so the same question is not immediately repeated.
  */
 export function nextTripletQuery(
   embeddings: EmbeddingMap,
   keywordIds: string[],
+  recentPairs?: Set<string>,
 ): TripletQuery | null {
   if (keywordIds.length < 3) return null;
   const similarities = embeddingsToSimilarities(embeddings);
-  // Find the pair closest to similarity = 0.5 (most uncertain)
+  // Find the pair closest to similarity = 0.5 (most uncertain), skipping recent ones.
   let bestKey = '';
   let bestDiff = Infinity;
   for (const [key, sim] of similarities) {
+    if (recentPairs?.has(key)) continue;
     const diff = Math.abs(sim - 0.5);
     if (diff < bestDiff) {
       bestDiff = diff;
       bestKey = key;
+    }
+  }
+  // Fall back to any pair if all were excluded
+  if (!bestKey) {
+    for (const [key, sim] of similarities) {
+      const diff = Math.abs(sim - 0.5);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestKey = key;
+      }
     }
   }
   if (!bestKey) return null;

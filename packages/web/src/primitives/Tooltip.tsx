@@ -16,6 +16,8 @@ interface TooltipProps {
   content: string;
   children: ComponentChildren;
   side?: Side;
+  /** Optional custom render function for the tooltip content. */
+  renderContent?: (content: string) => ComponentChildren;
 }
 
 const sideStyle: Record<Side, CSSProperties> = {
@@ -25,7 +27,7 @@ const sideStyle: Record<Side, CSSProperties> = {
   right:  { left:  'calc(100% + 6px)', top: '50%',  transform: 'translateY(-50%)' },
 };
 
-export function Tooltip({ content, children, side = 'top' }: TooltipProps) {
+export function Tooltip({ content, children, side = 'top', renderContent }: TooltipProps) {
   const [visible, setVisible] = useState(false);
 
   return (
@@ -47,9 +49,10 @@ export function Tooltip({ content, children, side = 'top' }: TooltipProps) {
             zIndex: 800,
           }}
         >
-          {content}
+          {renderContent ? renderContent(content) : content}
         </div>
       )}
     </div>
   );
 }
+
