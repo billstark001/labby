@@ -1,6 +1,7 @@
 export type ErrorCode =
   | "AUTH_INVALID"
   | "AUTH_EXPIRED"
+  | "VALIDATION_ERROR"
   | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
