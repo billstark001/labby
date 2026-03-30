@@ -1,6 +1,6 @@
 /** Dialog component styles. */
 import { style } from '@vanilla-extract/css';
-import { vars } from '../../styles/theme.css.js';
+import { breakpoints, vars } from '../../styles/theme.css.js';
 
 export const dialogOverlay = style({
   position: 'fixed',
@@ -29,6 +29,11 @@ export const dialogContent = style({
   boxShadow: vars.shadow.lg,
   outline: 'none',
   zIndex: 1001,
+  '@media': {
+    [`(max-width: ${breakpoints.tablet})`]: {
+      padding: vars.space.md,
+    },
+  },
 });
 
 export const dialogTitle = style({

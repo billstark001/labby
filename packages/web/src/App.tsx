@@ -10,12 +10,13 @@ import { navigate, useRoute, useSyncRoute, type AppRoute } from './lib/router.js
 import { renderRoute } from './route';
 import { ConfirmDialogComponent } from './components/ui/Dialog.js';
 import { Toaster } from './components/ui/Toast.js';
+import clsx from 'clsx';
 
 const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrings }[] = [
   { key: '/schedule', icon: Calendar, labelKey: 'navSchedule' },
   { key: '/persons', icon: Users, labelKey: 'navPersons' },
   { key: '/keywords', icon: Tags, labelKey: 'navKeywords' },
-  { key: '/graph', icon: GitBranch, labelKey: 'navGraph' },
+  // { key: '/graph', icon: GitBranch, labelKey: 'navGraph' },
   { key: '/settings', icon: Settings, labelKey: 'navSettings' },
 ];
 
@@ -89,7 +90,7 @@ export function App() {
         <div class={s.flex1} />
         {/* Theme toggle – hidden on mobile because the topbar already has one */}
         <button
-          class={`${s.navIconButton} ${s.hideOnMobile}`}
+          class={clsx(s.navIconButtonDesktop, s.hideOnMobile)}
           onClick={toggleTheme}
           title={theme === 'light' ? t('darkMode') : t('lightMode')}
         >

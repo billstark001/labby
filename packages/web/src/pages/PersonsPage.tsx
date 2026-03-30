@@ -9,9 +9,14 @@ import {
 } from '../store/index.js';
 import { fallbackEntityId } from '@/i18n.js';
 import { displayName } from '@/i18n.js';
-import { db } from '../db/index.js';
+import { useDatabase } from '../db/index.js';
 import * as s from '../styles/components.css.js';
-import { Button } from '../components/ui.js';
+import {
+  Button,
+  ResponsiveDataField,
+  ResponsiveDataView,
+  responsiveDataStyles as dataStyles,
+} from '../components/ui.js';
 import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
 import type { Person, Keyword } from '@labby/core';
 import { i18n } from '@/i18n.js';
@@ -187,6 +192,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
 // ---------------------------------------------------------------------------
 
 export function PersonsPage() {
+  const db = useDatabase();
   const { t } = i18n;
   const persons = personsSignal.value;
   const schedules = schedulesSignal.value;
@@ -250,58 +256,91 @@ export function PersonsPage() {
         </Dialog>
       )}
 
-      <table class={s.table}>
-        <thead>
-          <tr>
-            <th class={s.th}>{t('name')}</th>
-            <th class={s.th}>{t('keywords')}</th>
-            <th class={s.th}>{t('notes')}</th>
-            <th class={s.th}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {persons.map(p => (
-            <tr key={p.id} style={{ opacity: p.disabled ? 0.5 : 1 }}>
-              <td class={s.td}>
-                <div class={s.flexGapXs}>
-                  {displayName(p)}
-                  {p.disabled && (
+      <ResponsiveDataView
+        items={persons}
+        columns={[
+          { header: t('name') },
+          { header: t('keywords') },
+          { header: t('notes') },
+        ]}
+        getKey={person => person.id}
+        getDesktopRowProps={person => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
+        getMobileCardProps={person => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
+        renderDesktopRow={person => (
+          <>
+            <td class={s.td}>
+              <div class={s.flexGapXs}>
+                {displayName(person)}
+                {person.disabled && (
+                  <span class={s.badgeDisabled}>{t('disabled')}</span>
+                )}
+              </div>
+            </td>
+            <td class={s.td}>
+              <div class={s.tagList}>
+                {person.keywordIds.map(kid => {
+                  const kw = keywordMapSignal.value.get(kid);
+                  return (
+                    <span key={kid} class={s.badge}>
+                      {kw ? displayName(kw) : fallbackEntityId(kid)}
+                    </span>
+                  );
+                })}
+              </div>
+            </td>
+            <td class={`${s.td} ${s.notesCell}`}>
+              {person.notes && <span class={s.textMuted}>{person.notes}</span>}
+            </td>
+          </>
+        )}
+        renderMobileCard={person => (
+          <>
+            <div class={dataStyles.mobileHeader}>
+              <div>
+                <div class={dataStyles.mobileTitle}>{displayName(person)}</div>
+                {person.disabled && (
+                  <div class={dataStyles.mobileSubtitle}>
                     <span class={s.badgeDisabled}>{t('disabled')}</span>
-                  )}
-                </div>
-              </td>
-              <td class={s.td}>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div class={dataStyles.mobileFields}>
+              <ResponsiveDataField label={t('keywords')}>
                 <div class={s.tagList}>
-                  {p.keywordIds.map(kid => {
-                    const kw = keywordMapSignal.value.get(kid);
-                    return (
-                      <span key={kid} class={s.badge}>
-                        {kw ? displayName(kw) : fallbackEntityId(kid)}
-                      </span>
-                    );
-                  })}
+                  {person.keywordIds.length > 0
+                    ? person.keywordIds.map(kid => {
+                      const kw = keywordMapSignal.value.get(kid);
+                      return (
+                        <span key={kid} class={s.badge}>
+                          {kw ? displayName(kw) : fallbackEntityId(kid)}
+                        </span>
+                      );
+                    })
+                    : '—'}
                 </div>
-              </td>
-              <td class={`${s.td} ${s.notesCell}`}>
-                {p.notes && <span class={s.textMuted}>{p.notes}</span>}
-              </td>
-              <td class={s.td}>
-                <div class={s.flexGapXs}>
-                  <Button variant="ghost" onClick={() => setEditing(p)}>
-                    {t('edit')}
-                  </Button>
-                  <Button variant="ghost" onClick={() => handleDisableToggle(p)}>
-                    {p.disabled ? t('enable') : t('disable')}
-                  </Button>
-                  <Button variant="danger" onClick={() => handleDelete(p)}>
-                    {t('delete')}
-                  </Button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </ResponsiveDataField>
+              <ResponsiveDataField label={t('notes')} valueClass={s.notesCell}>
+                {person.notes ? <span class={s.textMuted}>{person.notes}</span> : '—'}
+              </ResponsiveDataField>
+            </div>
+          </>
+        )}
+        renderActions={person => (
+          <>
+
+            <Button variant="ghost" onClick={() => setEditing(person)}>
+              {t('edit')}
+            </Button>
+            <Button variant="ghost" onClick={() => handleDisableToggle(person)}>
+              {person.disabled ? t('enable') : t('disable')}
+            </Button>
+            <Button variant="danger" onClick={() => handleDelete(person)}>
+              {t('delete')}
+            </Button>
+          </>
+        )}
+      />
     </div>
   );
 }

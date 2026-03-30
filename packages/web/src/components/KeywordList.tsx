@@ -3,9 +3,14 @@ import { useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import { keywordsSignal, personsSignal } from '../store/index.js';
 import { displayName } from '@/i18n.js';
-import { db } from '../db/index.js';
+import { useDatabase } from '../db/index.js';
 import * as s from '../styles/components.css.js';
-import { Button } from './ui.js';
+import {
+  Button,
+  ResponsiveDataField,
+  ResponsiveDataView,
+  responsiveDataStyles as dataStyles,
+} from './ui.js';
 import { Dialog, confirmDialog } from './ui/Dialog.js';
 import type { Keyword } from '@labby/core';
 import { i18n } from '@/i18n.js';
@@ -83,6 +88,7 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
 }
 
 export function KeywordList() {
+  const db = useDatabase();
   const { t } = i18n;
   const keywords = keywordsSignal.value;
   const persons = personsSignal.value;
@@ -138,45 +144,62 @@ export function KeywordList() {
         </Dialog>
       )}
 
-      <table class={s.table}>
-        <thead>
-          <tr>
-            <th class={s.th}>{t('name')}</th>
-            <th class={s.th}>{t('notes')}</th>
-            <th class={s.th}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {keywords.map(kw => (
-            <tr key={kw.id} style={{ opacity: kw.disabled ? 0.5 : 1 }}>
-              <td class={s.td}>
-                <div class={s.flexGapXs}>
-                  {displayName(kw)}
-                  {kw.disabled && (
+      <ResponsiveDataView
+        items={keywords}
+        columns={[
+          { header: t('name') },
+          { header: t('notes') },
+        ]}
+        getKey={kw => kw.id}
+        getDesktopRowProps={kw => ({ style: { opacity: kw.disabled ? 0.5 : 1 } })}
+        renderDesktopRow={kw => (
+          <>
+            <td class={s.td}>
+              <div class={s.flexGapXs}>
+                {displayName(kw)}
+                {kw.disabled && (
+                  <span class={s.badgeDisabled}>{t('disabled')}</span>
+                )}
+              </div>
+            </td>
+            <td class={`${s.td} ${s.notesCell}`}>
+              {kw.notes && <span class={s.textMuted}>{kw.notes}</span>}
+            </td>
+          </>
+        )}
+        renderMobileCard={kw => (
+          <>
+            <div class={dataStyles.mobileHeader}>
+              <div>
+                <div class={dataStyles.mobileTitle}>{displayName(kw)}</div>
+                {kw.disabled && (
+                  <div class={dataStyles.mobileSubtitle}>
                     <span class={s.badgeDisabled}>{t('disabled')}</span>
-                  )}
-                </div>
-              </td>
-              <td class={`${s.td} ${s.notesCell}`}>
-                {kw.notes && <span class={s.textMuted}>{kw.notes}</span>}
-              </td>
-              <td class={s.td}>
-                <div class={s.flexGapXs}>
-                  <Button variant="ghost" onClick={() => setEditing(kw)}>
-                    {t('edit')}
-                  </Button>
-                  <Button variant="ghost" onClick={() => handleDisableToggle(kw)}>
-                    {kw.disabled ? t('enable') : t('disable')}
-                  </Button>
-                  <Button variant="danger" onClick={() => handleDelete(kw)}>
-                    {t('delete')}
-                  </Button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div class={dataStyles.mobileFields}>
+              <ResponsiveDataField label={t('notes')} valueClass={s.notesCell}>
+                {kw.notes ? <span class={s.textMuted}>{kw.notes}</span> : '—'}
+              </ResponsiveDataField>
+            </div>
+          </>
+        )}
+        renderActions={kw => (
+          <>
+            <Button variant="ghost" onClick={() => setEditing(kw)}>
+              {t('edit')}
+            </Button>
+            <Button variant="ghost" onClick={() => handleDisableToggle(kw)}>
+              {kw.disabled ? t('enable') : t('disable')}
+            </Button>
+            <Button variant="danger" onClick={() => handleDelete(kw)}>
+              {t('delete')}
+            </Button>
+          </>
+        )}
+      />
     </div>
   );
 }

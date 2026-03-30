@@ -2,19 +2,21 @@
 import { i18n } from '../i18n.js';
 import type { Locale } from '../i18n.js';
 import * as s from '../styles/components.css.js';
+import { DataPanel } from '../components/DataPanel.js';
+import clsx from 'clsx';
 
-export function SettingsPanel() {
+const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];
+const localeLabels: Record<Locale, string> = {
+  en: 'English',
+  'zh-CN': '中文',
+  'ja-JP': '日本語',
+};
+
+export function SettingsPage() {
   const { t, lang, setLang } = i18n.useTranslation();
-  const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];
-  const localeLabels: Record<Locale, string> = {
-    en: 'English',
-    'zh-CN': '中文',
-    'ja-JP': '日本語',
-  };
-
   return (
     <div>
-      <h2 class={s.sectionTitle}>{t('settingsTitle')}</h2>
+      <h2 class={clsx(s.sectionTitle, s.mb12)}>{t('settingsTitle')}</h2>
 
       <div class={s.card}>
         <div class={s.formGroup}>
@@ -35,6 +37,10 @@ export function SettingsPanel() {
             ))}
           </div>
         </div>
+      </div>
+
+      <div class={s.sectionStack}>
+        <DataPanel />
       </div>
     </div>
   );

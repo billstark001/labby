@@ -102,7 +102,6 @@ export const appBrandMobile = style({
   fontWeight: vars.font.weight.bold,
   fontSize: vars.font.size.md,
   color: vars.color.primary,
-  minWidth: '100px',
 });
 
 // ---------------------------------------------------------------------------
@@ -142,6 +141,15 @@ export const navItemActive = style([
 ]);
 
 export const navIconButton = style([
+  navItem,
+  {
+    justifyContent: 'center',
+    maxWidth: '64px',
+    padding: vars.space.sm,
+  },
+]);
+
+export const navIconButtonDesktop = style([
   navItem,
   {
     justifyContent: 'center',
@@ -419,12 +427,22 @@ export const mb12 = style({ marginBottom: '12px' });
 export const mb16 = style({ marginBottom: vars.space.md });
 export const mb24 = style({ marginBottom: vars.space.lg });
 export const mb32 = style({ marginBottom: vars.space.xl });
+export const mt4 = style({ marginTop: '4px' });
 export const mt8 = style({ marginTop: vars.space.sm });
-export const mt32 = style({ marginTop: vars.space.xl });
+export const mt12 = style({ marginTop: '12px' });
 export const mt16 = style({ marginTop: vars.space.md });
+export const mt24 = style({ marginTop: vars.space.lg });
+export const mt32 = style({ marginTop: vars.space.xl });
 
 // Padding utilities
+export const p4 = style({ padding: '4px' });
 export const p8 = style({ padding: vars.space.sm });
+export const p12 = style({ padding: '12px' });
+export const p16 = style({ padding: vars.space.md });
+export const p24 = style({ padding: vars.space.lg });
+export const p32 = style({ padding: vars.space.xl });
+
+// Padding utilities
 export const px8 = style({ paddingInline: vars.space.sm });
 
 // Font size utilities

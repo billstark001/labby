@@ -9,7 +9,7 @@ import {
 } from '../store/index.js';
 import { fallbackEntityId } from '@/i18n.js';
 import { displayName } from '@/i18n.js';
-import { db } from '../db/index.js';
+import { useDatabase } from '../db/index.js';
 import {
   attractKeywords,
   repelKeywords,
@@ -20,6 +20,7 @@ import * as s from '../styles/components.css.js';
 import { vars } from '../styles/theme.css.js';
 import { Button } from './ui.js';
 import { i18n } from '@/i18n.js';
+import clsx from 'clsx';
 
 interface GraphNode extends d3.SimulationNodeDatum {
   id: string;
@@ -30,119 +31,210 @@ interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
   weight: number;
 }
 
+function linkKey(link: GraphLink): string {
+  const source = typeof link.source === 'object' ? link.source.id : String(link.source);
+  const target = typeof link.target === 'object' ? link.target.id : String(link.target);
+  return source < target ? `${source}|${target}` : `${target}|${source}`;
+}
+
 export function KeywordGraph() {
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
-  const nodeSelectionRef = useRef<d3.Selection<any, GraphNode, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<any, GraphLink, SVGGElement, unknown> | null>(null);
-  const labelSelectionRef = useRef<d3.Selection<any, GraphNode, SVGGElement, unknown> | null>(null);
+  const graphGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const linkLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const nodeLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const labelLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const nodeSelectionRef = useRef<d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown> | null>(null);
+  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, GraphLink, SVGGElement, unknown> | null>(null);
+  const labelSelectionRef = useRef<d3.Selection<SVGTextElement, GraphNode, SVGGElement, unknown> | null>(null);
+  const nodeMapRef = useRef<Map<string, GraphNode>>(new Map());
   const { t } = i18n;
   const keywords = keywordsSignal.value;
   const edges = similarityEdgesSignal.value;
+  const db = useDatabase();
+
   const [selected, setSelected] = useState<string[]>([]);
 
   useEffect(() => {
     if (!svgRef.current) return;
+
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
+
+    const graphGroup = svg.append('g');
+    const linkLayer = graphGroup.append('g');
+    const nodeLayer = graphGroup.append('g');
+    const labelLayer = graphGroup.append('g');
+
+    const simulation = d3
+      .forceSimulation<GraphNode>([])
+      .force(
+        'link',
+        d3
+          .forceLink<GraphNode, GraphLink>([])
+          .id(d => d.id)
+          .distance(d => 40 + (1 - d.weight) * 220),
+      )
+      .force('charge', d3.forceManyBody().strength(-110))
+      .force('center', d3.forceCenter(400, 250))
+      .force('collision', d3.forceCollide(34));
+
+    simulation.on('tick', () => {
+      linkSelectionRef.current
+        ?.attr('x1', d => (d.source as GraphNode).x ?? 0)
+        .attr('y1', d => (d.source as GraphNode).y ?? 0)
+        .attr('x2', d => (d.target as GraphNode).x ?? 0)
+        .attr('y2', d => (d.target as GraphNode).y ?? 0);
+      nodeSelectionRef.current
+        ?.attr('cx', d => d.x ?? 0)
+        .attr('cy', d => d.y ?? 0);
+      labelSelectionRef.current
+        ?.attr('x', d => d.x ?? 0)
+        .attr('y', d => d.y ?? 0);
+    });
+
+    svg.call(
+      d3.zoom<SVGSVGElement, unknown>().on('zoom', event => {
+        graphGroup.attr('transform', event.transform);
+      }),
+    );
+
+    simulationRef.current = simulation;
+    graphGroupRef.current = graphGroup;
+    linkLayerRef.current = linkLayer;
+    nodeLayerRef.current = nodeLayer;
+    labelLayerRef.current = labelLayer;
+
+    return () => {
+      simulation.stop();
+      simulationRef.current = null;
+      graphGroupRef.current = null;
+      linkLayerRef.current = null;
+      nodeLayerRef.current = null;
+      labelLayerRef.current = null;
+      nodeSelectionRef.current = null;
+      linkSelectionRef.current = null;
+      labelSelectionRef.current = null;
+      nodeMapRef.current = new Map();
+    };
+  }, []);
+
+  useEffect(() => {
+    const validIds = new Set(keywords.map(keyword => keyword.id));
+    setSelected(prev => {
+      const next = prev.filter(id => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [keywords]);
+
+  useEffect(() => {
+    if (
+      !svgRef.current
+      || !simulationRef.current
+      || !linkLayerRef.current
+      || !nodeLayerRef.current
+      || !labelLayerRef.current
+    ) {
+      return;
+    }
 
     const rect = svgRef.current.getBoundingClientRect();
     const width = rect.width || 800;
     const height = rect.height || 500;
+    const embeddings = embeddingsSignal.value;
+    const previousNodes = nodeMapRef.current;
 
-    const nodes: GraphNode[] = keywords.map(kw => ({
-      id: kw.id,
-      label: displayName(kw),
-      x: embeddingsSignal.value.get(kw.id)?.x !== undefined
-        ? embeddingsSignal.value.get(kw.id)!.x * 120 + width / 2
-        : undefined,
-      y: embeddingsSignal.value.get(kw.id)?.y !== undefined
-        ? embeddingsSignal.value.get(kw.id)!.y * 120 + height / 2
-        : undefined,
-    }));
+    const nodes: GraphNode[] = keywords.map(keyword => {
+      const existing = previousNodes.get(keyword.id);
+      if (existing) {
+        existing.label = displayName(keyword);
+        return existing;
+      }
 
-    const links: GraphLink[] = edges
-      .filter(e => e.weight > 0)
-      .map(e => ({ source: e.sourceId, target: e.targetId, weight: e.weight }));
+      const embedding = embeddings.get(keyword.id);
+      return {
+        id: keyword.id,
+        label: displayName(keyword),
+        x: embedding?.x !== undefined ? embedding.x * 120 + width / 2 : width / 2 + (Math.random() - 0.5) * 80,
+        y: embedding?.y !== undefined ? embedding.y * 120 + height / 2 : height / 2 + (Math.random() - 0.5) * 80,
+      };
+    });
 
-    const simulation = d3
-      .forceSimulation<GraphNode>(nodes)
-      .force(
-        'link',
-        d3
-          .forceLink<GraphNode, GraphLink>(links)
-          .id(d => d.id)
-            .distance(d => 40 + (1 - d.weight) * 220),
+    nodeMapRef.current = new Map(nodes.map(node => [node.id, node]));
+
+    const links: GraphLink[] = [];
+    for (const edge of edges) {
+      if (edge.weight <= 0) continue;
+      const source = nodeMapRef.current.get(edge.sourceId);
+      const target = nodeMapRef.current.get(edge.targetId);
+      if (!source || !target) continue;
+      links.push({ source, target, weight: edge.weight });
+    }
+
+    const linkSelection = linkLayerRef.current
+      .selectAll<SVGLineElement, GraphLink>('line')
+      .data(links, link => linkKey(link));
+    const mergedLinks = linkSelection
+      .join(
+        enter => enter.append('line'),
+        update => update,
+        exit => exit.remove(),
       )
-          .force('charge', d3.forceManyBody().strength(-110))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-          .force('collision', d3.forceCollide(34));
-
-    const g = svg.append('g');
-
-    // Zoom
-    svg.call(
-      d3.zoom<SVGSVGElement, unknown>().on('zoom', e => {
-        g.attr('transform', e.transform);
-      }),
-    );
-
-    const link = g
-      .append('g')
-      .selectAll('line')
-      .data(links)
-      .join('line')
       .attr('stroke', vars.color.border)
       .attr('stroke-width', d => d.weight * 3)
       .attr('stroke-opacity', d => 0.2 + d.weight * 0.5);
 
-    const node = g
-      .append('g')
+    const nodeSelection = nodeLayerRef.current
       .selectAll<SVGCircleElement, GraphNode>('circle')
-      .data(nodes)
-      .join('circle')
+      .data(nodes, node => node.id);
+    const mergedNodes = nodeSelection
+      .join(
+        enter => enter.append('circle'),
+        update => update,
+        exit => exit.remove(),
+      )
       .attr('r', 14)
       .attr('fill', vars.color.primary)
       .attr('stroke', vars.color.surface)
       .attr('stroke-width', 2)
       .attr('cursor', 'pointer')
-      .on('click', (_evt, d) => {
-        setSelected(prev =>
-          prev.includes(d.id) ? prev.filter(x => x !== d.id) : [...prev, d.id],
-        );
+      .on('click', (_event, node) => {
+        setSelected(prev => (
+          prev.includes(node.id) ? prev.filter(id => id !== node.id) : [...prev, node.id]
+        ));
       });
+    mergedNodes
+      .selectAll<SVGTitleElement, GraphNode>('title')
+      .data(node => [node])
+      .join('title')
+      .text(node => node.label);
 
-    // SVG title elements provide native tooltips
-    node.append('title').text(d => d.label);
-
-    const label = g
-      .append('g')
-      .selectAll('text')
-      .data(nodes)
-      .join('text')
-      .text(d => d.label)
+    const labelSelection = labelLayerRef.current
+      .selectAll<SVGTextElement, GraphNode>('text')
+      .data(nodes, node => node.id);
+    const mergedLabels = labelSelection
+      .join(
+        enter => enter.append('text'),
+        update => update,
+        exit => exit.remove(),
+      )
+      .text(node => node.label)
       .attr('font-size', 11)
       .attr('text-anchor', 'middle')
       .attr('dy', 28)
       .attr('fill', vars.color.text)
       .attr('pointer-events', 'none');
 
-    simulation.on('tick', () => {
-      link
-        .attr('x1', d => (d.source as GraphNode).x ?? 0)
-        .attr('y1', d => (d.source as GraphNode).y ?? 0)
-        .attr('x2', d => (d.target as GraphNode).x ?? 0)
-        .attr('y2', d => (d.target as GraphNode).y ?? 0);
-      node.attr('cx', d => d.x ?? 0).attr('cy', d => d.y ?? 0);
-      label.attr('x', d => d.x ?? 0).attr('y', d => d.y ?? 0);
-    });
+    linkSelectionRef.current = mergedLinks;
+    nodeSelectionRef.current = mergedNodes;
+    labelSelectionRef.current = mergedLabels;
 
-    simulationRef.current = simulation;
-    nodeSelectionRef.current = node;
-    linkSelectionRef.current = link;
-    labelSelectionRef.current = label;
-
-    return () => simulation.stop();
+    const simulation = simulationRef.current;
+    const linkForce = simulation.force('link') as d3.ForceLink<GraphNode, GraphLink>;
+    simulation.force('center', d3.forceCenter(width / 2, height / 2));
+    simulation.nodes(nodes);
+    linkForce.links(links);
+    simulation.alpha(nodes.length === 0 ? 0 : 0.45).restart();
   }, [keywords, edges, t('navGraph')]);
 
   useEffect(() => {
@@ -217,7 +309,7 @@ export function KeywordGraph() {
     <div>
       <div class={s.toolbar}>
         <div class={s.toolbarTitleGroup}>
-          <h2 class={s.sectionTitle}>{t('navGraph')}</h2>
+          <h2 class={clsx(s.sectionTitle, s.mt16)}>{t('navGraph')}</h2>
           <p class={s.mutedParagraph}>
             {selected.length > 0
               ? t('graphSelected', String(selected.length))

@@ -1,18 +1,11 @@
 /** Data import/export: MsgPack backup, HTML table, CSV via PapaParse. */
 import { encode, decode } from '@msgpack/msgpack';
-import {
-  personsSignal,
-  keywordsSignal,
-  similarityEdgesSignal,
-  configsSignal,
-  schedulesSignal,
-  unavailabilitiesSignal,
-} from '../store/index.js';
-import { db, dumpDatabase, restoreDatabase } from '../db/index.js';
+import { dumpDatabase, loadDatabaseSignals, restoreDatabase, useDatabase } from '../db/index.js';
 import * as s from '../styles/components.css.js';
 import { Button } from './ui.js';
 import { i18n } from '@/i18n.js';
 import { toast } from './ui/Toast.js';
+import clsx from 'clsx';
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -25,6 +18,7 @@ function triggerDownload(blob: Blob, filename: string) {
 
 export function DataPanel() {
   const { t } = i18n;
+  const dbInstance = useDatabase();
 
   async function handleExportBackup() {
     const id = toast.loading(t('computing'));
@@ -71,12 +65,8 @@ export function DataPanel() {
           dump = decode(buffer) as typeof dump;
         }
         await restoreDatabase(dump);
-        personsSignal.value = await db.persons.getAll();
-        keywordsSignal.value = await db.keywords.getAll();
-        similarityEdgesSignal.value = await db.similarities.getAll();
-        configsSignal.value = await db.configs.getAll();
-        schedulesSignal.value = await db.schedules.getAll();
-        unavailabilitiesSignal.value = await db.unavailabilities.getAll();
+        await loadDatabaseSignals(dbInstance);
+
         toast.dismiss(id);
         toast.success(t('importSuccess'));
       } catch (err) {
@@ -89,12 +79,12 @@ export function DataPanel() {
 
   return (
     <div>
-      <h2 class={`${s.sectionTitle} ${s.mb24}`}>
+      <h2 class={clsx(s.sectionTitle, s.mb12)}>
         {t('dataImportExport')}
       </h2>
 
-      <div class={`${s.card} ${s.mb24}`}>
-        <h3 class={`${s.mb12} ${s.text15} ${s.fontMedium}`}>
+      <div class={clsx(s.card, s.mb24)}>
+        <h3 class={clsx(s.mb12, s.text15, s.fontMedium)}>
           {t('databaseBackup')}
         </h3>
         <div class={s.toolbar}>

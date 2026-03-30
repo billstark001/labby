@@ -23,6 +23,12 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.11
         version: 1.19.11(hono@4.12.9)
+      '@labby/core':
+        specifier: workspace:*
+        version: link:../core
+      '@mpoonuru/paseto':
+        specifier: ^4.0.2
+        version: 4.0.2
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
@@ -60,6 +66,9 @@ importers:
       '@preact/signals':
         specifier: ^2.9.0
         version: 2.9.0(preact@10.29.0)
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       d3:
         specifier: ^7.9.0
         version: 7.9.0
@@ -546,6 +555,10 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@mpoonuru/paseto@4.0.2':
+    resolution: {integrity: sha512-TrTynm6StAq3b/5SEEQALwKjOpy3D8n1oZyvrhE4+uJCQY2IyZhwMoVCqFZz4QlW6gWWYjwps5rWL9mrT4y5iw==}
+    engines: {node: '>=20.0.0'}
+
   '@msgpack/msgpack@3.1.3':
     resolution: {integrity: sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA==}
     engines: {node: '>= 18'}
@@ -839,6 +852,45 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@stablelib/aead@2.0.0':
+    resolution: {integrity: sha512-U/RMANRxbT/ahIpYsPSiFwDFNjADHdnCFfmo09MO1ai2XmerPAOPtMl0qmX7XVvygnACC6ijKDyHBoT2rGyElg==}
+
+  '@stablelib/binary@2.0.1':
+    resolution: {integrity: sha512-U9iAO8lXgEDONsA0zPPSgcf3HUBNAqHiJmSHgZz62OvC3Hi2Bhc5kTnQ3S1/L+sthDTHtCMhcEiklmIly6uQ3w==}
+
+  '@stablelib/blake2b@2.0.1':
+    resolution: {integrity: sha512-kBN4i9FHpkTEVrHwKtb1ZjI6QwyoK8emY9TaLcHHFSZkw2FN9Td8Js9mU2U10q+EZ3Mp6z78QgdPDwJXbc3Dtw==}
+
+  '@stablelib/chacha20poly1305@2.0.1':
+    resolution: {integrity: sha512-kOoBsXbDPVRlelzXl+5WViycgM19lD7lF3Bc3KWI+DzId0Stc2HlxAfSc+Xpn3RgqSCl1ZNTXr33LegqBhBBaw==}
+
+  '@stablelib/chacha@2.0.1':
+    resolution: {integrity: sha512-lS1FqtNqofxe2vLkRsLli2m3x/XanUyAYRphLhdHumKeIsLbjbCXdCq3Pf/eWiO7G3QlSG5ViqnoVjktzfLWMg==}
+
+  '@stablelib/constant-time@2.0.1':
+    resolution: {integrity: sha512-0NWPogffRm+UWBH0+iM5otZmNrVe5OHFIvyoNIVankMAYOQzMwcdVALOVPrB5Ho0dST+Oc3H8/hPh65Z8R/uew==}
+
+  '@stablelib/hash@2.0.0':
+    resolution: {integrity: sha512-u3WPSqGido8lwJuMcrBgM5K54LrPGhkWAdtsyccf7dGsLixAZUds77zOAbu7bvKPwQlmoByH0txBi5rTmEKuHg==}
+
+  '@stablelib/int@2.0.1':
+    resolution: {integrity: sha512-Ht63fQp3wz/F8U4AlXEPb7hfJOIILs8Lq55jgtD7KueWtyjhVuzcsGLSTAWtZs3XJDZYdF1WcSKn+kBtbzupww==}
+
+  '@stablelib/poly1305@2.0.1':
+    resolution: {integrity: sha512-D8xfZcL/5zeVARJ9I2fZOUCnZvsJx8G4JDQvD+ecsnaCildPtqZDwqqjtOc4cfHAdScrMjOzUVsssjXUTBw3YQ==}
+
+  '@stablelib/random@2.0.1':
+    resolution: {integrity: sha512-W6GAtXEEs7r+dSbuBsvoFmlyL3gLxle41tQkjKu17dDWtDdjhVUbtRfRCQcCUeczwkgjQxMPopgwYEvxXtHXGw==}
+
+  '@stablelib/wipe@2.0.1':
+    resolution: {integrity: sha512-1eU2K9EgOcV4qc9jcP6G72xxZxEm5PfeI5H55l08W95b4oRJaqhmlWRc4xZAm6IVSKhVNxMi66V67hCzzuMTAg==}
+
+  '@stablelib/xchacha20@2.0.1':
+    resolution: {integrity: sha512-k55pNv7gIM4mUPU00+nJYTxKiUVNwAtsgrridC0aIU5cVbw9u6qP99x8ENu5eiwOEhZUNg+p3tTOLooCeAOJQA==}
+
+  '@stablelib/xchacha20poly1305@2.0.1':
+    resolution: {integrity: sha512-OUZnnPsd4y5ConoMtADkxiz308vcYrpFT7hzTgXLo5UMyu7aPAP0FaOM+aJAnV+GHBoWp+2ncDOhvtho3VDp7g==}
+
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
 
@@ -1024,6 +1076,10 @@ packages:
 
   chownr@1.1.4:
     resolution: {integrity: sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==}
+
+  clsx@2.1.1:
+    resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
+    engines: {node: '>=6'}
 
   commander@7.2.0:
     resolution: {integrity: sha512-QrWXB+ZQSVPmIWIhtEO9H+gwHaMGYiF5ChvoJ+K9ZGHG/sVsa6yiesAD1GC/x46sET00Xlwo1u49RVVVzvcSkw==}
@@ -2083,6 +2139,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@mpoonuru/paseto@4.0.2':
+    dependencies:
+      '@stablelib/blake2b': 2.0.1
+      '@stablelib/random': 2.0.1
+      '@stablelib/xchacha20poly1305': 2.0.1
+
   '@msgpack/msgpack@3.1.3': {}
 
   '@napi-rs/wasm-runtime@1.1.2(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)':
@@ -2279,6 +2341,64 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.60.0':
     optional: true
+
+  '@stablelib/aead@2.0.0': {}
+
+  '@stablelib/binary@2.0.1':
+    dependencies:
+      '@stablelib/int': 2.0.1
+
+  '@stablelib/blake2b@2.0.1':
+    dependencies:
+      '@stablelib/binary': 2.0.1
+      '@stablelib/hash': 2.0.0
+      '@stablelib/wipe': 2.0.1
+
+  '@stablelib/chacha20poly1305@2.0.1':
+    dependencies:
+      '@stablelib/aead': 2.0.0
+      '@stablelib/binary': 2.0.1
+      '@stablelib/chacha': 2.0.1
+      '@stablelib/constant-time': 2.0.1
+      '@stablelib/poly1305': 2.0.1
+      '@stablelib/wipe': 2.0.1
+
+  '@stablelib/chacha@2.0.1':
+    dependencies:
+      '@stablelib/binary': 2.0.1
+      '@stablelib/wipe': 2.0.1
+
+  '@stablelib/constant-time@2.0.1': {}
+
+  '@stablelib/hash@2.0.0': {}
+
+  '@stablelib/int@2.0.1': {}
+
+  '@stablelib/poly1305@2.0.1':
+    dependencies:
+      '@stablelib/constant-time': 2.0.1
+      '@stablelib/wipe': 2.0.1
+
+  '@stablelib/random@2.0.1':
+    dependencies:
+      '@stablelib/binary': 2.0.1
+      '@stablelib/wipe': 2.0.1
+
+  '@stablelib/wipe@2.0.1': {}
+
+  '@stablelib/xchacha20@2.0.1':
+    dependencies:
+      '@stablelib/binary': 2.0.1
+      '@stablelib/chacha': 2.0.1
+      '@stablelib/wipe': 2.0.1
+
+  '@stablelib/xchacha20poly1305@2.0.1':
+    dependencies:
+      '@stablelib/aead': 2.0.0
+      '@stablelib/chacha20poly1305': 2.0.1
+      '@stablelib/constant-time': 2.0.1
+      '@stablelib/wipe': 2.0.1
+      '@stablelib/xchacha20': 2.0.1
 
   '@tybys/wasm-util@0.10.1':
     dependencies:
@@ -2556,6 +2676,8 @@ snapshots:
   caniuse-lite@1.0.30001781: {}
 
   chownr@1.1.4: {}
+
+  clsx@2.1.1: {}
 
   commander@7.2.0: {}
 

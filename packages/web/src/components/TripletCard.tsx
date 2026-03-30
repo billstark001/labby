@@ -6,7 +6,7 @@ import {
   similarityEdgesSignal,
 } from '../store/index.js';
 import { displayName } from '@/i18n.js';
-import { db } from '../db/index.js';
+import { useDatabase } from '../db/index.js';
 import {
   nextTripletQuery,
   applyTripletStep,
@@ -22,6 +22,7 @@ import { i18n } from '@/i18n.js';
 const RECENT_PAIR_LIMIT = 5;
 
 export function TripletCard() {
+  const db = useDatabase();
   const { t } = i18n;
   const keywords = keywordsSignal.value;
   const keywordMap = new Map(keywords.map(k => [k.id, k]));

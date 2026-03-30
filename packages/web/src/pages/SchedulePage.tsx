@@ -13,11 +13,16 @@ import {
   unavailabilitiesSignal,
 } from '../store/index.js';
 import { fallbackEntityId, displayName } from '@/i18n.js';
-import { db } from '../db/index.js';
+import { useDatabase } from '../db/index.js';
 import { solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation } from '@labby/core';
 import * as s from '../styles/components.css.js';
-import { Button } from '../components/ui.js';
+import {
+  Button,
+  ResponsiveDataField,
+  ResponsiveDataView,
+  responsiveDataStyles as dataStyles,
+} from '../components/ui.js';
 import {
   copyScheduleTable,
   copyScheduleHtml,
@@ -206,6 +211,7 @@ function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }:
   const current = currentScheduleSignal.value;
   const simMap = similarityMapSignal.value;
   const personMap = personMapSignal.value;
+  const db = useDatabase();
 
   if (!current) return null;
 
@@ -300,6 +306,7 @@ export function SchedulePage() {
   const current = currentScheduleSignal.value;
   const isComputing = isComputingSignal.value;
   const unavailabilities = unavailabilitiesSignal.value;
+  const db = useDatabase();
 
   const [showConfigForm, setShowConfigForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ScheduleConfig | null>(null);
@@ -509,31 +516,48 @@ export function SchedulePage() {
           {configUnavails.length === 0 ? (
             <p class={`${s.text14} ${s.textMuted}`}>—</p>
           ) : (
-            <table class={s.table}>
-              <thead>
-                <tr>
-                  <th class={s.th}>{t('unavailPerson')}</th>
-                  <th class={s.th}>{t('unavailStart')}</th>
-                  <th class={s.th}>{t('unavailEnd')}</th>
-                  <th class={s.th}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {configUnavails.map(u => {
-                  const p = personMap.get(u.personId);
-                  return (
-                    <tr key={u.id}>
-                      <td class={s.td}>{p ? displayName(p) : fallbackEntityId(u.personId)}</td>
-                      <td class={s.td}>{u.startDate}</td>
-                      <td class={s.td}>{u.endDate}</td>
-                      <td class={s.td}>
-                        <Button variant="danger" onClick={() => handleDeleteUnavail(u.id)}>{t('delete')}</Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <ResponsiveDataView
+              items={configUnavails}
+              columns={[
+                { header: t('unavailPerson') },
+                { header: t('unavailStart') },
+                { header: t('unavailEnd') },
+              ]}
+              getKey={unavail => unavail.id}
+              renderDesktopRow={unavail => {
+                const person = personMap.get(unavail.personId);
+                return (
+                  <>
+                    <td class={s.td}>{person ? displayName(person) : fallbackEntityId(unavail.personId)}</td>
+                    <td class={s.td}>{unavail.startDate}</td>
+                    <td class={s.td}>{unavail.endDate}</td>
+                  </>
+                );
+              }}
+              renderMobileCard={unavail => {
+                const person = personMap.get(unavail.personId);
+                return (
+                  <>
+                    <div class={dataStyles.mobileHeader}>
+                      <div class={dataStyles.mobileTitle}>
+                        {person ? displayName(person) : fallbackEntityId(unavail.personId)}
+                      </div>
+                    </div>
+                    <div class={dataStyles.mobileFields}>
+                      <ResponsiveDataField label={t('unavailStart')}>
+                        {unavail.startDate}
+                      </ResponsiveDataField>
+                      <ResponsiveDataField label={t('unavailEnd')}>
+                        {unavail.endDate}
+                      </ResponsiveDataField>
+                    </div>
+                  </>
+                );
+              }}
+              renderActions={unavail => (
+                <Button variant="danger" onClick={() => handleDeleteUnavail(unavail.id)}>{t('delete')}</Button>
+              )}
+            />
           )}
         </div>
       )}
@@ -693,47 +717,84 @@ export function SchedulePage() {
                 {sess.date}
               </span>
             </h3>
-            <table class={s.table}>
-              <colgroup>
-                <col style={{ width: '30%' }} />
-                <col style={{ width: '70%' }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th class={s.th}>{t('presenter')}</th>
-                  <th class={s.th}>{t('questioners')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sess.presentations.map((pres, pi) => {
-                  const presenter = personMap.get(pres.presenterId);
-                  return (
-                    <tr key={pi}>
-                      <td class={s.td}>
-                        {manualEditMode ? (
-                          <Menu mode="context">
-                            <MenuTrigger>
-                              <span class={s.editableCell}>
-                                {presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)}
-                              </span>
-                            </MenuTrigger>
-                            <MenuContent>
-                              <MenuItem onSelect={() => setManualEditTarget({ mode: 'presenter', sessionDate: sess.date, presIndex: pi })}>
-                                {t('selectNewPresenter')}
-                              </MenuItem>
-                            </MenuContent>
-                          </Menu>
-                        ) : (
-                          presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)
-                        )}
-                      </td>
-                      <td class={s.td}>
+            <ResponsiveDataView
+              items={sess.presentations}
+              columns={[
+                { header: t('presenter') },
+                { header: t('questioners') },
+              ]}
+              getKey={(_, index) => index}
+              colGroup={
+                <colgroup>
+                  <col style={{ width: '30%' }} />
+                  <col style={{ width: '70%' }} />
+                </colgroup>
+              }
+              renderDesktopRow={(pres, pi) => {
+                const presenter = personMap.get(pres.presenterId);
+                return (
+                  <>
+                    <td class={s.td}>
+                      {manualEditMode ? (
+                        <Menu mode="context">
+                          <MenuTrigger>
+                            <span class={s.editableCell}>
+                              {presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)}
+                            </span>
+                          </MenuTrigger>
+                          <MenuContent>
+                            <MenuItem onSelect={() => setManualEditTarget({ mode: 'presenter', sessionDate: sess.date, presIndex: pi })}>
+                              {t('selectNewPresenter')}
+                            </MenuItem>
+                          </MenuContent>
+                        </Menu>
+                      ) : (
+                        presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)
+                      )}
+                    </td>
+                    <td class={s.td}>
+                      <div class={s.tagList}>
+                        {pres.questionerIds.map((qid, qi) => {
+                          const questioner = personMap.get(qid);
+                          const name = questioner ? displayName(questioner) : fallbackEntityId(qid);
+                          return manualEditMode ? (
+                            <Menu key={`${qid}-${qi}`} mode="context">
+                              <MenuTrigger>
+                                <span class={`${s.badge} ${s.editableCell}`}>{name}</span>
+                              </MenuTrigger>
+                              <MenuContent>
+                                <MenuItem onSelect={() => setManualEditTarget({ mode: 'questioner', sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
+                                  {t('selectNewQuestioner')}
+                                </MenuItem>
+                              </MenuContent>
+                            </Menu>
+                          ) : (
+                            <span key={`${qid}-${qi}`} class={s.badge}>{name}</span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </>
+                );
+              }}
+              renderMobileCard={(pres, pi) => {
+                const presenter = personMap.get(pres.presenterId);
+                return (
+                  <>
+                    <div class={dataStyles.mobileHeader}>
+                      <div>
+                        <div class={dataStyles.mobileTitle}>{presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)}</div>
+                        <div class={dataStyles.mobileSubtitle}>{t('presenter')}</div>
+                      </div>
+                    </div>
+                    <div class={dataStyles.mobileFields}>
+                      <ResponsiveDataField label={t('questioners')}>
                         <div class={s.tagList}>
                           {pres.questionerIds.map((qid, qi) => {
-                            const q = personMap.get(qid);
-                            const name = q ? displayName(q) : fallbackEntityId(qid);
+                            const questioner = personMap.get(qid);
+                            const name = questioner ? displayName(questioner) : fallbackEntityId(qid);
                             return manualEditMode ? (
-                              <Menu key={qid} mode="context">
+                              <Menu key={`${qid}-${qi}`} mode="context">
                                 <MenuTrigger>
                                   <span class={`${s.badge} ${s.editableCell}`}>{name}</span>
                                 </MenuTrigger>
@@ -744,16 +805,26 @@ export function SchedulePage() {
                                 </MenuContent>
                               </Menu>
                             ) : (
-                              <span key={qid} class={s.badge}>{name}</span>
+                              <span key={`${qid}-${qi}`} class={s.badge}>{name}</span>
                             );
                           })}
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </ResponsiveDataField>
+                    </div>
+                    {manualEditMode && (
+                      <div class={s.flexGapXs}>
+                        <Button
+                          variant="ghost"
+                          onClick={() => setManualEditTarget({ mode: 'presenter', sessionDate: sess.date, presIndex: pi })}
+                        >
+                          {t('selectNewPresenter')}
+                        </Button>
+                      </div>
+                    )}
+                  </>
+                );
+              }}
+            />
           </div>
         ))
       )}

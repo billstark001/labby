@@ -10,6 +10,18 @@ const BASE = '/api/v1';
 const STORAGE_KEY = 'labby_auth_state_v1';
 export const AUTH_INVALIDATE_EVENT = 'labby:auth:invalidate';
 
+function createRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function withRequestHeaders(headers?: HeadersInit): Headers {
+  const next = new Headers(headers ?? {});
+  if (!next.has('X-Request-Id')) {
+    next.set('X-Request-Id', createRequestId());
+  }
+  return next;
+}
+
 // #region Signals
 
 export const accessToken = signal<string | null>(null);
@@ -272,7 +284,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
   const sessionKey = _makeSessionKey('user', email);
   const res = await fetch(`${BASE}/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
@@ -291,7 +303,7 @@ export async function silentRefresh(): Promise<AuthResponse> {
   if (!rt) throw new Error('No refresh token');
   const res = await fetch(`${BASE}/auth/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ refresh_token: rt }),
   });
   if (!res.ok) {
@@ -350,18 +362,20 @@ export async function apiFetch(
   options: RequestInit = {},
 ): Promise<Response> {
   const at = accessToken.value;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> | undefined ?? {}),
-    ...(at ? { Authorization: `Bearer ${at}` } : {}),
-  };
+  const headers = withRequestHeaders(options.headers);
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (at) {
+    headers.set('Authorization', `Bearer ${at}`);
+  }
 
   let res = await fetch(url, { ...options, headers });
 
   if (res.status === 401 && refreshToken.value) {
     try {
       await silentRefresh();
-      headers['Authorization'] = `Bearer ${accessToken.value!}`;
+      headers.set('Authorization', `Bearer ${accessToken.value!}`);
       res = await fetch(url, { ...options, headers });
     } catch {
       // refresh failed — return the 401 to the caller

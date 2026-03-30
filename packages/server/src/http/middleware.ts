@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 
 import { fail } from "../lib/http.js";
+import type { AuthService, AuthSession } from "../lib/auth.js";
 
 export function requireRequestId(c: Context, next: Next): Promise<void | Response> {
   if (!c.req.header("X-Request-Id")) {
@@ -9,12 +10,29 @@ export function requireRequestId(c: Context, next: Next): Promise<void | Respons
   return next();
 }
 
-export function requireClientAuth(c: Context, next: Next): Promise<void | Response> {
-  const auth = c.req.header("Authorization") ?? "";
-  if (!auth.startsWith("Bearer ") || auth.length <= "Bearer ".length) {
-    return Promise.resolve(fail(c, "AUTH_INVALID", "Bearer token is required", 401));
+export function requireClientAuth(authService: AuthService) {
+  return async (c: Context, next: Next): Promise<void | Response> => {
+    const auth = c.req.header("Authorization") ?? "";
+    if (!auth.startsWith("Bearer ") || auth.length <= "Bearer ".length) {
+      return fail(c, "AUTH_INVALID", "Bearer token is required", 401);
+    }
+
+    try {
+      const session = await authService.verifyAccessToken(auth.slice("Bearer ".length));
+      c.set("auth", session as never);
+      return next();
+    } catch {
+      return fail(c, "AUTH_INVALID", "Bearer token is invalid", 401);
+    }
+  };
+}
+
+export function getAuthSession(c: Context): AuthSession {
+  const session = c.get("auth") as AuthSession | undefined;
+  if (!session) {
+    throw new Error("auth session missing from context");
   }
-  return next();
+  return session;
 }
 
 export function requireServerAuth(apiKey: string) {
