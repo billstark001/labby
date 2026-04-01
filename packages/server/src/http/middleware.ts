@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 
 import { fail } from "../lib/http.js";
+import { UserRole, type AuthRole } from "../lib/auth.js";
 import type { AuthService, AuthSession } from "../lib/auth.js";
 
 export function requireRequestId(c: Context, next: Next): Promise<void | Response> {
@@ -24,6 +25,23 @@ export function requireClientAuth(authService: AuthService) {
     } catch {
       return fail(c, "AUTH_INVALID", "Bearer token is invalid", 401);
     }
+  };
+}
+
+export function requireMinRole(minRole: AuthRole) {
+  return (c: Context, next: Next): Promise<void | Response> => {
+    const session = c.get("auth") as AuthSession | undefined;
+    if (!session) {
+      return Promise.resolve(fail(c, "AUTH_INVALID", "authentication required", 401));
+    }
+    const validRoles: AuthRole[] = [UserRole.User, UserRole.Admin, UserRole.Root];
+    if (!validRoles.includes(session.role)) {
+      return Promise.resolve(fail(c, "AUTH_INVALID", "invalid session role", 401));
+    }
+    if (session.role < minRole) {
+      return Promise.resolve(fail(c, "AUTH_FORBIDDEN", "insufficient permissions", 403));
+    }
+    return next();
   };
 }
 
@@ -54,3 +72,5 @@ export function requireIdempotencyKey(c: Context, next: Next): Promise<void | Re
   }
   return next();
 }
+
+export { UserRole };

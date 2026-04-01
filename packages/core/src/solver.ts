@@ -112,6 +112,7 @@ interface CostContext {
   personKeywords: Map<string, string[]>;
   similarities: Map<string, number>;
   r: number; // target similarity radius
+  constraints?: import('./types.js').ScheduleConstraint[];
 }
 
 interface AssignmentState {
@@ -397,6 +398,42 @@ function computeCost(
   const questionerLoadPenalty = varianceForPeople(questionerCounts, personIds);
   const totalRolePenalty = varianceForPeople(totalRoleCounts, personIds);
 
+  // 4. Constraint penalties
+  let constraintPenalty = 0;
+  if (ctx.constraints) {
+    for (const constraint of ctx.constraints) {
+      if (constraint.type === 'no-overlap') {
+        const groupSet = new Set(constraint.personIds);
+        const penaltyWeight = constraint.weight ?? 5.0;
+        for (const sess of allSessions) {
+          for (const pres of sess.presentations) {
+            if (!groupSet.has(pres.presenterId)) continue;
+            for (const q of pres.questionerIds) {
+              if (groupSet.has(q)) {
+                constraintPenalty += penaltyWeight;
+              }
+            }
+          }
+        }
+      } else if (constraint.type === 'affinity-boost') {
+        const groupSet = new Set(constraint.personIds);
+        const boost = constraint.boost ?? 2.0;
+        // Reward co-occurrence: subtract from penalty when group members are paired
+        for (const sess of allSessions) {
+          for (const pres of sess.presentations) {
+            const presenterInGroup = groupSet.has(pres.presenterId);
+            for (const q of pres.questionerIds) {
+              const questionerInGroup = groupSet.has(q);
+              if (presenterInGroup && questionerInGroup) {
+                constraintPenalty -= (boost - 1) * 0.5;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   return (
     uniformityPenalty * 2
     + questionerPenalty * 5
@@ -405,6 +442,7 @@ function computeCost(
     + questionerLoadPenalty * 10
     + totalRolePenalty * 4
     + invalidAssignmentPenalty
+    + constraintPenalty
   );
 }
 
@@ -628,11 +666,11 @@ function hammingDistance(a: Session[], b: Session[]): number {
  * Full solver: generate a schedule from scratch.
  */
 export function solveFull(input: SolverInput): SchedulePlan {
-  const { persons, similarities, config, unavailabilities = [] } = input;
+  const { persons, similarities, config, unavailabilities = [], constraints = [] } = input;
   const activePeople = persons.filter(p => !p.disabled);
   const personIds = activePeople.map(p => p.id);
   const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
-  const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius };
+  const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius, constraints };
 
   const dates = generateSessionDates(config);
   const unavailMap = buildUnavailMap(unavailabilities, config.id);
@@ -652,7 +690,7 @@ export function solveFull(input: SolverInput): SchedulePlan {
  * minimising divergence from the previous plan.
  */
 export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
-  const { persons, similarities, config, previousPlan, changeDate, unavailabilities = [] } = input;
+  const { persons, similarities, config, previousPlan, changeDate, unavailabilities = [], constraints = [] } = input;
 
   const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
   const mutableDates = previousPlan.sessions
@@ -662,7 +700,7 @@ export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
   const activePeople = persons.filter(p => !p.disabled);
   const personIds = activePeople.map(p => p.id);
   const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
-  const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius };
+  const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius, constraints };
 
   // Reference sessions from previous plan for Hamming penalty
   const hammingRef = previousPlan.sessions.filter(s => s.date >= changeDate);

@@ -13,11 +13,25 @@ import type {
   SchedulePlan,
   SimilarityEdge,
 } from "@labby/core";
+import {
+  solveFull,
+  solveIncremental,
+  applyTripletStep,
+  embeddingsToSimilarities,
+  initEmbeddings,
+  cloneEmbeddings,
+  type EmbeddingMap,
+} from "@labby/core";
 
-import { AuthService, resolvePasetoKey } from "./lib/auth.js";
+import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
 import { AppError } from "./lib/errors.js";
 import { fail, ok } from "./lib/http.js";
-import { getAuthSession, requireClientAuth, requireRequestId } from "./http/middleware.js";
+import {
+  getAuthSession,
+  requireClientAuth,
+  requireMinRole,
+  requireRequestId,
+} from "./http/middleware.js";
 import { SqliteStore } from "./store/sqlite.js";
 
 export interface CreateAppOptions {
@@ -30,12 +44,17 @@ export interface CreateAppOptions {
   pasetoSecret?: string;
   pasetoAccessKey?: string;
   pasetoRefreshKey?: string;
+  /** Root user credentials from environment (never stored in DB). */
+  rootUsername?: string;
+  rootPassword?: string;
+  rootEmail?: string;
+  /** Bootstrap admin account (created on first run if no admin exists). */
   bootstrapUsername?: string;
   bootstrapPassword?: string;
   bootstrapEmail?: string;
 }
 
-export function createApp(options: CreateAppOptions): { app: Hono; } {
+export function createApp(options: CreateAppOptions): { app: Hono; store: SqliteStore; } {
 
   fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
 
@@ -48,14 +67,18 @@ export function createApp(options: CreateAppOptions): { app: Hono; } {
     refreshTtl: options.refreshTtl ?? "30d",
     accessKey: resolvePasetoKey(options.pasetoAccessKey ?? options.pasetoSecret, "access"),
     refreshKey: resolvePasetoKey(options.pasetoRefreshKey ?? options.pasetoSecret, "refresh"),
+    rootUsername: options.rootUsername,
+    rootPassword: options.rootPassword,
+    rootEmail: options.rootEmail,
   });
 
+  // Bootstrap an initial admin account (from env) on first run
   if (options.bootstrapUsername && options.bootstrapPassword) {
     void authService.bootstrapUser({
       username: options.bootstrapUsername,
       password: options.bootstrapPassword,
       email: options.bootstrapEmail,
-      role: "admin",
+      role: UserRole.Admin,
     });
   }
 
@@ -72,15 +95,39 @@ export function createApp(options: CreateAppOptions): { app: Hono; } {
     refresh_token: z.string().min(1),
   });
 
+  const issueUserBodySchema = z.object({
+    username: z.string().min(1).max(64),
+    password: z.string().min(8),
+    email: z.string().email().optional(),
+    role: z.number().int().min(0).max(1),
+  });
+
   const app = new Hono();
   if (options.enableLogger ?? true) {
     app.use("*", logger());
   }
   app.use("/api/v1/*", requireRequestId);
   app.use("/api/v1/db/*", requireClientAuth(authService));
+  app.use("/api/v1/solver/*", requireClientAuth(authService));
+  app.use("/api/v1/nlp/*", requireClientAuth(authService));
+  app.use("/api/v1/users/*", requireClientAuth(authService));
   app.use("/api/v1/auth/logout", requireClientAuth(authService));
 
+  // Write operations require at least admin role
+  app.use("/api/v1/db/*", async (c, next) => {
+    if (c.req.method !== "GET") {
+      return requireMinRole(UserRole.Admin)(c, next);
+    }
+    return next();
+  });
+  app.use("/api/v1/solver/*", requireMinRole(UserRole.Admin));
+  app.use("/api/v1/nlp/*", requireMinRole(UserRole.Admin));
+
   app.get("/health", (c) => c.json({ ok: true, now: Date.now() }));
+
+  // ---------------------------------------------------------------------------
+  // Auth routes
+  // ---------------------------------------------------------------------------
 
   app.post("/api/v1/auth/login", async (c) => {
     const body = loginBodySchema.parse(await c.req.json());
@@ -129,6 +176,33 @@ export function createApp(options: CreateAppOptions): { app: Hono; } {
   app.get("/api/v1/auth/me", requireClientAuth(authService), (c) => {
     return ok(c, getAuthSession(c));
   });
+
+  // ---------------------------------------------------------------------------
+  // User management routes (admin/root only)
+  // ---------------------------------------------------------------------------
+
+  app.post("/api/v1/users", requireMinRole(UserRole.Admin), async (c) => {
+    const body = issueUserBodySchema.parse(await c.req.json());
+    const session = getAuthSession(c);
+    const user = await authService.issueUser({
+      username: body.username,
+      password: body.password,
+      email: body.email,
+      role: body.role as typeof UserRole.Admin | typeof UserRole.User,
+      issuerRole: session.role,
+    });
+    const { passwordHash: _, ...safeUser } = user;
+    return ok(c, safeUser, 201);
+  });
+
+  app.get("/api/v1/users", requireMinRole(UserRole.Admin), (c) => {
+    const users = store.listUsers().map(({ passwordHash: _, ...u }) => u);
+    return ok(c, users);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Database CRUD routes
+  // ---------------------------------------------------------------------------
 
   app.get("/api/v1/db/persons", (c) => ok(c, store.listPersons()));
   app.get("/api/v1/db/persons/:id", (c) => ok(c, store.getPerson(c.req.param("id")) ?? null));
@@ -208,6 +282,123 @@ export function createApp(options: CreateAppOptions): { app: Hono; } {
     return c.body(null, 204);
   });
 
+  // ---------------------------------------------------------------------------
+  // Solver routes (call @labby/core)
+  // ---------------------------------------------------------------------------
+
+  const solverInputSchema = z.object({
+    configId: z.string().min(1),
+    personIds: z.array(z.string()).optional(),
+  });
+
+  const solverIncrementalInputSchema = z.object({
+    configId: z.string().min(1),
+    previousPlanId: z.string().min(1),
+    changeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    personIds: z.array(z.string()).optional(),
+  });
+
+  app.post("/api/v1/solver/run", async (c) => {
+    const body = solverInputSchema.parse(await c.req.json());
+    const config = store.getConfig(body.configId);
+    if (!config) throw new AppError("VALIDATION_ERROR", "config not found", 404);
+
+    const allPersons = store.listPersons();
+    const persons = body.personIds
+      ? allPersons.filter(p => body.personIds!.includes(p.id))
+      : allPersons;
+    const similarities = store.listSimilarities();
+    const unavailabilities = store.listUnavailabilities();
+
+    const simMap = new Map<string, number>();
+    for (const e of similarities) {
+      const [a, b] = e.sourceId < e.targetId ? [e.sourceId, e.targetId] : [e.targetId, e.sourceId];
+      simMap.set(`${a}|${b}`, e.weight);
+    }
+
+    const plan = solveFull({ persons, similarities: simMap, config, unavailabilities });
+    return ok(c, plan);
+  });
+
+  app.post("/api/v1/solver/run-incremental", async (c) => {
+    const body = solverIncrementalInputSchema.parse(await c.req.json());
+    const config = store.getConfig(body.configId);
+    if (!config) throw new AppError("VALIDATION_ERROR", "config not found", 404);
+    const previousPlan = store.getSchedule(body.previousPlanId);
+    if (!previousPlan) throw new AppError("VALIDATION_ERROR", "previous plan not found", 404);
+
+    const allPersons = store.listPersons();
+    const persons = body.personIds
+      ? allPersons.filter(p => body.personIds!.includes(p.id))
+      : allPersons;
+    const similarities = store.listSimilarities();
+    const unavailabilities = store.listUnavailabilities();
+
+    const simMap = new Map<string, number>();
+    for (const e of similarities) {
+      const [a, b] = e.sourceId < e.targetId ? [e.sourceId, e.targetId] : [e.targetId, e.sourceId];
+      simMap.set(`${a}|${b}`, e.weight);
+    }
+
+    const plan = solveIncremental({
+      persons,
+      similarities: simMap,
+      config,
+      unavailabilities,
+      previousPlan,
+      changeDate: body.changeDate,
+    });
+    return ok(c, plan);
+  });
+
+  // ---------------------------------------------------------------------------
+  // NLP / embedding routes (call @labby/core)
+  // ---------------------------------------------------------------------------
+
+  const tripletUpdateSchema = z.object({
+    anchorId: z.string().min(1),
+    positiveId: z.string().min(1),
+    negativeId: z.string().min(1),
+    learningRate: z.number().optional(),
+    embeddings: z.record(z.string(), z.object({ x: z.number(), y: z.number() })).optional(),
+  });
+
+  app.post("/api/v1/nlp/update-similarity", async (c) => {
+    const body = tripletUpdateSchema.parse(await c.req.json());
+
+    const allKeywords = store.listKeywords();
+    const keywordIds = allKeywords.map(k => k.id);
+
+    let embeddings: EmbeddingMap;
+    if (body.embeddings) {
+      embeddings = new Map(Object.entries(body.embeddings));
+    } else {
+      embeddings = initEmbeddings(keywordIds);
+    }
+
+    // Apply one triplet gradient step (modifies embeddings clone in-place)
+    const updated = cloneEmbeddings(embeddings);
+    applyTripletStep(
+      updated,
+      { anchorId: body.anchorId, positiveId: body.positiveId, negativeId: body.negativeId },
+      body.learningRate,
+    );
+
+    // Recompute and persist similarities from updated embeddings
+    const simMap = embeddingsToSimilarities(updated);
+    const updatedPairs: SimilarityEdge[] = [];
+    for (const [key, weight] of simMap) {
+      const [sourceId, targetId] = key.split('|');
+      if (!sourceId || !targetId) continue;
+      store.putSimilarity({ sourceId, targetId, weight });
+      updatedPairs.push({ sourceId, targetId, weight });
+    }
+
+    return ok(c, {
+      embeddings: Object.fromEntries(updated),
+      updatedPairs,
+    });
+  });
 
   app.onError((err, c) => {
     if (err instanceof AppError) {
@@ -222,5 +413,5 @@ export function createApp(options: CreateAppOptions): { app: Hono; } {
 
   app.notFound((c) => fail(c, "VALIDATION_ERROR", "route not found", 404));
 
-  return { app };
+  return { app, store };
 }

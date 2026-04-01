@@ -1,0 +1,53 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_DB_CONFIG: api
+    ports:
+      - "${PORT:-4410}:4410"
+    volumes:
+      - labby-data:/data
+    environment:
+      PORT: 4410
+      DB_PATH: /data/labby.db
+
+      # PASETO token signing keys (generate with: openssl rand -base64 32)
+      PASETO_SECRET: ${PASETO_SECRET}
+      # PASETO_ACCESS_KEY: ${PASETO_ACCESS_KEY}
+      # PASETO_REFRESH_KEY: ${PASETO_REFRESH_KEY}
+
+      # Token TTLs
+      AUTH_ACCESS_TTL: ${AUTH_ACCESS_TTL:-15m}
+      AUTH_REFRESH_TTL: ${AUTH_REFRESH_TTL:-30d}
+
+      # Root user (credentials from environment only, never stored in DB)
+      ROOT_USERNAME: ${ROOT_USERNAME:-root}
+      ROOT_PASSWORD: ${ROOT_PASSWORD:?ROOT_PASSWORD is required}
+      ROOT_EMAIL: ${ROOT_EMAIL:-}
+
+      # Bootstrap initial admin account (created on first run if no admin exists)
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+
+      # SMTP (optional – for email notifications)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      NOTIFY_RECIPIENTS: ${NOTIFY_RECIPIENTS:-}
+
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4410/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  labby-data:

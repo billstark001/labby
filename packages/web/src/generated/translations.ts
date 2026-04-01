@@ -91,7 +91,12 @@ export const en = {
   "selectNewQuestioner": "Select New Questioner",
   "similarity": "Similarity",
   "confirm": "Confirm",
-  "noConfigYet": "No configuration yet. Create one to get started."
+  "noConfigYet": "No configuration yet. Create one to get started.",
+  "loginIdentity": "Username or Email",
+  "loginPassword": "Password",
+  "loginSubmit": "Sign In",
+  "loggingIn": "Signing in…",
+  "logout": "Sign Out"
 } as const
 
 export const zhCN = {
@@ -185,7 +190,12 @@ export const zhCN = {
   "selectNewQuestioner": "选择新的提问人",
   "similarity": "相似度",
   "confirm": "确认",
-  "noConfigYet": "尚无排班规则，请先创建。"
+  "noConfigYet": "尚无排班规则，请先创建。",
+  "loginIdentity": "用户名或邮箱",
+  "loginPassword": "密码",
+  "loginSubmit": "登录",
+  "loggingIn": "登录中…",
+  "logout": "退出登录"
 } as const
 
 export const jaJP = {
@@ -279,7 +289,12 @@ export const jaJP = {
   "selectNewQuestioner": "新しい質問者を選択",
   "similarity": "類似度",
   "confirm": "確認",
-  "noConfigYet": "設定がまだありません。作成してください。"
+  "noConfigYet": "設定がまだありません。作成してください。",
+  "loginIdentity": "ユーザー名またはメール",
+  "loginPassword": "パスワード",
+  "loginSubmit": "サインイン",
+  "loggingIn": "サインイン中…",
+  "logout": "サインアウト"
 } as const
 
 export type Lang = 'en' | 'zh-CN' | 'ja-JP'

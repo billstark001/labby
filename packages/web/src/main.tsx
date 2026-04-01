@@ -1,4 +1,4 @@
-/** Application entry point. Loads data from IndexedDB and mounts Preact app. */
+/** Application entry point. Loads data from IndexedDB (or API) and mounts Preact app. */
 import { render } from 'preact';
 import {
   keywordsSignal,

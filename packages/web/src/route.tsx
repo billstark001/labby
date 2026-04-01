@@ -3,9 +3,10 @@ import { PersonsPage } from './pages/PersonsPage.js';
 import { SchedulePage } from './pages/SchedulePage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
 import { KeywordsPage } from './pages/KeywordsPage.js';
+import { LoginPage } from './pages/LoginPage.js';
 
 export function renderRoute(route: AppRoute) {
-
+  if (route === '/login') return <LoginPage />;
   if (route === '/persons') return <PersonsPage />;
   if (route === '/keywords') return <KeywordsPage />;
   if (route === '/schedule') return <SchedulePage />;

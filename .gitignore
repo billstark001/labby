@@ -137,3 +137,9 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Server runtime data
+run/
+*.db
+*.db-shm
+*.db-wal

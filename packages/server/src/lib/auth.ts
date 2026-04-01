@@ -4,7 +4,10 @@ import { V4 } from '@mpoonuru/paseto';
 
 import { AppError } from './errors.js';
 import { hashPassword, verifyPassword } from './password.js';
-import type { AuthRole, RefreshTokenRecord, SqliteStore, StoredUser } from '../store/sqlite.js';
+import { UserRole, type AuthRole, type RefreshTokenRecord, type SqliteStore, type StoredUser } from '../store/sqlite.js';
+
+export { UserRole };
+export type { AuthRole };
 
 export interface AuthTokens {
   access_token: string;
@@ -42,6 +45,10 @@ export interface AuthServiceOptions {
   refreshTtl: string;
   accessKey: Buffer | string;
   refreshKey: Buffer | string;
+  /** Root user credentials from environment variables (never stored in DB). */
+  rootUsername?: string;
+  rootPassword?: string;
+  rootEmail?: string;
 }
 
 function parseDurationMs(input: string): number {
@@ -76,29 +83,75 @@ export function resolvePasetoKey(secret: string | undefined, purpose: string): B
 
 export class AuthService {
   private readonly refreshTtlMs: number;
+  private readonly rootUsername: string | undefined;
+  private readonly rootPassword: string | undefined;
+  private readonly rootEmail: string | undefined;
 
   constructor(private readonly options: AuthServiceOptions) {
     this.refreshTtlMs = parseDurationMs(options.refreshTtl);
+    this.rootUsername = options.rootUsername?.trim() || undefined;
+    this.rootPassword = options.rootPassword?.trim() || undefined;
+    this.rootEmail = options.rootEmail?.trim() || undefined;
   }
 
+  /** Create a regular user or admin in the DB (used for bootstrapping initial admin). */
   async bootstrapUser(input: {
     username: string;
     password: string;
-    role?: AuthRole;
+    role?: typeof UserRole.Admin | typeof UserRole.User;
     email?: string;
   }): Promise<StoredUser> {
     return this.options.store.createUserIfMissing({
       id: randomUUID(),
       username: input.username.trim(),
       email: input.email?.trim(),
-      role: input.role ?? 'admin',
+      role: input.role ?? UserRole.Admin,
       passwordHash: hashPassword(input.password),
       disabled: false,
       createdAt: Date.now(),
     });
   }
 
+  /** Issue a new user account. Only root can create admins; admin/root can create users. */
+  async issueUser(input: {
+    username: string;
+    password: string;
+    role: typeof UserRole.Admin | typeof UserRole.User;
+    email?: string;
+    issuerRole: AuthRole;
+  }): Promise<StoredUser> {
+    if (input.role === UserRole.Admin && input.issuerRole !== UserRole.Root) {
+      throw new AppError('AUTH_FORBIDDEN', 'only root can issue admin accounts', 403);
+    }
+    if (input.issuerRole === UserRole.User) {
+      throw new AppError('AUTH_FORBIDDEN', 'users cannot issue accounts', 403);
+    }
+    const existing = this.options.store.findUserByIdentity(input.username);
+    if (existing) {
+      throw new AppError('VALIDATION_ERROR', 'username already exists', 409);
+    }
+    const user: StoredUser = {
+      id: randomUUID(),
+      username: input.username.trim(),
+      email: input.email?.trim(),
+      role: input.role,
+      passwordHash: hashPassword(input.password),
+      disabled: false,
+      createdAt: Date.now(),
+    };
+    this.options.store.createUser(user);
+    return user;
+  }
+
   async login(identity: string, password: string): Promise<AuthTokens> {
+    // Check root user first (not in DB)
+    if (this.rootUsername && this._isRootIdentity(identity)) {
+      if (!this.rootPassword || password !== this.rootPassword) {
+        throw new AppError('AUTH_INVALID', 'invalid credentials', 401);
+      }
+      return this.issueRootTokenPair();
+    }
+
     const user = this.options.store.findUserByIdentity(identity);
     if (!user || user.disabled || !verifyPassword(password, user.passwordHash)) {
       throw new AppError('AUTH_INVALID', 'invalid credentials', 401);
@@ -108,8 +161,24 @@ export class AuthService {
     return this.issueTokenPair(user);
   }
 
+  private _isRootIdentity(identity: string): boolean {
+    const norm = identity.trim().toLowerCase();
+    if (this.rootUsername && norm === this.rootUsername.toLowerCase()) return true;
+    if (this.rootEmail && norm === this.rootEmail.toLowerCase()) return true;
+    return false;
+  }
+
   async refresh(refreshToken: string): Promise<AuthTokens> {
     const payload = await this.decryptRefreshToken(refreshToken);
+
+    // Root refresh tokens are special: no DB record, just re-issue
+    if (payload.role === UserRole.Root) {
+      if (!this.rootUsername) {
+        throw new AppError('AUTH_INVALID', 'root user is not configured', 401);
+      }
+      return this.issueRootTokenPair();
+    }
+
     const record = this.options.store.getRefreshToken(payload.jti);
     if (!record || record.revokedAt !== null || record.expiresAt <= Date.now()) {
       throw new AppError('AUTH_INVALID', 'refresh token is invalid', 401);
@@ -142,6 +211,18 @@ export class AuthService {
       throw new AppError('AUTH_INVALID', 'access token is invalid', 401);
     }
 
+    // Root session: verify root is still configured
+    if (payload.role === UserRole.Root) {
+      if (!this.rootUsername) {
+        throw new AppError('AUTH_INVALID', 'root user is not configured', 401);
+      }
+      return {
+        userId: 'root',
+        username: this.rootUsername,
+        role: UserRole.Root,
+      };
+    }
+
     const user = this.options.store.getUserById(payload.userId);
     if (!user || user.disabled) {
       throw new AppError('AUTH_INVALID', 'user is unavailable', 401);
@@ -155,8 +236,53 @@ export class AuthService {
   }
 
   logout(userId: string): void {
+    if (userId === 'root') return; // Root has no DB records to revoke
     this.options.store.revokeAllRefreshTokensForUser(userId);
     this.options.store.pruneExpiredRefreshTokens();
+  }
+
+  private async issueRootTokenPair(): Promise<AuthTokens> {
+    const accessToken = await V4.encrypt(
+      {
+        typ: 'access',
+        jti: randomUUID(),
+        userId: 'root',
+        username: this.rootUsername!,
+        role: UserRole.Root,
+      } satisfies AccessTokenPayload,
+      this.options.accessKey,
+      {
+        expiresIn: this.options.accessTtl,
+        audience: this.options.audience,
+        issuer: this.options.issuer,
+        subject: String(UserRole.Root),
+        iat: true,
+      },
+    );
+
+    const refreshToken = await V4.encrypt(
+      {
+        typ: 'refresh',
+        jti: randomUUID(),
+        userId: 'root',
+        username: this.rootUsername!,
+        role: UserRole.Root,
+      } satisfies RefreshTokenPayload,
+      this.options.refreshKey,
+      {
+        expiresIn: this.options.refreshTtl,
+        audience: this.options.audience,
+        issuer: this.options.issuer,
+        subject: String(UserRole.Root),
+        iat: true,
+      },
+    );
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: 'Bearer',
+    };
   }
 
   private async issueTokenPair(user: StoredUser): Promise<AuthTokens> {
@@ -182,7 +308,7 @@ export class AuthService {
         expiresIn: this.options.accessTtl,
         audience: this.options.audience,
         issuer: this.options.issuer,
-        subject: user.role,
+        subject: String(user.role),
         iat: true,
       },
     );
@@ -200,7 +326,7 @@ export class AuthService {
         expiresIn: this.options.refreshTtl,
         audience: this.options.audience,
         issuer: this.options.issuer,
-        subject: user.role,
+        subject: String(user.role),
         iat: true,
       },
     );

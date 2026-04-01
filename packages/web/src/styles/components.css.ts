@@ -633,3 +633,54 @@ export const editableCell = style({
   },
 });
 
+
+
+// ---------------------------------------------------------------------------
+// Login page
+// ---------------------------------------------------------------------------
+
+export const loginShell = style({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minHeight: '100vh',
+  background: vars.color.background,
+  padding: vars.space.lg,
+});
+
+export const loginCard = style({
+  width: '100%',
+  maxWidth: '380px',
+  background: vars.color.surface,
+  border: `1px solid ${vars.color.border}`,
+  borderRadius: vars.radius.lg,
+  padding: vars.space.xl,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: vars.space.md,
+});
+
+export const loginHeader = style({
+  display: 'flex',
+  alignItems: 'center',
+  gap: vars.space.sm,
+  marginBottom: vars.space.sm,
+});
+
+export const loginTitle = style({
+  fontSize: '1.5rem',
+  fontWeight: 700,
+  margin: 0,
+  color: vars.color.text,
+});
+
+export const loginError = style({
+  color: vars.color.danger,
+  fontSize: '0.875rem',
+  margin: `${vars.space.xs} 0`,
+});
+
+export const loginSubmit = style({
+  width: '100%',
+  marginTop: vars.space.sm,
+});

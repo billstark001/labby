@@ -1,8 +1,9 @@
 /** Root application shell with sidebar navigation. */
 import { useState } from 'preact/hooks';
-import { effect } from '@preact/signals';
-import { Calendar, GitBranch, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
+import { effect, useComputed } from '@preact/signals';
+import { Calendar, LogOut, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
 import { themeSignal } from './store/index.js';
+import { isAuthenticated, logout } from './lib/auth.js';
 import { i18n } from './i18n.js';
 import type { UIStrings } from './i18n.js';
 import * as s from './styles/components.css.js';
@@ -11,6 +12,8 @@ import { renderRoute } from './route';
 import { ConfirmDialogComponent } from './components/ui/Dialog.js';
 import { Toaster } from './components/ui/Toast.js';
 import clsx from 'clsx';
+
+const IS_SERVER_MODE = import.meta.env.VITE_DB_CONFIG === 'api';
 
 const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrings }[] = [
   { key: '/schedule', icon: Calendar, labelKey: 'navSchedule' },
@@ -38,6 +41,29 @@ export function App() {
   const route = useRoute();
   const theme = themeSignal.value;
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const authed = useComputed(() => isAuthenticated.value);
+
+  // In server mode, redirect unauthenticated users to the login page
+  if (IS_SERVER_MODE && !authed.value && route !== '/login') {
+    navigate('/login');
+    return null;
+  }
+  // Redirect authenticated users away from the login page
+  if (IS_SERVER_MODE && authed.value && route === '/login') {
+    navigate('/schedule');
+    return null;
+  }
+
+  // Show login page without the shell chrome
+  if (route === '/login') {
+    return (
+      <>
+        {renderRoute(route)}
+        <ConfirmDialogComponent />
+        <Toaster />
+      </>
+    );
+  }
 
   const toggleTheme = () => {
     themeSignal.value = themeSignal.value === 'light' ? 'dark' : 'light';
@@ -46,6 +72,11 @@ export function App() {
   const handleNavigate = (path: AppRoute) => {
     navigate(path);
     setSidebarOpen(false);
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
   };
 
   return (
@@ -96,6 +127,16 @@ export function App() {
         >
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </button>
+        {IS_SERVER_MODE && authed.value && (
+          <button
+            class={s.navIconButtonDesktop}
+            onClick={handleLogout}
+            title={t('logout')}
+          >
+            <LogOut size={16} />
+            <span class={s.hideOnMobile}>{t('logout')}</span>
+          </button>
+        )}
       </aside>
 
       {/* Main content */}

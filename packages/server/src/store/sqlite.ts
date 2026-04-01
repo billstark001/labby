@@ -9,7 +9,14 @@ import type {
   SimilarityEdge,
 } from '@labby/core';
 
-export type AuthRole = 'user' | 'admin';
+/** Numeric role stored in the database (smallint). Root (2) is never stored. */
+export const UserRole = {
+  User: 0,
+  Admin: 1,
+  Root: 2,
+} as const;
+
+export type AuthRole = typeof UserRole[keyof typeof UserRole];
 
 export interface StoredUser {
   id: string;
@@ -105,7 +112,7 @@ export class SqliteStore {
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
         email TEXT UNIQUE,
-        role TEXT NOT NULL,
+        role INTEGER NOT NULL,
         password_hash TEXT NOT NULL,
         disabled INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
@@ -351,6 +358,27 @@ export class SqliteStore {
       JSON.stringify(user),
     );
     return user;
+  }
+
+  createUser(user: StoredUser): void {
+    this.db.prepare(`
+      INSERT INTO users (id, username, email, role, password_hash, disabled, created_at, payload)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      user.id,
+      user.username,
+      user.email ?? null,
+      user.role,
+      user.passwordHash,
+      user.disabled ? 1 : 0,
+      user.createdAt,
+      JSON.stringify(user),
+    );
+  }
+
+  listUsers(): StoredUser[] {
+    return (this.db.prepare('SELECT payload FROM users ORDER BY created_at').all() as Array<{ payload: string }>)
+      .map(row => this.parsePayload<StoredUser>(row.payload));
   }
 
   saveRefreshToken(record: RefreshTokenRecord): void {
