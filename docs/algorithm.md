@@ -14,7 +14,7 @@ The solver lives in `packages/core/src/solver.ts` and combines:
 - deterministic date generation
 - availability-aware initial assignment
 - local search with simulated annealing
-- fairness and relevance penalties in the cost function
+- fairness, relevance, and constraint penalties in the cost function
 
 ## Inputs
 
@@ -24,6 +24,7 @@ The solver uses these inputs:
 - keyword similarity map: used to estimate topic relevance between presenter and questioner
 - schedule config: meeting days, date range, presenter count, questioner count, and target similarity radius
 - unavailabilities: date ranges where a person cannot present or ask questions
+- optional scheduling constraints
 - previous plan and change date: only for incremental scheduling
 
 ## Session Dates
@@ -118,6 +119,17 @@ Examples:
 
 In practice, the mutation step also repairs these cases directly.
 
+### 6. Constraint penalties
+
+The solver also supports optional explicit constraints.
+
+Current constraint types:
+
+- `no-overlap`: penalizes cases where members of the same configured group appear as presenter and questioner in the same presentation
+- `affinity-boost`: rewards pairings where members of the same configured group appear together in one presentation
+
+These constraints are evaluated inside the cost function together with the fairness and relevance penalties.
+
 ## Search Strategy
 
 After the initial schedule is built, Labby improves it with simulated annealing.
@@ -155,6 +167,21 @@ The incremental solver also adds a Hamming penalty.
 
 This reduces schedule churn after small updates.
 
+## Server Endpoints
+
+In API-backed mode, the server exposes the solver through these routes:
+
+- `POST /api/v1/solver/run`: full scheduling
+- `POST /api/v1/solver/run-incremental`: incremental scheduling from a `changeDate`
+
+Both routes load persons, similarities, configs, and unavailabilities from server storage before calling the core solver.
+
+The API also exposes keyword-learning support through:
+
+- `POST /api/v1/nlp/update-similarity`
+
+This endpoint applies one triplet-learning step, recomputes the similarity graph, and persists the updated weights.
+
 ## Practical Notes
 
 - If everyone is unavailable on a session date, the session becomes empty.
@@ -169,4 +196,5 @@ The current algorithm aims to produce schedules that are:
 - fair across presenters and questioners
 - diverse in interaction patterns
 - aligned with keyword similarity goals
+- aware of configured constraints
 - stable under incremental changes
