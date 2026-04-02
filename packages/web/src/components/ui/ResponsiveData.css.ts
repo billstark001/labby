@@ -1,6 +1,6 @@
 import { style } from '@vanilla-extract/css';
-import { breakpoints, vars } from '../../styles/theme.css.js';
-import { card } from '../../styles/components.css.js';
+import { breakpoints, vars } from '../../styles/theme.css';
+import { card } from '../../styles/components.css';
 
 export const root = style({
   display: 'flex',

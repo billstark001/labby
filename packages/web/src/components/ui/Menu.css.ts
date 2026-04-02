@@ -1,6 +1,6 @@
 /** Menu component styles. */
 import { style } from '@vanilla-extract/css';
-import { vars } from '../../styles/theme.css.js';
+import { vars } from '../../styles/theme.css';
 
 export const menuContent = style({
   background: vars.color.surface,

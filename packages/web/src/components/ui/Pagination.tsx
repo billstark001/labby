@@ -1,7 +1,7 @@
 import { type ComponentChildren } from 'preact';
 import clsx from 'clsx';
-import * as base from '../../styles/components.css.js';
-import * as s from './Pagination.css.js';
+import * as base from '../../styles/components.css';
+import * as s from './Pagination.css';
 
 type PaginationItem = number | 'ellipsis';
 

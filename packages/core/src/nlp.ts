@@ -9,7 +9,7 @@
  * The gradient step moves A and C closer, and A and B farther apart.
  */
 
-import type { TripletQuery } from './types.js';
+import type { TripletQuery } from './types';
 
 /** 2D position in the hidden embedding space. */
 export interface EmbeddingPoint {

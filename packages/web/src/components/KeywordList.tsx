@@ -1,20 +1,20 @@
 /** Keyword management panel. */
 import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import { personsSignal } from '../store/index.js';
-import { displayName } from '@/i18n.js';
-import { listKeywordsPage, loadAllKeywords, loadAllPersons, useDatabase } from '../db/index.js';
-import * as s from '../styles/components.css.js';
+import { personsSignal } from '../store/index';
+import { displayName } from '@/i18n';
+import { listKeywordsPage, loadAllKeywords, loadAllPersons, useDatabase } from '../db/index';
+import * as s from '../styles/components.css';
 import {
   Button,
   Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from './ui.js';
-import { Dialog, confirmDialog } from './ui/Dialog.js';
+} from './ui';
+import { Dialog, confirmDialog } from './ui/Dialog';
 import type { Keyword } from '@labby/core';
-import { i18n } from '@/i18n.js';
+import { i18n } from '@/i18n';
 
 interface KeywordFormProps {
   initial?: Partial<Keyword>;

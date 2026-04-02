@@ -1,6 +1,6 @@
 /** Shared component styles. */
 import { style, styleVariants } from '@vanilla-extract/css';
-import { breakpoints, vars } from './theme.css.js';
+import { breakpoints, vars } from './theme.css';
 
 // ---------------------------------------------------------------------------
 // Layout

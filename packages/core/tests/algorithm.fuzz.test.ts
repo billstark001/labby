@@ -10,7 +10,7 @@ import {
   type SchedulePlan,
   type Session,
   type TripletQuery,
-} from '../src/index.js';
+} from '../src/index';
 
 function withSeed<T>(seed: number, fn: () => T): T {
   const original = Math.random;

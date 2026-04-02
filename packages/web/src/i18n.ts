@@ -1,6 +1,6 @@
-import { en, jaJP, zhCN } from './generated/translations.js';
-import type { TranslationKey } from './generated/translations.js';
-import { createI18n } from './lib/i18n.js';
+import { en, jaJP, zhCN } from './generated/translations';
+import type { TranslationKey } from './generated/translations';
+import { createI18n } from './lib/i18n';
 
 export type Locale = 'en' | 'zh-CN' | 'ja-JP';
 export type UIStrings = Record<TranslationKey, string>;

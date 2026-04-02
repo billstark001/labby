@@ -16,7 +16,7 @@ import type {
   PaginatedResult,
 } from '@labby/core';
 
-import { apiClient, ApiClient } from '@/lib/api.js';
+import { apiClient, ApiClient } from '@/lib/api';
 
 function normalizeListQuery(query: ListQuery): ListQuery {
   return {

@@ -1,7 +1,7 @@
 import { type ComponentChildren, type JSX } from 'preact';
 import clsx from 'clsx';
-import * as base from '../../styles/components.css.js';
-import * as s from './ResponsiveData.css.js';
+import * as base from '../../styles/components.css';
+import * as s from './ResponsiveData.css';
 
 type RowKey = string | number;
 

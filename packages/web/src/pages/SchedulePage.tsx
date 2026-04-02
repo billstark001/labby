@@ -11,8 +11,8 @@ import {
   isComputingSignal,
   personMapSignal,
   unavailabilitiesSignal,
-} from '../store/index.js';
-import { fallbackEntityId, displayName } from '@/i18n.js';
+} from '../store/index';
+import { fallbackEntityId, displayName } from '@/i18n';
 import {
   loadAllConfigs,
   loadAllPersons,
@@ -20,16 +20,16 @@ import {
   loadAllSimilarities,
   loadAllUnavailabilities,
   useDatabase,
-} from '../db/index.js';
+} from '../db/index';
 import { solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation } from '@labby/core';
-import * as s from '../styles/components.css.js';
+import * as s from '../styles/components.css';
 import {
   Button,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from '../components/ui.js';
+} from '../components/ui';
 import {
   copyScheduleTable,
   copyScheduleHtml,
@@ -37,11 +37,11 @@ import {
   downloadScheduleCsv,
   downloadScheduleHtml,
   downloadScheduleIcs,
-} from '../lib/scheduleExport.js';
-import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
-import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '../components/ui/Menu.js';
-import { toast } from '../components/ui/Toast.js';
-import { i18n } from '@/i18n.js';
+} from '../lib/scheduleExport';
+import { Dialog, confirmDialog } from '../components/ui/Dialog';
+import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '../components/ui/Menu';
+import { toast } from '../components/ui/Toast';
+import { i18n } from '@/i18n';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 

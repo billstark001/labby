@@ -2,12 +2,12 @@
 import { render } from 'preact';
 import {
   embeddingsSignal,
-} from './store/index.js';
-import { initDB } from './db/index.js';
-import { App } from './App.js';
+} from './store/index';
+import { initDB } from './db/index';
+import { App } from './App';
 
 // Import vanilla-extract global styles (registers CSS via side-effects)
-import './styles/global.css.js';
+import './styles/global.css';
 
 async function bootstrap() {
   await initDB();

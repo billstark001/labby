@@ -6,21 +6,21 @@ import {
   keywordsSignal,
   keywordMapSignal,
   schedulesSignal,
-} from '../store/index.js';
-import { fallbackEntityId } from '@/i18n.js';
-import { displayName } from '@/i18n.js';
-import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '../db/index.js';
-import * as s from '../styles/components.css.js';
+} from '../store/index';
+import { fallbackEntityId } from '@/i18n';
+import { displayName } from '@/i18n';
+import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '../db/index';
+import * as s from '../styles/components.css';
 import {
   Button,
   Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from '../components/ui.js';
-import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
+} from '../components/ui';
+import { Dialog, confirmDialog } from '../components/ui/Dialog';
 import type { Person, Keyword } from '@labby/core';
-import { i18n } from '@/i18n.js';
+import { i18n } from '@/i18n';
 
 const MAX_KEYWORDS = 10;
 

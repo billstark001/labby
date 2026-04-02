@@ -12,7 +12,7 @@ import type {
   SchedulePlan,
   SimilarityEdge,
 } from '@labby/core';
-import { SqliteStore, UserRole, type RefreshTokenRecord, type StoredUser } from '../src/store/index.js';
+import { SqliteStore, UserRole, type RefreshTokenRecord, type StoredUser } from '../src/store/index';
 
 function createTempDbPath(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));

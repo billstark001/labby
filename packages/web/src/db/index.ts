@@ -18,7 +18,7 @@ import {
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
 import { personsSignal, keywordsSignal, similarityEdgesSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
-import { databaseMode } from '@/lib/runtime.js';
+import { databaseMode } from '@/lib/runtime';
 
 const DB_CONFIG = databaseMode;
 

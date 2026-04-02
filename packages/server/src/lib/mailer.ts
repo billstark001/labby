@@ -7,7 +7,7 @@
 
 import nodemailer, { type Transporter, type SendMailOptions } from 'nodemailer';
 
-import { loadGoogleOAuthClientFromFile } from './google.js';
+import { loadGoogleOAuthClientFromFile } from './google';
 
 export interface SmtpMailerOptions {
   mode: 'smtp';

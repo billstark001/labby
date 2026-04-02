@@ -1,11 +1,11 @@
 /** Data import/export: MsgPack backup, HTML table, CSV via PapaParse. */
 import { encode, decode } from '@msgpack/msgpack';
 import { useEffect, useState } from 'preact/hooks';
-import { dumpDatabase, loadDatabaseSignals, restoreDatabase, useDatabase } from '../db/index.js';
-import * as s from '../styles/components.css.js';
-import { Button } from './ui.js';
-import { i18n } from '@/i18n.js';
-import { toast } from './ui/Toast.js';
+import { dumpDatabase, loadDatabaseSignals, restoreDatabase, useDatabase } from '../db/index';
+import * as s from '../styles/components.css';
+import { Button } from './ui';
+import { i18n } from '@/i18n';
+import { toast } from './ui/Toast';
 import {
   downloadServerBackup,
   fetchSystemCapabilities,
@@ -13,10 +13,10 @@ import {
   uploadServerBackup,
   type BackupTarget,
   type SystemCapabilities,
-} from '@/lib/server-backup.js';
-import { deploymentMode, isFrontendOnlyDeployment, isServerDeployment } from '@/lib/runtime.js';
+} from '@/lib/server-backup';
+import { deploymentMode, isFrontendOnlyDeployment, isServerDeployment } from '@/lib/runtime';
 import clsx from 'clsx';
-import { confirmDialog } from './ui/Dialog.js';
+import { confirmDialog } from './ui/Dialog';
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);

@@ -9,8 +9,8 @@
 import { type ComponentChildren } from 'preact';
 import {
   Tooltip as PrimitiveTooltip,
-} from '../../primitives/Tooltip.js';
-import * as css from './Tooltip.css.js';
+} from '../../primitives/Tooltip';
+import * as css from './Tooltip.css';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
 

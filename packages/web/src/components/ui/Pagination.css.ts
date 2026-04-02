@@ -1,5 +1,5 @@
 import { style } from '@vanilla-extract/css';
-import { breakpoints, vars } from '../../styles/theme.css.js';
+import { breakpoints, vars } from '../../styles/theme.css';
 
 export const root = style({
   display: 'flex',

@@ -1,4 +1,4 @@
-import { apiClient } from './api.js';
+import { apiClient } from './api';
 
 export type BackupTarget = 'email' | 'google-drive' | 'onedrive';
 export type BackupFormat = 'sqlite' | 'msgpack';

@@ -1,9 +1,9 @@
 /** Login page – only shown in server (API) mode. */
 import { useState } from 'preact/hooks';
 import { LogIn } from 'lucide-preact';
-import { login } from '../lib/auth.js';
-import * as s from '../styles/components.css.js';
-import { i18n } from '../i18n.js';
+import { login } from '../lib/auth';
+import * as s from '../styles/components.css';
+import { i18n } from '../i18n';
 
 export function LoginPage() {
   const { t } = i18n;

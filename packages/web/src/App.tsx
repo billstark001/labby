@@ -2,16 +2,16 @@
 import { useEffect, useState } from 'preact/hooks';
 import { effect, useComputed } from '@preact/signals';
 import { Calendar, LogOut, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
-import { themeSignal } from './store/index.js';
-import { AUTH_INVALIDATE_EVENT, isAuthenticated, logout } from './lib/auth.js';
-import { i18n } from './i18n.js';
-import type { UIStrings } from './i18n.js';
-import * as s from './styles/components.css.js';
-import { navigate, useRoute, useSyncRoute, type AppRoute } from './lib/router.js';
+import { themeSignal } from './store/index';
+import { AUTH_INVALIDATE_EVENT, isAuthenticated, logout } from './lib/auth';
+import { i18n } from './i18n';
+import type { UIStrings } from './i18n';
+import * as s from './styles/components.css';
+import { navigate, useRoute, useSyncRoute, type AppRoute } from './lib/router';
 import { renderRoute } from './route';
-import { ConfirmDialogComponent } from './components/ui/Dialog.js';
-import { Toaster } from './components/ui/Toast.js';
-import { isServerDeployment } from './lib/runtime.js';
+import { ConfirmDialogComponent } from './components/ui/Dialog';
+import { Toaster } from './components/ui/Toast';
+import { isServerDeployment } from './lib/runtime';
 import clsx from 'clsx';
 
 const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrings }[] = [

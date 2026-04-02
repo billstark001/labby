@@ -1,9 +1,9 @@
 /** Settings panel: language and config management. */
-import { i18n } from '../i18n.js';
-import type { Locale } from '../i18n.js';
-import * as s from '../styles/components.css.js';
-import { DataPanel } from '../components/DataPanel.js';
-import { deploymentMode } from '../lib/runtime.js';
+import { i18n } from '../i18n';
+import type { Locale } from '../i18n';
+import * as s from '../styles/components.css';
+import { DataPanel } from '../components/DataPanel';
+import { deploymentMode } from '../lib/runtime';
 import clsx from 'clsx';
 
 const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];

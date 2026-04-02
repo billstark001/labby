@@ -4,9 +4,9 @@ import {
   keywordsSignal,
   embeddingsSignal,
   similarityEdgesSignal,
-} from '../store/index.js';
-import { displayName } from '@/i18n.js';
-import { useDatabase } from '../db/index.js';
+} from '../store/index';
+import { displayName } from '@/i18n';
+import { useDatabase } from '../db/index';
 import {
   nextTripletQuery,
   applyTripletStep,
@@ -14,9 +14,9 @@ import {
   embeddingsToSimilarities,
 } from '@labby/core';
 import type { SimilarityEdge, TripletQuery } from '@labby/core';
-import * as s from '../styles/components.css.js';
-import { Button } from './ui.js';
-import { i18n } from '@/i18n.js';
+import * as s from '../styles/components.css';
+import { Button } from './ui';
+import { i18n } from '@/i18n';
 
 /** Max number of recently answered pair keys to exclude from next query. */
 const RECENT_PAIR_LIMIT = 5;

@@ -1,5 +1,5 @@
-import { apiFetch } from './auth.js';
-import { isServerDeployment } from './runtime.js';
+import { apiFetch } from './auth';
+import { isServerDeployment } from './runtime';
 
 function redirectToLoginOnUnauthorized(status: number): void {
   if (!isServerDeployment || status !== 401 || typeof window === 'undefined') {
