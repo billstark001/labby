@@ -10,6 +10,7 @@
     "dev:server": "pnpm --filter @labby/server dev",
     "preview": "pnpm --filter @labby/web preview",
     "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
     "lint": "pnpm -r lint"
   },
   "devDependencies": {
