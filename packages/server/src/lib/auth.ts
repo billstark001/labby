@@ -4,7 +4,7 @@ import { V4 } from '@mpoonuru/paseto';
 
 import { AppError } from './errors.js';
 import { hashPassword, verifyPassword } from './password.js';
-import { UserRole, type AuthRole, type RefreshTokenRecord, type SqliteStore, type StoredUser } from '../store/sqlite.js';
+import { UserRole, type AuthRole, type RefreshTokenRecord, type SqliteStore, type StoredUser } from '../store/index.js';
 
 export { UserRole };
 export type { AuthRole };
@@ -126,7 +126,7 @@ export class AuthService {
     if (input.issuerRole === UserRole.User) {
       throw new AppError('AUTH_FORBIDDEN', 'users cannot issue accounts', 403);
     }
-    const existing = this.options.store.findUserByIdentity(input.username);
+    const existing = await this.options.store.findUserByIdentity(input.username);
     if (existing) {
       throw new AppError('VALIDATION_ERROR', 'username already exists', 409);
     }
@@ -139,7 +139,7 @@ export class AuthService {
       disabled: false,
       createdAt: Date.now(),
     };
-    this.options.store.createUser(user);
+    await this.options.store.createUser(user);
     return user;
   }
 
@@ -152,12 +152,12 @@ export class AuthService {
       return this.issueRootTokenPair();
     }
 
-    const user = this.options.store.findUserByIdentity(identity);
+    const user = await this.options.store.findUserByIdentity(identity);
     if (!user || user.disabled || !verifyPassword(password, user.passwordHash)) {
       throw new AppError('AUTH_INVALID', 'invalid credentials', 401);
     }
 
-    this.options.store.pruneExpiredRefreshTokens();
+    await this.options.store.pruneExpiredRefreshTokens();
     return this.issueTokenPair(user);
   }
 
@@ -179,20 +179,20 @@ export class AuthService {
       return this.issueRootTokenPair();
     }
 
-    const record = this.options.store.getRefreshToken(payload.jti);
+    const record = await this.options.store.getRefreshToken(payload.jti);
     if (!record || record.revokedAt !== null || record.expiresAt <= Date.now()) {
       throw new AppError('AUTH_INVALID', 'refresh token is invalid', 401);
     }
 
-    const user = this.options.store.getUserById(payload.userId);
+    const user = await this.options.store.getUserById(payload.userId);
     if (!user || user.disabled) {
       throw new AppError('AUTH_INVALID', 'user is unavailable', 401);
     }
 
     const nextTokens = await this.issueTokenPair(user);
     const nextPayload = await this.decryptRefreshToken(nextTokens.refresh_token);
-    this.options.store.revokeRefreshToken(record.tokenId, nextPayload.jti);
-    this.options.store.pruneExpiredRefreshTokens();
+    await this.options.store.revokeRefreshToken(record.tokenId, nextPayload.jti);
+    await this.options.store.pruneExpiredRefreshTokens();
     return nextTokens;
   }
 
@@ -223,7 +223,7 @@ export class AuthService {
       };
     }
 
-    const user = this.options.store.getUserById(payload.userId);
+    const user = await this.options.store.getUserById(payload.userId);
     if (!user || user.disabled) {
       throw new AppError('AUTH_INVALID', 'user is unavailable', 401);
     }
@@ -235,10 +235,10 @@ export class AuthService {
     };
   }
 
-  logout(userId: string): void {
+  async logout(userId: string): Promise<void> {
     if (userId === 'root') return; // Root has no DB records to revoke
-    this.options.store.revokeAllRefreshTokensForUser(userId);
-    this.options.store.pruneExpiredRefreshTokens();
+    await this.options.store.revokeAllRefreshTokensForUser(userId);
+    await this.options.store.pruneExpiredRefreshTokens();
   }
 
   private async issueRootTokenPair(): Promise<AuthTokens> {
@@ -331,7 +331,7 @@ export class AuthService {
       },
     );
 
-    this.options.store.saveRefreshToken(refreshRecord);
+    await this.options.store.saveRefreshToken(refreshRecord);
 
     return {
       access_token: accessToken,

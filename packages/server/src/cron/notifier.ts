@@ -9,7 +9,7 @@
 import type { ScheduleConfig } from '@labby/core';
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
-import type { SqliteStore } from '../store/sqlite.js';
+import type { SqliteStore } from '../store/index.js';
 
 export interface ScheduleNotifierOptions {
   scheduler: CronScheduler;
@@ -28,9 +28,9 @@ export class ScheduleNotifier {
    * `metadata.notifyTimezone` (optional timezone string) will get a job.
    * Configs without `notifyAt` will have their jobs removed.
    */
-  syncJobs(): void {
+  async syncJobs(): Promise<void> {
     const { scheduler, store } = this.options;
-    const configs = store.listConfigs();
+    const configs = await store.listConfigs();
     const activeNames = new Set<string>();
 
     for (const config of configs) {
@@ -70,7 +70,7 @@ export class ScheduleNotifier {
     if (recipients.length === 0) return;
 
     // Find the most recent schedule for this config (sort descending by createdAt)
-    const schedules = store.listSchedules()
+    const schedules = (await store.listSchedules())
       .filter(s => s.configId === config.id)
       .sort((a, b) => b.createdAt - a.createdAt);
     const latest = schedules[0];

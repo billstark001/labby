@@ -6,7 +6,7 @@ import path from 'path';
 import type { CronScheduler } from '../cron/scheduler.js';
 import { fetchGoogleAccessToken, loadGoogleOAuthClientFromFile } from '../lib/google.js';
 import type { Mailer } from '../lib/mailer.js';
-import type { DatabaseBackupSnapshot, SqliteStore } from '../store/sqlite.js';
+import type { DatabaseBackupSnapshot, SqliteStore } from '../store/index.js';
 
 type BackupFormat = 'sqlite' | 'msgpack';
 type BackupTarget = 'email' | 'google-drive' | 'onedrive';
@@ -257,7 +257,7 @@ export class BackupService {
 
   async createDownloadArtifact(format: BackupFormat = this.config.format): Promise<BackupArtifact> {
     return format === 'msgpack'
-      ? buildMsgpackArtifact(this.config.filenamePrefix, this.options.store.exportBackupSnapshot())
+      ? buildMsgpackArtifact(this.config.filenamePrefix, await this.options.store.exportBackupSnapshot())
       : buildSqliteArtifact(this.config.filenamePrefix, this.options.store);
   }
 
@@ -269,9 +269,9 @@ export class BackupService {
     if (input.format === 'msgpack') {
       const snapshot = decode(input.content);
       if (isFullSnapshotPayload(snapshot)) {
-        this.options.store.restoreBackupSnapshot(snapshot);
+        await this.options.store.restoreBackupSnapshot(snapshot);
       } else {
-        this.options.store.restoreEntityDump(snapshot);
+        await this.options.store.restoreEntityDump(snapshot);
       }
       return;
     }
@@ -280,7 +280,7 @@ export class BackupService {
     const tempPath = path.join(os.tmpdir(), `${this.config.filenamePrefix}-restore-${stamp}.sqlite3`);
     await fs.writeFile(tempPath, input.content);
     try {
-      this.options.store.restoreFromSqliteFile(tempPath);
+      await this.options.store.restoreFromSqliteFile(tempPath);
     } finally {
       await fs.rm(tempPath, { force: true });
     }

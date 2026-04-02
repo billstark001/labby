@@ -3,6 +3,7 @@ import { createBackupServiceFromEnv, setActiveBackupService } from "./backup/ser
 import { createApp } from "./app.js";
 import { scheduler } from "./cron/scheduler.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
+import type { StoreConnectionConfig } from "./store/index.js";
 
 import { config } from "dotenv";
 
@@ -10,9 +11,25 @@ config();
 
 const port = Number(process.env.PORT ?? 4410);
 const dbPath = process.env.DB_PATH ?? "./run/labby.db";
+const dbDriver = process.env.DB_DRIVER?.trim().toLowerCase();
+
+const dbConfig: StoreConnectionConfig = dbDriver === "postgres"
+  ? {
+    dialect: "postgres",
+    connectionString: process.env.DATABASE_URL ?? "",
+    ssl: process.env.DATABASE_SSL === "1" || process.env.DATABASE_SSL === "true",
+  }
+  : {
+    dialect: "sqlite",
+    path: dbPath,
+  };
+
+if (dbConfig.dialect === "postgres" && !dbConfig.connectionString) {
+  throw new Error("DATABASE_URL is required when DB_DRIVER=postgres");
+}
 
 const { app, store } = createApp({
-  dbPath,
+  db: dbConfig,
   enableLogger: true,
   authIssuer: process.env.AUTH_ISSUER,
   authAudience: process.env.AUTH_AUDIENCE,
@@ -39,7 +56,7 @@ if (mailer) {
 
   const { ScheduleNotifier } = await import("./cron/notifier.js");
   const notifier = new ScheduleNotifier({ scheduler, mailer, store, recipients });
-  notifier.syncJobs();
+  await notifier.syncJobs();
   console.info(`[cron] Email notifications enabled. Registered ${scheduler.registeredJobs.length} job(s).`);
 } else {
   console.info("[cron] SMTP not configured; email notifications disabled.");
@@ -67,7 +84,10 @@ const server = serve({ fetch: app.fetch, port }, (info) => {
 // Graceful shutdown
 const shutdown = () => {
   scheduler.shutdown();
-  server.close(() => process.exit(0));
+  server.close(async () => {
+    await store.close();
+    process.exit(0);
+  });
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
