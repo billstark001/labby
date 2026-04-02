@@ -7,9 +7,21 @@ import type {
   SimilarityEdge,
 } from './types.js';
 
+export interface ListQuery {
+  offset: number;
+  limit: number;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface PersonStore {
   get(id: string): Promise<Person | undefined>;
-  getAll(): Promise<Person[]>;
+  list(query: ListQuery): Promise<PaginatedResult<Person>>;
   put(value: Person): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;
@@ -17,7 +29,7 @@ export interface PersonStore {
 
 export interface KeywordStore {
   get(id: string): Promise<Keyword | undefined>;
-  getAll(): Promise<Keyword[]>;
+  list(query: ListQuery): Promise<PaginatedResult<Keyword>>;
   put(value: Keyword): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;
@@ -25,7 +37,7 @@ export interface KeywordStore {
 
 export interface SimilarityStore {
   get(sourceId: string, targetId: string): Promise<SimilarityEdge | undefined>;
-  getAll(): Promise<SimilarityEdge[]>;
+  list(query: ListQuery): Promise<PaginatedResult<SimilarityEdge>>;
   put(value: SimilarityEdge): Promise<void>;
   delete(sourceId: string, targetId: string): Promise<void>;
   clear(): Promise<void>;
@@ -33,7 +45,7 @@ export interface SimilarityStore {
 
 export interface ScheduleConfigStore {
   get(id: string): Promise<ScheduleConfig | undefined>;
-  getAll(): Promise<ScheduleConfig[]>;
+  list(query: ListQuery): Promise<PaginatedResult<ScheduleConfig>>;
   put(value: ScheduleConfig): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;
@@ -41,7 +53,7 @@ export interface ScheduleConfigStore {
 
 export interface SchedulePlanStore {
   get(id: string): Promise<SchedulePlan | undefined>;
-  getAll(): Promise<SchedulePlan[]>;
+  list(query: ListQuery): Promise<PaginatedResult<SchedulePlan>>;
   put(value: SchedulePlan): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;
@@ -49,7 +61,7 @@ export interface SchedulePlanStore {
 
 export interface PersonUnavailabilityStore {
   get(id: string): Promise<PersonUnavailability | undefined>;
-  getAll(): Promise<PersonUnavailability[]>;
+  list(query: ListQuery): Promise<PaginatedResult<PersonUnavailability>>;
   put(value: PersonUnavailability): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;

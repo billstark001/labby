@@ -18,6 +18,8 @@ import type {
   SchedulePlanStore,
   SimilarityEdge,
   SimilarityStore,
+  ListQuery,
+  PaginatedResult,
 } from '@labby/core';
 
 const DB_NAME = 'labby';
@@ -57,11 +59,46 @@ export async function createDB(): Promise<IDBPDatabase> {
   return idb;
 }
 
+function normalizeListQuery(query: ListQuery): ListQuery {
+  return {
+    offset: Math.max(0, Math.floor(query.offset)),
+    limit: Math.max(1, Math.floor(query.limit)),
+  };
+}
+
+async function listStore<T>(idb: IDBPDatabase, storeName: string, query: ListQuery): Promise<PaginatedResult<T>> {
+  const { offset, limit } = normalizeListQuery(query);
+  const tx = idb.transaction(storeName, 'readonly');
+  const store = tx.objectStore(storeName);
+  const total = await store.count();
+
+  if (offset >= total) {
+    await tx.done;
+    return { items: [], total, offset, limit };
+  }
+
+  const items: T[] = [];
+  let cursor = await store.openCursor();
+  let skipped = 0;
+  while (cursor && skipped < offset) {
+    cursor = await cursor.continue();
+    skipped += 1;
+  }
+
+  while (cursor && items.length < limit) {
+    items.push(cursor.value as T);
+    cursor = await cursor.continue();
+  }
+
+  await tx.done;
+  return { items, total, offset, limit };
+}
+
 export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const personsStore: PersonStore = {
     get: (id: string) => idb.get('persons', id),
-    getAll: () => idb.getAll('persons'),
+    list: (query: ListQuery) => listStore<Person>(idb, 'persons', query),
     put: (value: Person) => idb.put('persons', value).then(() => void 0),
     delete: (id: string) => idb.delete('persons', id),
     clear: () => idb.clear('persons'),
@@ -69,7 +106,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const keywordsStore: KeywordStore = {
     get: (id: string) => idb.get('keywords', id),
-    getAll: () => idb.getAll('keywords'),
+    list: (query: ListQuery) => listStore<Keyword>(idb, 'keywords', query),
     put: (value: Keyword) => idb.put('keywords', value).then(() => void 0),
     delete: (id: string) => idb.delete('keywords', id),
     clear: () => idb.clear('keywords'),
@@ -77,7 +114,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const similaritiesStore: SimilarityStore = {
     get: (sourceId: string, targetId: string) => idb.get('similarities', [sourceId, targetId]),
-    getAll: () => idb.getAll('similarities'),
+    list: (query: ListQuery) => listStore<SimilarityEdge>(idb, 'similarities', query),
     put: (value: SimilarityEdge) => idb.put('similarities', value).then(() => void 0),
     delete: (sourceId: string, targetId: string) => idb.delete('similarities', [sourceId, targetId]),
     clear: () => idb.clear('similarities'),
@@ -85,7 +122,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const configsStore: ScheduleConfigStore = {
     get: (id: string) => idb.get('configs', id),
-    getAll: () => idb.getAll('configs'),
+    list: (query: ListQuery) => listStore<ScheduleConfig>(idb, 'configs', query),
     put: (value: ScheduleConfig) => idb.put('configs', value).then(() => void 0),
     delete: (id: string) => idb.delete('configs', id),
     clear: () => idb.clear('configs'),
@@ -93,7 +130,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const schedulesStore: SchedulePlanStore = {
     get: (id: string) => idb.get('schedules', id),
-    getAll: () => idb.getAll('schedules'),
+    list: (query: ListQuery) => listStore<SchedulePlan>(idb, 'schedules', query),
     put: (value: SchedulePlan) => idb.put('schedules', value).then(() => void 0),
     delete: (id: string) => idb.delete('schedules', id),
     clear: () => idb.clear('schedules'),
@@ -101,7 +138,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const unavailabilitiesStore: PersonUnavailabilityStore = {
     get: (id: string) => idb.get('unavailabilities', id),
-    getAll: () => idb.getAll('unavailabilities'),
+    list: (query: ListQuery) => listStore<PersonUnavailability>(idb, 'unavailabilities', query),
     put: (value: PersonUnavailability) => idb.put('unavailabilities', value).then(() => void 0),
     delete: (id: string) => idb.delete('unavailabilities', id),
     clear: () => idb.clear('unavailabilities'),

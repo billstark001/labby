@@ -1,5 +1,5 @@
 /** Person management panel. */
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import {
   personsSignal,
@@ -9,10 +9,11 @@ import {
 } from '../store/index.js';
 import { fallbackEntityId } from '@/i18n.js';
 import { displayName } from '@/i18n.js';
-import { useDatabase } from '../db/index.js';
+import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '../db/index.js';
 import * as s from '../styles/components.css.js';
 import {
   Button,
+  Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
@@ -197,6 +198,35 @@ export function PersonsPage() {
   const persons = personsSignal.value;
   const schedules = schedulesSignal.value;
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalItems, setTotalItems] = useState(0);
+
+  async function refreshPersonsPage(targetPage = page, targetPageSize = pageSize) {
+    const safePage = Math.max(1, targetPage);
+    const offset = (safePage - 1) * targetPageSize;
+    const result = await listPersonsPage(db, offset, targetPageSize);
+    personsSignal.value = result.items;
+    setTotalItems(result.total);
+
+    const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
+    if (safePage > totalPages) {
+      await refreshPersonsPage(totalPages, targetPageSize);
+      return;
+    }
+    if (page !== safePage) {
+      setPage(safePage);
+    }
+  }
+
+  useEffect(() => {
+    void loadAllKeywords(db);
+    void loadAllSchedules(db);
+  }, [db]);
+
+  useEffect(() => {
+    void refreshPersonsPage(page, pageSize);
+  }, [db, page, pageSize]);
 
   /** Check if a person is referenced in any schedule */
   function isPersonReferenced(id: string): boolean {
@@ -212,15 +242,15 @@ export function PersonsPage() {
   async function handleSave(p: Person, newKeywords: Keyword[]) {
     await Promise.all(newKeywords.map(keyword => db.keywords.put(keyword)));
     await db.persons.put(p);
-    keywordsSignal.value = await db.keywords.getAll();
-    personsSignal.value = await db.persons.getAll();
+    await loadAllKeywords(db);
+    await refreshPersonsPage();
     setEditing(null);
   }
 
   async function handleDisableToggle(p: Person) {
     const updated: Person = { ...p, disabled: !p.disabled };
     await db.persons.put(updated);
-    personsSignal.value = await db.persons.getAll();
+    await refreshPersonsPage();
   }
 
   async function handleDelete(p: Person) {
@@ -230,7 +260,7 @@ export function PersonsPage() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.persons.delete(p.id);
-      personsSignal.value = await db.persons.getAll();
+      await refreshPersonsPage();
     });
   }
 
@@ -340,6 +370,17 @@ export function PersonsPage() {
             </Button>
           </>
         )}
+      />
+
+      <Pagination
+        page={page}
+        pageSize={pageSize}
+        totalItems={totalItems}
+        onPageChange={setPage}
+        onPageSizeChange={nextPageSize => {
+          setPageSize(nextPageSize);
+          setPage(1);
+        }}
       />
     </div>
   );

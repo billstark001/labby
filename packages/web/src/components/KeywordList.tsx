@@ -1,12 +1,13 @@
 /** Keyword management panel. */
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import { keywordsSignal, personsSignal } from '../store/index.js';
+import { personsSignal } from '../store/index.js';
 import { displayName } from '@/i18n.js';
-import { useDatabase } from '../db/index.js';
+import { listKeywordsPage, loadAllKeywords, loadAllPersons, useDatabase } from '../db/index.js';
 import * as s from '../styles/components.css.js';
 import {
   Button,
+  Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
@@ -90,9 +91,38 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
 export function KeywordList() {
   const db = useDatabase();
   const { t } = i18n;
-  const keywords = keywordsSignal.value;
   const persons = personsSignal.value;
+  const [pagedKeywords, setPagedKeywords] = useState<Keyword[]>([]);
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalItems, setTotalItems] = useState(0);
+
+  async function refreshKeywordsPage(targetPage = page, targetPageSize = pageSize) {
+    const safePage = Math.max(1, targetPage);
+    const offset = (safePage - 1) * targetPageSize;
+    const result = await listKeywordsPage(db, offset, targetPageSize);
+    setPagedKeywords(result.items);
+    setTotalItems(result.total);
+
+    const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
+    if (safePage > totalPages) {
+      await refreshKeywordsPage(totalPages, targetPageSize);
+      return;
+    }
+    if (page !== safePage) {
+      setPage(safePage);
+    }
+  }
+
+  useEffect(() => {
+    void loadAllPersons(db);
+    void loadAllKeywords(db);
+  }, [db]);
+
+  useEffect(() => {
+    void refreshKeywordsPage(page, pageSize);
+  }, [db, page, pageSize]);
 
   /** Check if a keyword is referenced by any person */
   function isKeywordReferenced(id: string): boolean {
@@ -101,14 +131,16 @@ export function KeywordList() {
 
   async function handleSave(k: Keyword) {
     await db.keywords.put(k);
-    keywordsSignal.value = await db.keywords.getAll();
+    await loadAllKeywords(db);
+    await refreshKeywordsPage();
     setEditing(null);
   }
 
   async function handleDisableToggle(k: Keyword) {
     const updated: Keyword = { ...k, disabled: !k.disabled };
     await db.keywords.put(updated);
-    keywordsSignal.value = await db.keywords.getAll();
+    await loadAllKeywords(db);
+    await refreshKeywordsPage();
   }
 
   async function handleDelete(k: Keyword) {
@@ -118,7 +150,8 @@ export function KeywordList() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.keywords.delete(k.id);
-      keywordsSignal.value = await db.keywords.getAll();
+      await loadAllKeywords(db);
+      await refreshKeywordsPage();
     });
   }
 
@@ -145,7 +178,7 @@ export function KeywordList() {
       )}
 
       <ResponsiveDataView
-        items={keywords}
+        items={pagedKeywords}
         columns={[
           { header: t('name') },
           { header: t('notes') },
@@ -199,6 +232,17 @@ export function KeywordList() {
             </Button>
           </>
         )}
+      />
+
+      <Pagination
+        page={page}
+        pageSize={pageSize}
+        totalItems={totalItems}
+        onPageChange={setPage}
+        onPageSizeChange={nextPageSize => {
+          setPageSize(nextPageSize);
+          setPage(1);
+        }}
       />
     </div>
   );

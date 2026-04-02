@@ -1,4 +1,14 @@
 import { apiFetch } from './auth.js';
+import { isServerDeployment } from './runtime.js';
+
+function redirectToLoginOnUnauthorized(status: number): void {
+  if (!isServerDeployment || status !== 401 || typeof window === 'undefined') {
+    return;
+  }
+  if (window.location.hash !== '#/login') {
+    window.location.hash = '#/login';
+  }
+}
 
 interface ApiEnvelope<T> {
   data: T;
@@ -36,6 +46,7 @@ export class ApiClient {
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await apiFetch(`${this.baseUrl}${path}`, this.withHeaders(init));
+    redirectToLoginOnUnauthorized(response.status);
 
     if (response.status === 204) {
       return undefined as T;
@@ -58,6 +69,7 @@ export class ApiClient {
 
   async requestRaw(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await apiFetch(`${this.baseUrl}${path}`, this.withHeaders(init));
+    redirectToLoginOnUnauthorized(response.status);
     if (!response.ok) {
       const body = await response.json().catch(() => undefined) as ApiErrorEnvelope | undefined;
       throw new Error(body?.message ?? body?.error ?? `Request failed with status ${response.status}`);

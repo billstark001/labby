@@ -104,6 +104,25 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
   });
 
   const app = new Hono();
+
+  function parsePagination(input: { offset?: string; limit?: string }): { offset: number; limit: number } {
+    const rawOffset = Number.parseInt(input.offset ?? '0', 10);
+    const rawLimit = Number.parseInt(input.limit ?? '20', 10);
+    return {
+      offset: Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0,
+      limit: Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 20,
+    };
+  }
+
+  function toPage<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; offset: number; limit: number } {
+    return {
+      items: items.slice(offset, offset + limit),
+      total: items.length,
+      offset,
+      limit,
+    };
+  }
+
   if (options.enableLogger ?? true) {
     app.use("*", logger());
   }
@@ -258,7 +277,10 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
   // Database CRUD routes
   // ---------------------------------------------------------------------------
 
-  app.get("/api/v1/db/persons", (c) => ok(c, store.listPersons()));
+  app.get("/api/v1/db/persons", (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(store.listPersons(), offset, limit));
+  });
   app.get("/api/v1/db/persons/:id", (c) => ok(c, store.getPerson(c.req.param("id")) ?? null));
   app.put("/api/v1/db/persons/:id", async (c) => {
     const person = await c.req.json<Person>();
@@ -270,7 +292,10 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/db/keywords", (c) => ok(c, store.listKeywords()));
+  app.get("/api/v1/db/keywords", (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(store.listKeywords(), offset, limit));
+  });
   app.get("/api/v1/db/keywords/:id", (c) => ok(c, store.getKeyword(c.req.param("id")) ?? null));
   app.put("/api/v1/db/keywords/:id", async (c) => {
     const keyword = await c.req.json<Keyword>();
@@ -282,7 +307,10 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/db/similarities", (c) => ok(c, store.listSimilarities()));
+  app.get("/api/v1/db/similarities", (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(store.listSimilarities(), offset, limit));
+  });
   app.get("/api/v1/db/similarities/:sourceId/:targetId", (c) => {
     return ok(c, store.getSimilarity(c.req.param("sourceId"), c.req.param("targetId")) ?? null);
   });
@@ -300,7 +328,10 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/db/configs", (c) => ok(c, store.listConfigs()));
+  app.get("/api/v1/db/configs", (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(store.listConfigs(), offset, limit));
+  });
   app.get("/api/v1/db/configs/:id", (c) => ok(c, store.getConfig(c.req.param("id")) ?? null));
   app.put("/api/v1/db/configs/:id", async (c) => {
     const config = await c.req.json<ScheduleConfig>();
@@ -312,7 +343,10 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/db/schedules", (c) => ok(c, store.listSchedules()));
+  app.get("/api/v1/db/schedules", (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(store.listSchedules(), offset, limit));
+  });
   app.get("/api/v1/db/schedules/:id", (c) => ok(c, store.getSchedule(c.req.param("id")) ?? null));
   app.put("/api/v1/db/schedules/:id", async (c) => {
     const schedule = await c.req.json<SchedulePlan>();
@@ -324,7 +358,10 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/db/unavailabilities", (c) => ok(c, store.listUnavailabilities()));
+  app.get("/api/v1/db/unavailabilities", (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(store.listUnavailabilities(), offset, limit));
+  });
   app.get("/api/v1/db/unavailabilities/:id", (c) => ok(c, store.getUnavailability(c.req.param("id")) ?? null));
   app.put("/api/v1/db/unavailabilities/:id", async (c) => {
     const unavailability = await c.req.json<PersonUnavailability>();

@@ -1,9 +1,9 @@
 /** Root application shell with sidebar navigation. */
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { effect, useComputed } from '@preact/signals';
 import { Calendar, LogOut, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
 import { themeSignal } from './store/index.js';
-import { isAuthenticated, logout } from './lib/auth.js';
+import { AUTH_INVALIDATE_EVENT, isAuthenticated, logout } from './lib/auth.js';
 import { i18n } from './i18n.js';
 import type { UIStrings } from './i18n.js';
 import * as s from './styles/components.css.js';
@@ -41,6 +41,13 @@ export function App() {
   const theme = themeSignal.value;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const authed = useComputed(() => isAuthenticated.value);
+
+  useEffect(() => {
+    if (!isServerDeployment) return;
+    const onInvalidate = () => navigate('/login');
+    window.addEventListener(AUTH_INVALIDATE_EVENT, onInvalidate);
+    return () => window.removeEventListener(AUTH_INVALIDATE_EVENT, onInvalidate);
+  }, []);
 
   // In server mode, redirect unauthenticated users to the login page
   if (isServerDeployment && !authed.value && route !== '/login') {
