@@ -23,7 +23,7 @@
  *   </Menu>
  */
 import { createContext, type ComponentChildren } from 'preact';
-import { useContext, useEffect } from 'preact/hooks';
+import { useContext, useEffect, useMemo, useRef } from 'preact/hooks';
 import { signal, type Signal } from '@preact/signals';
 
 export type MenuMode = 'dropdown' | 'context';
@@ -48,21 +48,33 @@ interface MenuProps {
 }
 
 export function Menu({ children, mode = 'dropdown' }: MenuProps) {
-  const open = signal(false);
-  const position = signal<MenuPosition>({ x: 0, y: 0 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const open = useMemo(() => signal(false), []);
+  const position = useMemo(() => signal<MenuPosition>({ x: 0, y: 0 }), []);
   const close = () => { open.value = false; };
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest('[data-menu-root]')) close();
+    const onPointerDown = (e: PointerEvent) => {
+      const root = rootRef.current;
+      const target = e.target;
+      if (!root || !(target instanceof Node)) return;
+      if (!root.contains(target)) close();
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, []);
 
   return (
     <MenuCtx.Provider value={{ open, position, mode, close }}>
-      <div data-menu-root style={{ position: 'relative', display: 'inline-block' }}>
+      <div ref={rootRef} data-menu-root style={{ position: 'relative', display: 'inline-block' }}>
         {children}
       </div>
     </MenuCtx.Provider>
