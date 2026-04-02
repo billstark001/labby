@@ -11,9 +11,8 @@ import { navigate, useRoute, useSyncRoute, type AppRoute } from './lib/router.js
 import { renderRoute } from './route';
 import { ConfirmDialogComponent } from './components/ui/Dialog.js';
 import { Toaster } from './components/ui/Toast.js';
+import { isServerDeployment } from './lib/runtime.js';
 import clsx from 'clsx';
-
-const IS_SERVER_MODE = import.meta.env.VITE_DB_CONFIG === 'api';
 
 const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrings }[] = [
   { key: '/schedule', icon: Calendar, labelKey: 'navSchedule' },
@@ -44,12 +43,12 @@ export function App() {
   const authed = useComputed(() => isAuthenticated.value);
 
   // In server mode, redirect unauthenticated users to the login page
-  if (IS_SERVER_MODE && !authed.value && route !== '/login') {
+  if (isServerDeployment && !authed.value && route !== '/login') {
     navigate('/login');
     return null;
   }
   // Redirect authenticated users away from the login page
-  if (IS_SERVER_MODE && authed.value && route === '/login') {
+  if (isServerDeployment && authed.value && route === '/login') {
     navigate('/schedule');
     return null;
   }
@@ -127,7 +126,7 @@ export function App() {
         >
           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
         </button>
-        {IS_SERVER_MODE && authed.value && (
+        {isServerDeployment && authed.value && (
           <button
             class={s.navIconButtonDesktop}
             onClick={handleLogout}

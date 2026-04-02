@@ -15,8 +15,9 @@ import {
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
 import { personsSignal, keywordsSignal, similarityEdgesSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
+import { databaseMode } from '@/lib/runtime.js';
 
-const DB_CONFIG = import.meta.env.VITE_DB_CONFIG || 'idb';
+const DB_CONFIG = databaseMode;
 
 const isDBAvailable = signal(false);
 const db = signal<LabbyDB | null>(null);
@@ -83,10 +84,10 @@ export async function loadDatabaseSignals(db: LabbyDB) {
     db.unavailabilities.getAll(),
   ]);
 
-  personsSignal.value = persons;
-  keywordsSignal.value = keywords;
-  similarityEdgesSignal.value = similarities;
-  configsSignal.value = configs;
-  schedulesSignal.value = schedules;
-  unavailabilitiesSignal.value = unavailabilities;
+  personsSignal.value = persons ?? [];
+  keywordsSignal.value = keywords ?? [];
+  similarityEdgesSignal.value = similarities ?? [];
+  configsSignal.value = configs ?? [];
+  schedulesSignal.value = schedules ?? [];
+  unavailabilitiesSignal.value = unavailabilities ?? [];
 }

@@ -145,3 +145,4 @@ run/
 *.db-wal
 
 .DS_Store
+**/package-lock.json

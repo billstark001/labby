@@ -6,7 +6,7 @@ The monorepo contains:
 
 - `@labby/core` – scheduling and keyword-similarity logic
 - `@labby/web` – Preact UI for data entry, schedule review, and login
-- `@labby/server` – Hono API with SQLite storage, auth, solver endpoints, and optional email notifications
+- `@labby/server` – Hono API with SQLite storage, auth, solver endpoints, optional email notifications, and scheduled database backups
 
 ## Features
 
@@ -17,13 +17,16 @@ The monorepo contains:
 - Run in local-browser mode or API-backed server mode
 - Authenticate with three roles: `user`, `admin`, and environment-only `root`
 - Send schedule reminder emails from cron expressions stored in schedule configs
+- Back up the full server database on a cron schedule as either a SQLite snapshot or MsgPack archive
+- Deliver backups through email attachments, Google Drive, or OneDrive
+- Authenticate the mailer against Gmail through Google OAuth client JSON
 - Package the full stack with Docker and `docker-compose`
 
 ## Packages
 
 - `packages/core` – pure TypeScript algorithms and domain types
 - `packages/web` – Vite app with hash routing, login UI, and API/local storage adapters
-- `packages/server` – Hono application, SQLite store, auth service, cron scheduler, and mailer
+- `packages/server` – Hono application, SQLite store, auth service, cron scheduler, mailer, and backup service
 
 ## Quick Start
 
@@ -73,10 +76,17 @@ The container:
 - stores SQLite data in the named volume `labby-data`
 - can include the built web app in the image
 - enables cron email reminders when SMTP settings are configured
+- can run scheduled whole-database backups when backup settings are configured
 
 ## Environment
 
 See `.env.example` for all server variables.
+
+Extra examples:
+
+- `.env.backup.example` shows Gmail, email backup, Google Drive, and OneDrive configuration examples.
+- `packages/web/.env.frontend-only.example` builds the browser-only deployment.
+- `packages/web/.env.server.example` builds the server-connected deployment.
 
 Important settings:
 
@@ -84,12 +94,34 @@ Important settings:
 - `ROOT_USERNAME`, `ROOT_PASSWORD`, `ROOT_EMAIL`
 - `BOOTSTRAP_ADMIN_*` for first-run admin creation
 - `SMTP_*` and `NOTIFY_RECIPIENTS` for email reminders
+- `SMTP_PROVIDER=gmail`, `GMAIL_*`, and `GOOGLE_OAUTH_*` to use Gmail OAuth instead of raw SMTP credentials
+- `BACKUP_*` to schedule whole-database backups
+- `GOOGLE_DRIVE_FOLDER_ID` for Google Drive uploads
+- `ONEDRIVE_*` for OneDrive uploads
 - `DB_PATH` for SQLite storage
+
+## Backup Subsystem
+
+The server can maintain periodic full-database backups through the same cron runtime that powers schedule notifications.
+
+- Set `BACKUP_CRON` to enable backups.
+- Choose `BACKUP_FORMAT=sqlite` to emit a SQLite snapshot or `BACKUP_FORMAT=msgpack` to serialize all tables into a MsgPack archive.
+- Choose `BACKUP_TARGET=email`, `google-drive`, or `onedrive`.
+- Email delivery attaches the generated backup to a normal outbound message.
+- Google Drive uses OAuth client credentials loaded from `GOOGLE_OAUTH_JSON_PATH` plus a refresh token.
+- OneDrive uses Microsoft OAuth refresh credentials and uploads into `ONEDRIVE_FOLDER`.
+
+## What Changed
+
+- Added a server-side backup subsystem with cron scheduling and pluggable delivery targets.
+- Added Gmail OAuth support by reading Google OAuth client credentials from JSON.
+- Added whole-database export support for both SQLite snapshot and MsgPack archive formats.
 
 ## Deployment
 
 - Static web deployment is still supported with GitHub Pages and Netlify.
 - API-backed deployment can use Docker directly or `docker-compose`.
+- GitHub Pages and Netlify workflows now force the web app into frontend-only deployment mode.
 
 ## Project Structure
 

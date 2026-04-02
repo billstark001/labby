@@ -1,6 +1,6 @@
 # @labby/server
 
-`@labby/server` is the API backend for Labby. It provides authentication, SQLite persistence, solver endpoints, triplet-learning endpoints, and optional email notifications.
+`@labby/server` is the API backend for Labby. It provides authentication, SQLite persistence, solver endpoints, triplet-learning endpoints, optional email notifications, and scheduled database backups.
 
 ## Responsibilities
 
@@ -11,6 +11,7 @@
 - Run full and incremental scheduling through `@labby/core`
 - Update keyword similarities from triplet feedback
 - Register cron-based email reminders from schedule configs
+- Register cron-based whole-database backups to email, Google Drive, or OneDrive
 
 ## Roles
 
@@ -62,6 +63,8 @@ CRUD endpoints exist under `/api/v1/db` for:
 
 Copy `.env.example` to `.env` and fill in the required values.
 
+For a fuller backup/Gmail example, see `.env.backup.example` in the repository root.
+
 Required or important settings:
 
 - `PORT`
@@ -73,8 +76,13 @@ Required or important settings:
 Optional settings:
 
 - `AUTH_ACCESS_TTL`, `AUTH_REFRESH_TTL`
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
+- `SMTP_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
+- `GMAIL_USER`, `GMAIL_REFRESH_TOKEN`
+- `GOOGLE_OAUTH_JSON_PATH`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`
 - `NOTIFY_RECIPIENTS`
+- `BACKUP_CRON`, `BACKUP_TIMEZONE`, `BACKUP_FORMAT`, `BACKUP_TARGET`, `BACKUP_FILENAME_PREFIX`
+- `BACKUP_EMAIL_RECIPIENTS`, `GOOGLE_DRIVE_FOLDER_ID`
+- `ONEDRIVE_CLIENT_ID`, `ONEDRIVE_CLIENT_SECRET`, `ONEDRIVE_REFRESH_TOKEN`, `ONEDRIVE_TENANT_ID`, `ONEDRIVE_FOLDER`
 
 ## Development
 
@@ -101,3 +109,15 @@ When SMTP is configured, the server starts the cron subsystem on boot.
 - The server sends a short reminder email to `NOTIFY_RECIPIENTS`.
 
 If SMTP is not configured, the cron subsystem stays disabled.
+
+## Backup Subsystem
+
+When `BACKUP_CRON` is configured, the server registers a recurring whole-database backup job.
+
+- `BACKUP_FORMAT=sqlite` uses SQLite's backup API to generate a portable `.sqlite3` snapshot.
+- `BACKUP_FORMAT=msgpack` serializes every application table into a `.msgpack` archive.
+- `BACKUP_TARGET=email` sends the archive as a mail attachment.
+- `BACKUP_TARGET=google-drive` uploads to Google Drive using OAuth credentials loaded from `GOOGLE_OAUTH_JSON_PATH`.
+- `BACKUP_TARGET=onedrive` uploads to OneDrive using Microsoft OAuth refresh credentials.
+
+Gmail delivery can reuse the same Google OAuth client JSON by setting `SMTP_PROVIDER=gmail` and supplying a Gmail-capable refresh token.

@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { createBackupServiceFromEnv, setActiveBackupService } from "./backup/service.js";
 import { createApp } from "./app.js";
 import { scheduler } from "./cron/scheduler.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
@@ -42,6 +43,21 @@ if (mailer) {
   console.info(`[cron] Email notifications enabled. Registered ${scheduler.registeredJobs.length} job(s).`);
 } else {
   console.info("[cron] SMTP not configured; email notifications disabled.");
+}
+
+const backupService = createBackupServiceFromEnv({
+  scheduler,
+  store,
+  mailer,
+});
+
+setActiveBackupService(backupService);
+
+if (backupService) {
+  backupService.syncJobs();
+  console.info(`[backup] Backup service ready. Configured target: ${backupService.targetDescription}.`);
+} else {
+  console.info("[backup] Database backups disabled.");
 }
 
 const server = serve({ fetch: app.fetch, port }, (info) => {

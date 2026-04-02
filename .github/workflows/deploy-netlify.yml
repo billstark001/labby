@@ -34,7 +34,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @labby/web build
+        run: pnpm --filter @labby/web build:frontend
 
       - name: Deploy to Netlify
         uses: nwtgck/actions-netlify@v3

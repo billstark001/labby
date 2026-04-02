@@ -24,6 +24,7 @@ import {
 } from "@labby/core";
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
+import { getActiveBackupService } from "./backup/service.js";
 import { AppError } from "./lib/errors.js";
 import { fail, ok } from "./lib/http.js";
 import {
@@ -111,6 +112,7 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
   app.use("/api/v1/solver/*", requireClientAuth(authService));
   app.use("/api/v1/nlp/*", requireClientAuth(authService));
   app.use("/api/v1/users/*", requireClientAuth(authService));
+  app.use("/api/v1/system/*", requireClientAuth(authService));
   app.use("/api/v1/auth/logout", requireClientAuth(authService));
 
   // Write operations require at least admin role
@@ -122,8 +124,60 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
   });
   app.use("/api/v1/solver/*", requireMinRole(UserRole.Admin));
   app.use("/api/v1/nlp/*", requireMinRole(UserRole.Admin));
+  app.use("/api/v1/system/backup/*", requireMinRole(UserRole.Admin));
 
   app.get("/health", (c) => c.json({ ok: true, now: Date.now() }));
+
+  app.get("/api/v1/system/capabilities", (c) => {
+    const session = getAuthSession(c);
+    const backupService = getActiveBackupService();
+    return ok(c, {
+      deploymentMode: 'server',
+      backup: backupService?.getCapabilities() ?? {
+        scheduleEnabled: false,
+        scheduleConfigured: false,
+        configuredTarget: null,
+        configuredFormat: 'sqlite',
+        targets: {
+          email: false,
+          'google-drive': false,
+          onedrive: false,
+        },
+        formats: ['sqlite', 'msgpack'],
+      },
+      permissions: {
+        canManageBackups: session.role >= UserRole.Admin,
+      },
+    });
+  });
+
+  const backupActionSchema = z.object({
+    format: z.enum(['sqlite', 'msgpack']).optional(),
+    target: z.enum(['email', 'google-drive', 'onedrive']).optional(),
+  });
+
+  app.post("/api/v1/system/backup/run", async (c) => {
+    const backupService = getActiveBackupService();
+    if (!backupService) {
+      throw new AppError('BACKUP_UNAVAILABLE', 'backup service is unavailable', 503);
+    }
+    const body = backupActionSchema.parse(await c.req.json().catch(() => ({})));
+    await backupService.dispatchBackup(body);
+    return ok(c, { ok: true });
+  });
+
+  app.get("/api/v1/system/backup/download", async (c) => {
+    const backupService = getActiveBackupService();
+    if (!backupService) {
+      throw new AppError('BACKUP_UNAVAILABLE', 'backup service is unavailable', 503);
+    }
+    const formatQuery = c.req.query('format');
+    const format = formatQuery === 'msgpack' ? 'msgpack' : 'sqlite';
+    const artifact = await backupService.createDownloadArtifact(format);
+    c.header('Content-Type', artifact.contentType);
+    c.header('Content-Disposition', `attachment; filename="${artifact.filename}"`);
+    return c.body(new Uint8Array(artifact.content));
+  });
 
   // ---------------------------------------------------------------------------
   // Auth routes

@@ -29,6 +29,9 @@ importers:
       '@mpoonuru/paseto':
         specifier: ^4.0.2
         version: 4.0.2
+      '@msgpack/msgpack':
+        specifier: ^3.1.2
+        version: 3.1.3
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0

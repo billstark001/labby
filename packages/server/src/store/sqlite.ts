@@ -37,6 +37,21 @@ export interface RefreshTokenRecord {
   replacedByTokenId: string | null;
 }
 
+export interface DatabaseBackupSnapshot {
+  version: 1;
+  createdAt: number;
+  tables: {
+    persons: Array<Record<string, string | number | null>>;
+    keywords: Array<Record<string, string | number | null>>;
+    similarities: Array<Record<string, string | number | null>>;
+    configs: Array<Record<string, string | number | null>>;
+    schedules: Array<Record<string, string | number | null>>;
+    unavailabilities: Array<Record<string, string | number | null>>;
+    users: Array<Record<string, string | number | null>>;
+    refreshTokens: Array<Record<string, string | number | null>>;
+  };
+}
+
 function openDatabase(dbPath: string) {
   return new Database(dbPath);
 }
@@ -145,6 +160,10 @@ export class SqliteStore {
   private getPayload<T>(sql: string, params: unknown[] = []): T | undefined {
     const row = this.db.prepare(sql).get(...params) as { payload: string } | undefined;
     return row ? this.parsePayload<T>(row.payload) : undefined;
+  }
+
+  private exportTable(tableName: string): Array<Record<string, string | number | null>> {
+    return this.db.prepare(`SELECT * FROM ${tableName}`).all() as Array<Record<string, string | number | null>>;
   }
 
   clearAllEntityData(): void {
@@ -429,5 +448,26 @@ export class SqliteStore {
 
   pruneExpiredRefreshTokens(now = Date.now()): void {
     this.db.prepare('DELETE FROM refresh_tokens WHERE expires_at < ? OR revoked_at IS NOT NULL').run(now);
+  }
+
+  exportBackupSnapshot(): DatabaseBackupSnapshot {
+    return {
+      version: 1,
+      createdAt: Date.now(),
+      tables: {
+        persons: this.exportTable('persons'),
+        keywords: this.exportTable('keywords'),
+        similarities: this.exportTable('similarities'),
+        configs: this.exportTable('configs'),
+        schedules: this.exportTable('schedules'),
+        unavailabilities: this.exportTable('unavailabilities'),
+        users: this.exportTable('users'),
+        refreshTokens: this.exportTable('refresh_tokens'),
+      },
+    };
+  }
+
+  async backupDatabase(destinationPath: string): Promise<void> {
+    await this.db.backup(destinationPath);
   }
 }

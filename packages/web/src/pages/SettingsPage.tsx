@@ -3,6 +3,7 @@ import { i18n } from '../i18n.js';
 import type { Locale } from '../i18n.js';
 import * as s from '../styles/components.css.js';
 import { DataPanel } from '../components/DataPanel.js';
+import { deploymentMode } from '../lib/runtime.js';
 import clsx from 'clsx';
 
 const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];
@@ -37,6 +38,18 @@ export function SettingsPage() {
             ))}
           </div>
         </div>
+      </div>
+
+      <div class={clsx(s.card, s.sectionStack)}>
+        <div class={clsx(s.flexBetween, s.mb12)}>
+          <h3 class={clsx(s.text15, s.fontMedium)}>{t('deploymentModeTitle')}</h3>
+          <span class={deploymentMode === 'server' ? s.badge : s.badgeDisabled}>
+            {deploymentMode === 'server' ? t('deploymentModeServer') : t('deploymentModeFrontendOnly')}
+          </span>
+        </div>
+        <p class={s.mutedParagraph}>
+          {deploymentMode === 'server' ? t('deploymentModeServerHint') : t('deploymentModeFrontendHint')}
+        </p>
       </div>
 
       <div class={s.sectionStack}>

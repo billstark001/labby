@@ -19,7 +19,7 @@ function createRequestId(): string {
 export class ApiClient {
   constructor(private readonly baseUrl = '/api/v1') {}
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private withHeaders(init: RequestInit = {}): RequestInit {
     const headers = new Headers(init.headers ?? {});
     if (!headers.has('X-Request-Id')) {
       headers.set('X-Request-Id', createRequestId());
@@ -28,10 +28,14 @@ export class ApiClient {
       headers.set('Content-Type', 'application/json');
     }
 
-    const response = await apiFetch(`${this.baseUrl}${path}`, {
+    return {
       ...init,
       headers,
-    });
+    };
+  }
+
+  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await apiFetch(`${this.baseUrl}${path}`, this.withHeaders(init));
 
     if (response.status === 204) {
       return undefined as T;
@@ -50,6 +54,15 @@ export class ApiClient {
     }
 
     return body as T;
+  }
+
+  async requestRaw(path: string, init: RequestInit = {}): Promise<Response> {
+    const response = await apiFetch(`${this.baseUrl}${path}`, this.withHeaders(init));
+    if (!response.ok) {
+      const body = await response.json().catch(() => undefined) as ApiErrorEnvelope | undefined;
+      throw new Error(body?.message ?? body?.error ?? `Request failed with status ${response.status}`);
+    }
+    return response;
   }
 }
 
