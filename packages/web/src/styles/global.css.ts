@@ -1,6 +1,6 @@
 /** Global CSS reset and base styles. */
 import { globalStyle } from '@vanilla-extract/css';
-import { breakpoints, vars } from './theme.css.js';
+import { breakpoints, vars } from './theme.css';
 
 globalStyle('*, *::before, *::after', {
   boxSizing: 'border-box',

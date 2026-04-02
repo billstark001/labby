@@ -37,6 +37,15 @@ export interface ScheduleConfig {
   targetSimilarityRadius: number; // desired similarity r ≈ 0.5
   startDate: string; // ISO date, first possible session
   endDate: string; // ISO date, last possible session
+  /**
+   * Optional cron expression for scheduled email notifications,
+   * e.g. "0 9 * * 1" for Monday 09:00.
+   */
+  notifyAt?: string;
+  /** Timezone for the notifyAt cron expression, e.g. "Asia/Tokyo". Defaults to UTC. */
+  notifyTimezone?: string;
+  /** Arbitrary extension metadata. */
+  metadata?: Record<string, unknown>;
 }
 
 /** Immutable snapshot of a generated schedule. */
@@ -77,6 +86,8 @@ export interface SolverInput {
   config: ScheduleConfig;
   /** Optional: persons unavailable on certain date ranges */
   unavailabilities?: PersonUnavailability[];
+  /** Optional: additional scheduling constraints */
+  constraints?: ScheduleConstraint[];
 }
 
 /** Input bundle for the incremental solver. */
@@ -91,3 +102,43 @@ export interface TripletQuery {
   positiveId: string; // keyword C ("A is closer to C …")
   negativeId: string; // keyword B ("… than to B")
 }
+
+// ---------------------------------------------------------------------------
+// Schedule constraints
+// ---------------------------------------------------------------------------
+
+/**
+ * Prevent members of a group from simultaneously being presenter and questioner
+ * in the same presentation (e.g., colleagues who are too familiar with each other
+ * or too unfamiliar with the research topic).
+ */
+export interface NoOverlapConstraint {
+  type: 'no-overlap';
+  /** Constraint applies to any person whose ID is in this set. */
+  personIds: string[];
+  /**
+   * Penalty weight applied when the constraint is violated.
+   * Defaults to 5.0.
+   */
+  weight?: number;
+}
+
+/**
+ * Boost the probability that members of a group appear together
+ * (as presenter + questioner) in the same presentation.
+ * Useful when a group benefits from cross-exposure or shared research topics.
+ */
+export interface AffinityBoostConstraint {
+  type: 'affinity-boost';
+  /** Members of the group whose co-occurrence should be boosted. */
+  personIds: string[];
+  /**
+   * Affinity multiplier applied to the similarity score between group members.
+   * Values > 1 encourage pairing; values < 1 discourage it.
+   * Defaults to 2.0.
+   */
+  boost?: number;
+}
+
+/** Union of all supported schedule constraints. */
+export type ScheduleConstraint = NoOverlapConstraint | AffinityBoostConstraint;

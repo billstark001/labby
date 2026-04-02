@@ -1,5 +1,5 @@
 /** Public API re-export for @labby/core */
-export * from './types.js';
-export * from './db.js';
-export * from './nlp.js';
-export * from './solver.js';
+export * from './types';
+export * from './db';
+export * from './nlp';
+export * from './solver';

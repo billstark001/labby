@@ -6,20 +6,20 @@ import {
   keywordsSignal,
   similarityEdgesSignal,
   embeddingsSignal,
-} from '../store/index.js';
-import { fallbackEntityId } from '@/i18n.js';
-import { displayName } from '@/i18n.js';
-import { useDatabase } from '../db/index.js';
+} from '../store/index';
+import { fallbackEntityId } from '@/i18n';
+import { displayName } from '@/i18n';
+import { useDatabase } from '../db/index';
 import {
   attractKeywords,
   repelKeywords,
   embeddingsToSimilarities,
 } from '@labby/core';
 import type { SimilarityEdge } from '@labby/core';
-import * as s from '../styles/components.css.js';
-import { vars } from '../styles/theme.css.js';
-import { Button } from './ui.js';
-import { i18n } from '@/i18n.js';
+import * as s from '../styles/components.css';
+import { vars } from '../styles/theme.css';
+import { Button } from './ui';
+import { i18n } from '@/i18n';
 import clsx from 'clsx';
 
 interface GraphNode extends d3.SimulationNodeDatum {

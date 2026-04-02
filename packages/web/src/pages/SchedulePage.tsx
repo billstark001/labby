@@ -1,5 +1,5 @@
 /** Schedule configuration form and schedule view. */
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import { Calendar, X, Pencil } from 'lucide-preact';
 import {
@@ -11,18 +11,25 @@ import {
   isComputingSignal,
   personMapSignal,
   unavailabilitiesSignal,
-} from '../store/index.js';
-import { fallbackEntityId, displayName } from '@/i18n.js';
-import { useDatabase } from '../db/index.js';
+} from '../store/index';
+import { fallbackEntityId, displayName } from '@/i18n';
+import {
+  loadAllConfigs,
+  loadAllPersons,
+  loadAllSchedules,
+  loadAllSimilarities,
+  loadAllUnavailabilities,
+  useDatabase,
+} from '../db/index';
 import { solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation } from '@labby/core';
-import * as s from '../styles/components.css.js';
+import * as s from '../styles/components.css';
 import {
   Button,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from '../components/ui.js';
+} from '../components/ui';
 import {
   copyScheduleTable,
   copyScheduleHtml,
@@ -30,11 +37,11 @@ import {
   downloadScheduleCsv,
   downloadScheduleHtml,
   downloadScheduleIcs,
-} from '../lib/scheduleExport.js';
-import { Dialog, confirmDialog } from '../components/ui/Dialog.js';
-import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '../components/ui/Menu.js';
-import { toast } from '../components/ui/Toast.js';
-import { i18n } from '@/i18n.js';
+} from '../lib/scheduleExport';
+import { Dialog, confirmDialog } from '../components/ui/Dialog';
+import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '../components/ui/Menu';
+import { toast } from '../components/ui/Toast';
+import { i18n } from '@/i18n';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -248,7 +255,7 @@ function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }:
     });
     const updated: SchedulePlan = { ...current, sessions: newSessions };
     db.schedules.put(updated).then(async () => {
-      schedulesSignal.value = await db.schedules.getAll();
+      await loadAllSchedules(db);
       currentScheduleSignal.value = updated;
     });
     onClose();
@@ -332,9 +339,31 @@ export function SchedulePage() {
   // Unavailabilities scoped to the selected config
   const configUnavails = unavailabilities.filter(u => u.configId === selectedConfigId);
 
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      await Promise.all([
+        loadAllPersons(db),
+        loadAllConfigs(db),
+        loadAllSchedules(db),
+        loadAllSimilarities(db),
+        loadAllUnavailabilities(db),
+      ]);
+      if (cancelled) return;
+      if (!currentScheduleSignal.value && schedulesSignal.value.length > 0) {
+        const latest = schedulesSignal.value.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+        currentScheduleSignal.value = latest;
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [db]);
+
   async function handleSaveConfig(c: ScheduleConfig) {
     await db.configs.put(c);
-    configsSignal.value = await db.configs.getAll();
+    await loadAllConfigs(db);
     setShowConfigForm(false);
     setEditingConfig(null);
     if (!selectedConfigId) setSelectedConfigId(c.id);
@@ -354,7 +383,7 @@ export function SchedulePage() {
         unavailabilities,
       });
       await db.schedules.put(plan);
-      schedulesSignal.value = await db.schedules.getAll();
+      await loadAllSchedules(db);
       currentScheduleSignal.value = plan;
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -383,7 +412,7 @@ export function SchedulePage() {
         unavailabilities,
       });
       await db.schedules.put(plan);
-      schedulesSignal.value = await db.schedules.getAll();
+      await loadAllSchedules(db);
       currentScheduleSignal.value = plan;
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -428,7 +457,8 @@ export function SchedulePage() {
   async function handleDeleteHistory(plan: SchedulePlan) {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       await db.schedules.delete(plan.id);
-      const next = await db.schedules.getAll();
+      await loadAllSchedules(db);
+      const next = schedulesSignal.value;
       schedulesSignal.value = next;
       if (currentScheduleSignal.value?.id === plan.id) {
         const latest = next.length > 0 ? next.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)) : null;
@@ -440,7 +470,7 @@ export function SchedulePage() {
   async function handleSaveHistoryNotes(plan: SchedulePlan, notes: string) {
     const updated = { ...plan, notes };
     await db.schedules.put(updated);
-    schedulesSignal.value = await db.schedules.getAll();
+    await loadAllSchedules(db);
     if (currentScheduleSignal.value?.id === plan.id) {
       currentScheduleSignal.value = updated;
     }
@@ -448,13 +478,13 @@ export function SchedulePage() {
 
   async function handleSaveUnavail(u: PersonUnavailability) {
     await db.unavailabilities.put(u);
-    unavailabilitiesSignal.value = await db.unavailabilities.getAll();
+    await loadAllUnavailabilities(db);
     setShowUnavailForm(false);
   }
 
   async function handleDeleteUnavail(id: string) {
     await db.unavailabilities.delete(id);
-    unavailabilitiesSignal.value = await db.unavailabilities.getAll();
+    await loadAllUnavailabilities(db);
   }
 
   return (

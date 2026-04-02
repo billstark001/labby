@@ -1,6 +1,6 @@
 /** Tooltip component styles. */
 import { style, keyframes } from '@vanilla-extract/css';
-import { vars } from '../../styles/theme.css.js';
+import { vars } from '../../styles/theme.css';
 
 const fadeIn = keyframes({
   from: { opacity: 0 },

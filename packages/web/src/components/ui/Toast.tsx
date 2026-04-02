@@ -12,7 +12,7 @@
  */
 import { signal } from '@preact/signals';
 import { X, Loader } from 'lucide-preact';
-import * as css from './Toast.css.js';
+import * as css from './Toast.css';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning' | 'loading';
 

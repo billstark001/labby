@@ -1,48 +1,50 @@
 # Frontend Auth State Management
 
----
+This document describes the current web authentication flow used in API-backed mode.
 
-## Token Storage
+## Overview
 
-Store tokens in memory only (JavaScript variables / signals). Never in `localStorage` or `sessionStorage`.
+Labby uses short-lived PASETO access tokens and rotating refresh tokens.
 
-For long-lived sessions, store the **refresh token** in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie set by the server, so it survives page reloads without being accessible to JavaScript.
+- Access tokens are sent in the `Authorization` header.
+- Refresh tokens are returned in the JSON response.
+- The server also writes the refresh token to the `labby_refresh_token` HttpOnly cookie.
+- The web client keeps the active session in signals and rehydrates it from local storage after reload.
 
----
+## Roles
 
-## Endpoint Summary
+The backend supports three roles:
 
-Login endpoint: `POST /api/v1/auth/login`
-Refresh endpoint: `POST /api/v1/auth/refresh`
-Token `sub` claim: `user` or `admin`
-Protected routes: `/api/v1/...`
+- `user`
+- `admin`
+- `root`
 
----
+`root` is configured from environment variables only and is never stored in SQLite.
 
-## Attaching Tokens to Requests
+## Endpoints
 
-Every authenticated request must include the access token in the `Authorization` header:
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/me`
 
+All `/api/v1/*` requests must include `X-Request-Id`.
+
+## Login
+
+The login screen collects a username-or-email value and a password.
+
+Example request:
+
+```json
+POST /api/v1/auth/login
+{
+  "email": "admin@example.com",
+  "password": "secret"
+}
 ```
-Authorization: Bearer <access_token>
-```
 
-There is no cookie-based access token. The access token lives only in memory.
-
----
-
-## Token Refresh Flow (Rotation)
-
-Access tokens expire in 15 minutes. Before expiry (or on receiving `401`), call the refresh endpoint:
-
-```
-POST /api/v1/auth/refresh
-Content-Type: application/json
-
-{ "refresh_token": "<refresh_token>" }
-```
-
-Response (both):
+Successful response:
 
 ```json
 {
@@ -52,44 +54,66 @@ Response (both):
 }
 ```
 
-**Important:** Each refresh call invalidates the old refresh token and issues a new one. Replace both tokens immediately. If another tab already refreshed, the older token will be rejected — handle this by redirecting to login.
+The client stores the returned tokens, schedules the next silent refresh, and updates other tabs through `BroadcastChannel`.
 
----
+## Token Storage
 
-## Proactive Refresh
+The current implementation uses two layers:
 
-PASETO v4 local tokens are symmetrically encrypted — the payload **cannot be decoded on the client** without the server key. Use a fixed-interval refresh instead (12 minutes for a 15-minute access TTL):
+- in-memory signals for the active runtime session
+- local storage for session rehydration after page reload
 
-```ts
-// pseudo-code — schedule a refresh 12 minutes after login/last refresh
-const REFRESH_INTERVAL_MS = 12 * 60 * 1000;
-const timer = setTimeout(doSilentRefresh, REFRESH_INTERVAL_MS);
+Stored data is keyed by a normalized session identity and includes the latest access token, refresh token, and update time.
+
+The server-managed refresh cookie exists in parallel, but the current web client still sends `refresh_token` explicitly in the request body.
+
+## Authenticated Requests
+
+Every authenticated API call attaches the current access token:
+
+```text
+Authorization: Bearer <access_token>
 ```
 
-On `401 Unauthorized` from any endpoint, attempt one silent refresh then retry. If the refresh also fails, clear tokens and redirect to login.
+The client wrapper also injects `X-Request-Id` automatically.
 
----
+## Refresh Flow
+
+Access tokens are refreshed in two cases:
+
+- proactively on a fixed 12-minute timer
+- reactively after a `401` response
+
+Refresh request:
+
+```json
+POST /api/v1/auth/refresh
+{
+  "refresh_token": "<refresh_token>"
+}
+```
+
+The server rotates refresh tokens. After every successful refresh, the client must replace both tokens immediately.
+
+If refresh fails with `401`, the session is invalidated, stored session data is cleared, and the UI returns to login.
+
+## Cross-Tab Behaviour
+
+The web client uses `BroadcastChannel('labby_auth')` to synchronize:
+
+- new tokens
+- logout events
+- refresh invalidation events
+
+This prevents stale tabs from continuing to use revoked refresh tokens after another tab logs out or refreshes first.
 
 ## Logout
 
-```
+Logout calls:
+
+```text
 POST /api/v1/auth/logout
 Authorization: Bearer <access_token>
 ```
 
-On success: clear both tokens from memory (and the cookie if used), cancel any scheduled refresh timers, redirect to login.
-
----
-
-## Concurrent-Tab Safety
-
-Use a `BroadcastChannel` (or `storage` event as fallback) to synchronize token state across tabs:
-
-```ts
-const channel = new BroadcastChannel('auth');
-channel.postMessage({ type: 'tokens', accessToken, refreshToken });
-channel.onmessage = (e) => {
-  if (e.data.type === 'tokens') replaceTokens(e.data);
-  if (e.data.type === 'logout') clearAndRedirect();
-};
-```
+The server revokes refresh tokens for the current user and clears the refresh cookie. The client then removes local session state and broadcasts the logout event to other tabs.

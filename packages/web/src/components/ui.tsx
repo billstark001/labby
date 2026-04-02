@@ -1,11 +1,11 @@
 /** Shared UI building blocks. */
 import { h } from 'preact';
-import * as s from '../styles/components.css.js';
+import * as s from '../styles/components.css';
 
-export { Pagination } from './ui/Pagination.js';
-export type { PaginationProps } from './ui/Pagination.js';
-export { ResponsiveDataField, ResponsiveDataView, responsiveDataStyles } from './ui/ResponsiveData.js';
-export type { ResponsiveDataColumn } from './ui/ResponsiveData.js';
+export { Pagination } from './ui/Pagination';
+export type { PaginationProps } from './ui/Pagination';
+export { ResponsiveDataField, ResponsiveDataView, responsiveDataStyles } from './ui/ResponsiveData';
+export type { ResponsiveDataColumn } from './ui/ResponsiveData';
 
 interface ButtonProps extends h.JSX.HTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';

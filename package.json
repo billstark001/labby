@@ -6,8 +6,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm --filter @labby/web dev",
+    "dev:server:web": "pnpm --filter @labby/web dev:server",
+    "dev:server": "pnpm --filter @labby/server dev",
     "preview": "pnpm --filter @labby/web preview",
     "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
     "lint": "pnpm -r lint"
   },
   "devDependencies": {

@@ -9,7 +9,7 @@
  * The gradient step moves A and C closer, and A and B farther apart.
  */
 
-import type { TripletQuery } from './types.js';
+import type { TripletQuery } from './types';
 
 /** 2D position in the hidden embedding space. */
 export interface EmbeddingPoint {
@@ -37,7 +37,7 @@ export function randomEmbedding(): EmbeddingPoint {
   };
 }
 
-/** Initialise embeddings for a list of keyword IDs. */
+/** Initialize embeddings for a list of keyword IDs. */
 export function initEmbeddings(keywordIds: string[]): EmbeddingMap {
   const map: EmbeddingMap = new Map();
   for (const id of keywordIds) {
@@ -156,7 +156,8 @@ export function embeddingsToSimilarities(
       const b = embeddings.get(ids[j])!;
       const d = dist(a, b);
       const similarity = 1 / (1 + d);
-      const key = `${ids[i]}|${ids[j]}`;
+      const [left, right] = ids[i] < ids[j] ? [ids[i], ids[j]] : [ids[j], ids[i]];
+      const key = `${left}|${right}`;
       result.set(key, similarity);
     }
   }

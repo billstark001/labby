@@ -3,6 +3,11 @@ import preact from '@preact/preset-vite';
 import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
 import { resolve } from 'path';
 
+const VITE_DEPLOYMENT_MODE = process.env.VITE_DEPLOYMENT_MODE || 'frontend-only';
+if (!['frontend-only', 'server'].includes(VITE_DEPLOYMENT_MODE)) {
+  throw new Error(`Invalid VITE_DEPLOYMENT_MODE: ${VITE_DEPLOYMENT_MODE}`);
+}
+
 export default defineConfig({
   plugins: [preact(), vanillaExtractPlugin()],
   resolve: {
@@ -17,9 +22,12 @@ export default defineConfig({
   },
   base: './',
   server: {
-    port: 4400, // Set your desired port here
+    port: 4400,
+    proxy: VITE_DEPLOYMENT_MODE === 'server' ? {
+      '/api': 'http://localhost:4410',
+    } : undefined,
   },
   preview: {
-    port: 4401, // Set the port for the production preview server
-  }
+    port: 4401,
+  },
 });

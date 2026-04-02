@@ -9,10 +9,10 @@ import {
   DialogDescription as PrimitiveDialogDescription,
   useDialog,
   type DialogHandle,
-} from '../../primitives/Dialog.js';
-import * as s from './Dialog.css.js';
-import * as btnStyles from '../../styles/components.css.js';
-import { i18n } from '@/i18n.js';
+} from '../../primitives/Dialog';
+import * as s from './Dialog.css';
+import * as btnStyles from '../../styles/components.css';
+import { i18n } from '@/i18n';
 
 // Re-export primitive components for convenience
 export { useDialog, type DialogHandle };

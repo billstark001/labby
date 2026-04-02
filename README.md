@@ -1,66 +1,138 @@
 # Labby – Academic Seminar Scheduler
 
-Labby is a browser-based intelligent seminar scheduling system built with:
+Labby is a seminar scheduling system with a shared algorithm core, a browser UI, and an optional server mode.
 
-- **pnpm workspaces** – monorepo with `@labby/core` (pure algorithms) and `@labby/web` (UI)
-- **Preact + Signals** – fine-grained reactive UI
-- **Vite** – fast dev/build tooling
-- **vanilla-extract** – zero-runtime type-safe CSS
-- **D3.js** – keyword similarity force graph
-- **idb** – IndexedDB abstraction for persistent local storage
-- **@msgpack/msgpack** – compact binary backup format
-- **PapaParse** – CSV export
+The monorepo contains:
+
+- `@labby/core` – scheduling and keyword-similarity logic
+- `@labby/web` – Preact UI for data entry, schedule review, and login
+- `@labby/server` – Hono API with SQLite storage, auth, solver endpoints, optional email notifications, and scheduled database backups
 
 ## Features
 
-- Manage persons and research keywords with multilingual names (English / 中文 / 日本語)
-- Build keyword similarity via interactive triplet comparisons (triplet-loss gradient descent)
-- Visualise keyword relationships as a D3 force graph with brush-select attract/repel interactions
-- Generate full semester schedules via simulated annealing (uniformity, questioner diversity, domain relevance)
-- Incremental reschedule with minimal churn (Hamming penalty)
-- Export schedule as HTML (paste-able into email), CSV, or full database backup (.labby / .json)
-- Auto-deploy to GitHub Pages and Netlify
+- Manage persons, keywords, schedules, and unavailability windows
+- Learn keyword similarity from triplet comparisons and persist the generated similarity graph
+- Generate full schedules or incremental re-plans with fairness, pair-diversity, relevance, and churn penalties
+- Apply scheduling constraints such as `no-overlap` and `affinity-boost`
+- Run in local-browser mode or API-backed server mode
+- Authenticate with three roles: `user`, `admin`, and environment-only `root`
+- Send schedule reminder emails from cron expressions stored in schedule configs
+- Back up the full server database on a cron schedule as either a SQLite snapshot or MsgPack archive
+- Deliver backups through email attachments, Google Drive, or OneDrive
+- Authenticate the mailer against Gmail through Google OAuth client JSON
+- Package the full stack with Docker and `docker-compose`
 
-## Getting Started
+## Packages
+
+- `packages/core` – pure TypeScript algorithms and domain types
+- `packages/web` – Vite app with hash routing, login UI, and API/local storage adapters
+- `packages/server` – Hono application, SQLite store, auth service, cron scheduler, mailer, and backup service
+
+## Quick Start
 
 ```bash
-# Prerequisites: Node ≥ 20, pnpm ≥ 10
+# Prerequisites: Node >= 20, pnpm >= 10
 corepack enable
 pnpm install
 
-# Development server
+# Frontend-only development
+pnpm --filter @labby/web dev
+
+# Full workspace development
 pnpm dev
 
 # Production build
 pnpm build
 ```
 
+## Server Mode
+
+The server exposes authenticated REST endpoints under `/api/v1`.
+
+- `POST /api/v1/auth/login` – issue access and refresh tokens
+- `POST /api/v1/auth/refresh` – rotate refresh tokens
+- `POST /api/v1/auth/logout` – revoke the current session
+- `GET /api/v1/auth/me` – inspect the current session
+- `GET/PUT/DELETE /api/v1/db/...` – CRUD for persons, keywords, similarities, configs, schedules, and unavailabilities
+- `POST /api/v1/solver/run` – generate a full schedule
+- `POST /api/v1/solver/run-incremental` – re-plan from a change date
+- `POST /api/v1/nlp/update-similarity` – apply one triplet-learning step and persist updated similarities
+
+Read [docs/auth.md](docs/auth.md), [docs/algorithm.md](docs/algorithm.md), and [packages/server/README.md](packages/server/README.md) for details.
+
+## Docker
+
+Labby now ships with a production Docker image and a `docker-compose.yml` example.
+
+```bash
+cp .env.example .env
+# edit .env and set at least ROOT_PASSWORD and PASETO_SECRET
+docker compose up --build
+```
+
+The container:
+
+- serves the API on port `4410`
+- stores SQLite data in the named volume `labby-data`
+- can include the built web app in the image
+- enables cron email reminders when SMTP settings are configured
+- can run scheduled whole-database backups when backup settings are configured
+
+## Environment
+
+See `.env.example` for all server variables.
+
+Extra examples:
+
+- `.env.backup.example` shows Gmail, email backup, Google Drive, and OneDrive configuration examples.
+- `packages/web/.env.frontend-only.example` builds the browser-only deployment.
+- `packages/web/.env.server.example` builds the server-connected deployment.
+
+Important settings:
+
+- `PASETO_SECRET` or `PASETO_ACCESS_KEY` + `PASETO_REFRESH_KEY`
+- `ROOT_USERNAME`, `ROOT_PASSWORD`, `ROOT_EMAIL`
+- `BOOTSTRAP_ADMIN_*` for first-run admin creation
+- `SMTP_*` and `NOTIFY_RECIPIENTS` for email reminders
+- `SMTP_PROVIDER=gmail`, `GMAIL_*`, and `GOOGLE_OAUTH_*` to use Gmail OAuth instead of raw SMTP credentials
+- `BACKUP_*` to schedule whole-database backups
+- `GOOGLE_DRIVE_FOLDER_ID` for Google Drive uploads
+- `ONEDRIVE_*` for OneDrive uploads
+- `DB_PATH` for SQLite storage
+
+## Backup Subsystem
+
+The server can maintain periodic full-database backups through the same cron runtime that powers schedule notifications.
+
+- Set `BACKUP_CRON` to enable backups.
+- Choose `BACKUP_FORMAT=sqlite` to emit a SQLite snapshot or `BACKUP_FORMAT=msgpack` to serialize all tables into a MsgPack archive.
+- Choose `BACKUP_TARGET=email`, `google-drive`, or `onedrive`.
+- Email delivery attaches the generated backup to a normal outbound message.
+- Google Drive uses OAuth client credentials loaded from `GOOGLE_OAUTH_JSON_PATH` plus a refresh token.
+- OneDrive uses Microsoft OAuth refresh credentials and uploads into `ONEDRIVE_FOLDER`.
+
+## What Changed
+
+- Added a server-side backup subsystem with cron scheduling and pluggable delivery targets.
+- Added Gmail OAuth support by reading Google OAuth client credentials from JSON.
+- Added whole-database export support for both SQLite snapshot and MsgPack archive formats.
+
 ## Deployment
 
-- **GitHub Pages**: push to `main` → `.github/workflows/deploy-pages.yml` builds and deploys.
-- **Netlify**: push to `main` → `.github/workflows/deploy-netlify.yml` deploys.
-  Set `NETLIFY_AUTH_TOKEN` and `NETLIFY_SITE_ID` in GitHub repository secrets.
+- Static web deployment is still supported with GitHub Pages and Netlify.
+- API-backed deployment can use Docker directly or `docker-compose`.
+- GitHub Pages and Netlify workflows now force the web app into frontend-only deployment mode.
 
 ## Project Structure
 
-```
+```text
 labby/
-├── pnpm-workspace.yaml
-├── netlify.toml
-├── .github/workflows/
-│   ├── deploy-pages.yml
-│   └── deploy-netlify.yml
+├── docs/
+├── Dockerfile
+├── docker-compose.yml
+├── package.json
 └── packages/
-    ├── core/              # @labby/core – pure algorithms & types
-    │   └── src/
-    │       ├── types.ts   # entity interfaces
-    │       ├── nlp.ts     # triplet-loss embedding engine
-    │       └── solver.ts  # simulated-annealing scheduler
-    └── web/               # @labby/web – Preact + Vite UI
-        └── src/
-            ├── store/     # Preact Signals state
-            ├── db/        # IndexedDB (idb)
-            ├── components/# UI components
-            ├── i18n/      # zh / en / ja dictionaries
-            └── styles/    # vanilla-extract CSS
+  ├── core/
+  ├── server/
+  └── web/
 ```

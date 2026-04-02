@@ -25,8 +25,8 @@ import {
   MenuItem as PrimitiveItem,
   MenuSeparator as PrimitiveSeparator,
   type MenuMode,
-} from '../../primitives/Menu.js';
-import * as css from './Menu.css.js';
+} from '../../primitives/Menu';
+import * as css from './Menu.css';
 
 export type { MenuMode };
 

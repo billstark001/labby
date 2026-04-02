@@ -73,6 +73,16 @@ importBackup:
   zh-CN: 导入备份
   ja-JP: バックアップ読込
 
+importOverwriteWarningTitle:
+  en: Overwrite All Data?
+  zh-CN: 确认全量覆盖数据？
+  ja-JP: 全データを上書きしますか？
+
+importOverwriteWarningMessage:
+  en: Importing a backup will fully replace the current database. This cannot be undone.
+  zh-CN: 导入备份会直接全量覆盖当前数据库，且无法撤销。
+  ja-JP: バックアップをインポートすると現在のデータベースは完全に上書きされ、元に戻せません。
+
 copyToClipboard:
   en: Copy (TSV)
   zh-CN: 复制 (TSV)
@@ -93,10 +103,170 @@ settingsTitle:
   zh-CN: 设置
   ja-JP: 設定
 
+deploymentModeTitle:
+  en: Deployment Mode
+  zh-CN: 部署模式
+  ja-JP: デプロイモード
+
+deploymentModeFrontendOnly:
+  en: Frontend Only
+  zh-CN: 仅前端
+  ja-JP: フロントエンドのみ
+
+deploymentModeServer:
+  en: Server Connected
+  zh-CN: 有服务器
+  ja-JP: サーバー接続あり
+
+deploymentModeFrontendHint:
+  en: This build runs entirely in the browser with IndexedDB storage. Server-side backup services are unavailable.
+  zh-CN: 当前构建完全在浏览器内运行，并使用 IndexedDB 存储。服务端备份服务不可用。
+  ja-JP: このビルドは IndexedDB を使うブラウザ単体モードです。サーバー側バックアップ機能は利用できません。
+
+deploymentModeServerHint:
+  en: This build is connected to the API server and can use authenticated server-side backup operations.
+  zh-CN: 当前构建连接到 API 服务器，可以使用需要鉴权的服务端备份操作。
+  ja-JP: このビルドは API サーバーに接続されており、認証付きのサーバー側バックアップ操作を利用できます。
+
 languageLabel:
   en: Language
   zh-CN: 语言
   ja-JP: 言語
+
+localBackupHint:
+  en: These tools export or import browser-managed data directly on the current device.
+  zh-CN: 这些工具直接在当前设备上导出或导入浏览器管理的数据。
+  ja-JP: これらの機能は現在の端末上でブラウザ管理データを直接入出力します。
+
+localImportUnavailableInServerMode:
+  en: Backup import stays limited to frontend-only deployments because the current server-backed mode does not restore into remote storage from the browser.
+  zh-CN: 备份导入仅适用于仅前端部署；当前服务端模式不会直接从浏览器恢复远程存储。
+  ja-JP: バックアップのインポートはフロントエンド単体デプロイ時のみ利用できます。現在のサーバー接続モードでは、ブラウザからリモート保存領域へ直接復元しません。
+
+serverBackupTitle:
+  en: Server Backup Management
+  zh-CN: 服务端备份管理
+  ja-JP: サーバーバックアップ管理
+
+serverBackupHint:
+  en: Trigger server-generated backups, download them locally, and inspect which remote targets are currently configured.
+  zh-CN: 在这里可以触发服务端生成备份、下载到本地，并查看当前哪些远程目标已经配置完成。
+  ja-JP: ここではサーバー生成バックアップの実行、ローカルへのダウンロード、および現在利用可能なリモート保存先の確認ができます。
+
+serverBackupUnavailable:
+  en: Server backup management is unavailable in frontend-only deployments.
+  zh-CN: 在仅前端部署中，服务端备份管理不可用。
+  ja-JP: フロントエンド単体デプロイではサーバーバックアップ管理は利用できません。
+
+serverCapabilitiesLoading:
+  en: Loading server capabilities…
+  zh-CN: 正在读取服务器能力…
+  ja-JP: サーバー機能を読み込み中…
+
+serverCapabilitiesError:
+  en: Failed to load server capabilities
+  zh-CN: 读取服务器能力失败
+  ja-JP: サーバー機能の読み込みに失敗しました
+
+backupSchedulerStatus:
+  en: Scheduled Backup
+  zh-CN: 定时备份
+  ja-JP: 定期バックアップ
+
+backupScheduleEnabled:
+  en: Enabled
+  zh-CN: 已启用
+  ja-JP: 有効
+
+backupScheduleDisabled:
+  en: Target unavailable
+  zh-CN: 目标当前不可用
+  ja-JP: 保存先が現在利用不可
+
+backupScheduleNotConfigured:
+  en: Not configured
+  zh-CN: 未配置
+  ja-JP: 未設定
+
+backupConfiguredTarget:
+  en: Configured Target
+  zh-CN: 当前配置目标
+  ja-JP: 設定済み保存先
+
+backupConfiguredFormat:
+  en: Configured Format
+  zh-CN: 当前配置格式
+  ja-JP: 設定済み形式
+
+backupServiceAvailability:
+  en: Service Availability
+  zh-CN: 服务可用性
+  ja-JP: サービス利用可否
+
+backupTargetEmail:
+  en: Email Attachment
+  zh-CN: 邮件附件
+  ja-JP: メール添付
+
+backupTargetGoogleDrive:
+  en: Google Drive
+  zh-CN: Google Drive
+  ja-JP: Google Drive
+
+backupTargetOneDrive:
+  en: OneDrive
+  zh-CN: OneDrive
+  ja-JP: OneDrive
+
+available:
+  en: Available
+  zh-CN: 可用
+  ja-JP: 利用可
+
+unavailable:
+  en: Unavailable
+  zh-CN: 不可用
+  ja-JP: 利用不可
+
+permissionsReadOnly:
+  en: Your current account can inspect backup availability but cannot trigger server backups.
+  zh-CN: 你当前的账号可以查看备份可用性，但不能触发服务端备份。
+  ja-JP: 現在のアカウントではバックアップ可用性は確認できますが、サーバーバックアップの実行はできません。
+
+downloadServerBackupSqlite:
+  en: Download SQLite Backup
+  zh-CN: 下载 SQLite 备份
+  ja-JP: SQLite バックアップをダウンロード
+
+downloadServerBackupMsgpack:
+  en: Download MsgPack Backup
+  zh-CN: 下载 MsgPack 备份
+  ja-JP: MsgPack バックアップをダウンロード
+
+runConfiguredBackup:
+  en: Run Configured Backup
+  zh-CN: 执行当前配置备份
+  ja-JP: 現在の設定でバックアップ実行
+
+sendBackupToEmail:
+  en: Send Backup to Email
+  zh-CN: 发送备份到邮件
+  ja-JP: バックアップをメール送信
+
+uploadBackupToGoogleDrive:
+  en: Upload Backup to Google Drive
+  zh-CN: 上传备份到 Google Drive
+  ja-JP: バックアップを Google Drive にアップロード
+
+uploadBackupToOneDrive:
+  en: Upload Backup to OneDrive
+  zh-CN: 上传备份到 OneDrive
+  ja-JP: バックアップを OneDrive にアップロード
+
+serverBackupRunSuccess:
+  en: Server backup completed
+  zh-CN: 服务端备份已完成
+  ja-JP: サーバーバックアップが完了しました
 
 darkMode:
   en: Dark Mode

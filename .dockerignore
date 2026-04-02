@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+packages/core/dist/
+packages/server/dist/
+packages/web/dist/
+
+# Runtime data
+run/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

@@ -1,6 +1,6 @@
 [build]
   base    = "packages/web"
-  command = "cd ../.. && pnpm install && pnpm --filter @labby/web build"
+  command = "cd ../.. && pnpm install && pnpm --filter @labby/web build:frontend"
   publish = "dist"
 
 [[redirects]]

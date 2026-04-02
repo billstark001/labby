@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:frontend": "VITE_DB_CONFIG=idb VITE_DEPLOYMENT_MODE=frontend-only vite",
+    "dev:server": "VITE_DB_CONFIG=api VITE_DEPLOYMENT_MODE=server vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "build:frontend": "VITE_DB_CONFIG=idb VITE_DEPLOYMENT_MODE=frontend-only tsc -p tsconfig.json --noEmit && vite build",
+    "build:server": "VITE_DB_CONFIG=api VITE_DEPLOYMENT_MODE=server tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "i18n:gen": "tsx scripts/i18n-gen.ts"

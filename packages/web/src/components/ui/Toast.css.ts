@@ -1,6 +1,6 @@
 /** Toast component styles. */
 import { style, keyframes } from '@vanilla-extract/css';
-import { vars } from '../../styles/theme.css.js';
+import { vars } from '../../styles/theme.css';
 
 const slideIn = keyframes({
   from: { transform: 'translateX(100%)', opacity: 0 },
