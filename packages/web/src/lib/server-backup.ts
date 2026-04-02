@@ -47,3 +47,22 @@ export async function downloadServerBackup(format: BackupFormat): Promise<void> 
   const match = disposition.match(/filename="?([^";]+)"?/i);
   triggerDownload(blob, match?.[1] ?? `labby-backup.${format === 'sqlite' ? 'sqlite3' : 'msgpack'}`);
 }
+
+function inferBackupFormat(filename: string): BackupFormat {
+  const normalized = filename.trim().toLowerCase();
+  if (normalized.endsWith('.sqlite') || normalized.endsWith('.sqlite3')) {
+    return 'sqlite';
+  }
+  return 'msgpack';
+}
+
+export async function uploadServerBackup(file: File): Promise<void> {
+  const format = inferBackupFormat(file.name);
+  await apiClient.request(`/system/backup/restore?format=${encodeURIComponent(format)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+    },
+    body: await file.arrayBuffer(),
+  });
+}

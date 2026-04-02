@@ -1,4 +1,4 @@
-import { encode } from '@msgpack/msgpack';
+import { decode, encode } from '@msgpack/msgpack';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -102,6 +102,11 @@ async function buildSqliteArtifact(filenamePrefix: string, store: SqliteStore): 
 
 function toUint8Array(buffer: Buffer): Uint8Array<ArrayBuffer> {
   return new Uint8Array(buffer);
+}
+
+function isFullSnapshotPayload(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && 'version' in value && 'tables' in value);
 }
 
 async function uploadToGoogleDrive(config: BackupConfig, artifact: BackupArtifact): Promise<void> {
@@ -254,6 +259,31 @@ export class BackupService {
     return format === 'msgpack'
       ? buildMsgpackArtifact(this.config.filenamePrefix, this.options.store.exportBackupSnapshot())
       : buildSqliteArtifact(this.config.filenamePrefix, this.options.store);
+  }
+
+  async restoreBackupArtifact(input: { format: BackupFormat; content: Buffer; }): Promise<void> {
+    if (input.content.length === 0) {
+      throw new Error('Backup payload is empty');
+    }
+
+    if (input.format === 'msgpack') {
+      const snapshot = decode(input.content);
+      if (isFullSnapshotPayload(snapshot)) {
+        this.options.store.restoreBackupSnapshot(snapshot);
+      } else {
+        this.options.store.restoreEntityDump(snapshot);
+      }
+      return;
+    }
+
+    const stamp = timestampSlug(Date.now());
+    const tempPath = path.join(os.tmpdir(), `${this.config.filenamePrefix}-restore-${stamp}.sqlite3`);
+    await fs.writeFile(tempPath, input.content);
+    try {
+      this.options.store.restoreFromSqliteFile(tempPath);
+    } finally {
+      await fs.rm(tempPath, { force: true });
+    }
   }
 
   async dispatchBackup(input?: { format?: BackupFormat; target?: BackupTarget; }): Promise<void> {

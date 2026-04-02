@@ -198,6 +198,30 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     return c.body(new Uint8Array(artifact.content));
   });
 
+  app.post('/api/v1/system/backup/restore', async (c) => {
+    const backupService = getActiveBackupService();
+    if (!backupService) {
+      throw new AppError('BACKUP_UNAVAILABLE', 'backup service is unavailable', 503);
+    }
+
+    const formatQuery = c.req.query('format');
+    if (formatQuery !== 'sqlite' && formatQuery !== 'msgpack') {
+      throw new AppError('VALIDATION_ERROR', 'format must be sqlite or msgpack', 400);
+    }
+
+    const payload = Buffer.from(await c.req.arrayBuffer());
+    if (payload.length === 0) {
+      throw new AppError('VALIDATION_ERROR', 'backup payload is empty', 400);
+    }
+
+    await backupService.restoreBackupArtifact({
+      format: formatQuery,
+      content: payload,
+    });
+
+    return ok(c, { ok: true });
+  });
+
   // ---------------------------------------------------------------------------
   // Auth routes
   // ---------------------------------------------------------------------------

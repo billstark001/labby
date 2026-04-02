@@ -10,11 +10,13 @@ import {
   downloadServerBackup,
   fetchSystemCapabilities,
   runServerBackup,
+  uploadServerBackup,
   type BackupTarget,
   type SystemCapabilities,
 } from '@/lib/server-backup.js';
 import { deploymentMode, isFrontendOnlyDeployment, isServerDeployment } from '@/lib/runtime.js';
 import clsx from 'clsx';
+import { confirmDialog } from './ui/Dialog.js';
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -89,33 +91,63 @@ export function DataPanel() {
     }
   }
 
-  function handleImportBackup() {
+  async function importLocalBackup(file: File) {
+    const id = toast.loading(t('computing'));
+    try {
+      const buffer = await file.arrayBuffer();
+      let dump: Awaited<ReturnType<typeof dumpDatabase>>;
+      if (file.name.endsWith('.json')) {
+        dump = JSON.parse(new TextDecoder().decode(buffer));
+      } else {
+        dump = decode(buffer) as typeof dump;
+      }
+      await restoreDatabase(dump);
+      await loadDatabaseSignals(dbInstance);
+
+      toast.dismiss(id);
+      toast.success(t('importSuccess'));
+    } catch (err) {
+      toast.dismiss(id);
+      toast.error(`${t('importError')}: ${String(err)}`);
+    }
+  }
+
+  async function importServerBackup(file: File) {
+    const id = toast.loading(t('computing'));
+    try {
+      await uploadServerBackup(file);
+      await loadDatabaseSignals(dbInstance);
+      await refreshCapabilities();
+      toast.dismiss(id);
+      toast.success(t('importSuccess'));
+    } catch (err) {
+      toast.dismiss(id);
+      toast.error(`${t('importError')}: ${String(err)}`);
+    }
+  }
+
+  function handleImportBackupConfirmed() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.labby,.json';
+    input.accept = isServerDeployment ? '.labby,.msgpack,.sqlite,.sqlite3' : '.labby,.json';
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      const id = toast.loading(t('computing'));
-      try {
-        const buffer = await file.arrayBuffer();
-        let dump: Awaited<ReturnType<typeof dumpDatabase>>;
-        if (file.name.endsWith('.json')) {
-          dump = JSON.parse(new TextDecoder().decode(buffer));
-        } else {
-          dump = decode(buffer) as typeof dump;
-        }
-        await restoreDatabase(dump);
-        await loadDatabaseSignals(dbInstance);
-
-        toast.dismiss(id);
-        toast.success(t('importSuccess'));
-      } catch (err) {
-        toast.dismiss(id);
-        toast.error(`${t('importError')}: ${String(err)}`);
+      if (isServerDeployment) {
+        await importServerBackup(file);
+        return;
       }
+      await importLocalBackup(file);
     };
     input.click();
+  }
+
+  function handleImportBackup() {
+    confirmDialog(
+      t('importOverwriteWarningTitle'),
+      t('importOverwriteWarningMessage'),
+      handleImportBackupConfirmed,
+    );
   }
 
   async function refreshCapabilities() {
@@ -186,15 +218,14 @@ export function DataPanel() {
           <Button variant="secondary" onClick={handleExportJson}>
             {t('exportBackupJson')}
           </Button>
-          <Button variant="secondary" onClick={handleImportBackup} disabled={isServerDeployment}>
+          <Button
+            variant="secondary"
+            onClick={handleImportBackup}
+            disabled={isServerDeployment && !canManageServerBackups}
+          >
             {t('importBackup')}
           </Button>
         </div>
-        {isServerDeployment && (
-          <p class={clsx(s.mutedParagraph, s.mt12)}>
-            {t('localImportUnavailableInServerMode')}
-          </p>
-        )}
       </div>
 
       <div class={clsx(s.card, s.mb24)}>

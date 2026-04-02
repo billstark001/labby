@@ -56,6 +56,9 @@ function openDatabase(dbPath: string) {
   return new Database(dbPath);
 }
 
+type TableRowValue = string | number | null;
+type TableRow = Record<string, TableRowValue>;
+
 function normalizeIdentity(identity: string): string {
   return identity.trim().toLowerCase();
 }
@@ -164,6 +167,51 @@ export class SqliteStore {
 
   private exportTable(tableName: string): Array<Record<string, string | number | null>> {
     return this.db.prepare(`SELECT * FROM ${tableName}`).all() as Array<Record<string, string | number | null>>;
+  }
+
+  private validateTableRows(tableName: string, rows: unknown): TableRow[] {
+    if (!Array.isArray(rows)) {
+      throw new Error(`Invalid backup payload: table ${tableName} must be an array`);
+    }
+
+    return rows.map((row) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new Error(`Invalid backup payload: table ${tableName} contains a non-object row`);
+      }
+
+      const normalized: TableRow = {};
+      for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
+        if (value === null || typeof value === 'string' || typeof value === 'number') {
+          normalized[key] = value;
+          continue;
+        }
+        throw new Error(`Invalid backup payload: table ${tableName} has an unsupported value type`);
+      }
+      return normalized;
+    });
+  }
+
+  private restoreTableRows(tableName: string, rows: TableRow[]): void {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const columns = Object.keys(rows[0]);
+    if (columns.length === 0) {
+      throw new Error(`Invalid backup payload: table ${tableName} row has no columns`);
+    }
+
+    const quotedColumns = columns.map(column => `"${column}"`).join(', ');
+    const placeholders = columns.map(() => '?').join(', ');
+    const statement = this.db.prepare(`INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders})`);
+
+    for (const row of rows) {
+      const values = columns.map((column) => {
+        const value = row[column];
+        return value === undefined ? null : value;
+      });
+      statement.run(...values);
+    }
   }
 
   clearAllEntityData(): void {
@@ -465,6 +513,137 @@ export class SqliteStore {
         refreshTokens: this.exportTable('refresh_tokens'),
       },
     };
+  }
+
+  restoreBackupSnapshot(snapshot: unknown): void {
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+      throw new Error('Invalid backup payload: expected an object');
+    }
+
+    const snapshotObject = snapshot as {
+      version?: unknown;
+      tables?: Record<string, unknown>;
+    };
+
+    if (snapshotObject.version !== 1) {
+      throw new Error('Unsupported backup snapshot version');
+    }
+    if (!snapshotObject.tables || typeof snapshotObject.tables !== 'object' || Array.isArray(snapshotObject.tables)) {
+      throw new Error('Invalid backup payload: missing tables');
+    }
+
+    const tables = {
+      persons: this.validateTableRows('persons', snapshotObject.tables.persons),
+      keywords: this.validateTableRows('keywords', snapshotObject.tables.keywords),
+      similarities: this.validateTableRows('similarities', snapshotObject.tables.similarities),
+      configs: this.validateTableRows('configs', snapshotObject.tables.configs),
+      schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
+      unavailabilities: this.validateTableRows('unavailabilities', snapshotObject.tables.unavailabilities),
+      users: this.validateTableRows('users', snapshotObject.tables.users),
+      refresh_tokens: this.validateTableRows('refresh_tokens', snapshotObject.tables.refreshTokens),
+    };
+
+    const transaction = this.db.transaction(() => {
+      this.db.exec(`
+        DELETE FROM refresh_tokens;
+        DELETE FROM users;
+        DELETE FROM similarities;
+        DELETE FROM unavailabilities;
+        DELETE FROM schedules;
+        DELETE FROM configs;
+        DELETE FROM keywords;
+        DELETE FROM persons;
+      `);
+
+      this.restoreTableRows('persons', tables.persons);
+      this.restoreTableRows('keywords', tables.keywords);
+      this.restoreTableRows('similarities', tables.similarities);
+      this.restoreTableRows('configs', tables.configs);
+      this.restoreTableRows('schedules', tables.schedules);
+      this.restoreTableRows('unavailabilities', tables.unavailabilities);
+      this.restoreTableRows('users', tables.users);
+      this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
+    });
+
+    transaction();
+  }
+
+  restoreEntityDump(dump: unknown): void {
+    if (!dump || typeof dump !== 'object' || Array.isArray(dump)) {
+      throw new Error('Invalid backup payload: expected an object');
+    }
+
+    const dumpObject = dump as {
+      persons?: unknown;
+      keywords?: unknown;
+      similarities?: unknown;
+      configs?: unknown;
+      schedules?: unknown;
+      unavailabilities?: unknown;
+    };
+
+    if (!Array.isArray(dumpObject.persons)
+      || !Array.isArray(dumpObject.keywords)
+      || !Array.isArray(dumpObject.similarities)
+      || !Array.isArray(dumpObject.configs)
+      || !Array.isArray(dumpObject.schedules)
+      || !Array.isArray(dumpObject.unavailabilities)) {
+      throw new Error('Invalid backup payload: missing entity lists');
+    }
+
+    const persons = dumpObject.persons as Person[];
+    const keywords = dumpObject.keywords as Keyword[];
+    const similarities = dumpObject.similarities as SimilarityEdge[];
+    const configs = dumpObject.configs as ScheduleConfig[];
+    const schedules = dumpObject.schedules as SchedulePlan[];
+    const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[];
+
+    const transaction = this.db.transaction(() => {
+      this.clearAllEntityData();
+
+      for (const person of persons) {
+        this.putPerson(person);
+      }
+      for (const keyword of keywords) {
+        this.putKeyword(keyword);
+      }
+      for (const edge of similarities) {
+        this.putSimilarity(edge);
+      }
+      for (const config of configs) {
+        this.putConfig(config);
+      }
+      for (const schedule of schedules) {
+        this.putSchedule(schedule);
+      }
+      for (const unavailability of unavailabilities) {
+        this.putUnavailability(unavailability);
+      }
+    });
+
+    transaction();
+  }
+
+  restoreFromSqliteFile(sourcePath: string): void {
+    const source = openDatabase(sourcePath);
+    try {
+      const snapshot = {
+        version: 1,
+        tables: {
+          persons: source.prepare('SELECT * FROM persons').all(),
+          keywords: source.prepare('SELECT * FROM keywords').all(),
+          similarities: source.prepare('SELECT * FROM similarities').all(),
+          configs: source.prepare('SELECT * FROM configs').all(),
+          schedules: source.prepare('SELECT * FROM schedules').all(),
+          unavailabilities: source.prepare('SELECT * FROM unavailabilities').all(),
+          users: source.prepare('SELECT * FROM users').all(),
+          refreshTokens: source.prepare('SELECT * FROM refresh_tokens').all(),
+        },
+      };
+      this.restoreBackupSnapshot(snapshot);
+    } finally {
+      source.close();
+    }
   }
 
   async backupDatabase(destinationPath: string): Promise<void> {
