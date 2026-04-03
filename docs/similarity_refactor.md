@@ -68,6 +68,7 @@ The Rust core **must** own the $N \times d$ coordinate matrix (the latent space)
 
 ### Task 3: Implement the Optimizer (SGD Engine)
 
+* **Triplet Candidate Generation:** Implement a method to retrieve the $k$-nearest neighbors for any given point in $\mathbb{R}^{64}$ using an efficient approximate nearest neighbor search (e.g., HNSW or Annoy).
 * **Triplet Update:** Implement a function `update_triplet(id_a, id_b, id_c, margin, learning_rate)`.
   * Calculate current distances.
   * Compute gradients for the 3 vectors.
