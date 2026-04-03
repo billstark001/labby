@@ -161,7 +161,10 @@ export function clonePositions(map: PositionMap): PositionMap {
 
 function _sqDist(a: Float32Array, b: Float32Array): number {
   let s = 0;
-  for (let i = 0; i < DIMS; i++) { const d = a[i] - b[i]; s += d * d; }
+  for (let i = 0; i < DIMS; i++) {
+    const d = a[i] - b[i];
+    s += d * d;
+  }
   return s;
 }
 

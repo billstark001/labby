@@ -494,15 +494,20 @@ mod node_bindings {
                 .collect()
         }
 
-        /// Returns `{ indices, embeddings64, positions2d }` and clears dirty flags.
+        /// Returns dirty node data and clears dirty flags.
+        /// Encoding: [n_dirty, idx0, idx1, ..., emb64_flat..., pos2d_flat...]
         #[napi]
-        pub fn flush_dirty(&mut self) -> serde_json::Value {
+        pub fn flush_dirty(&mut self) -> Vec<f64> {
             let (indices, emb64, pos2d) = self.inner.flush_dirty();
-            serde_json::json!({
-                "indices": indices,
-                "embeddings64": emb64,
-                "positions2d": pos2d,
-            })
+            let n = indices.len();
+            let mut result = Vec::with_capacity(1 + n + n * DIMS + n * 2);
+            result.push(n as f64);
+            for &i in &indices {
+                result.push(i as f64);
+            }
+            for v in &emb64 { result.push(*v as f64); }
+            for v in &pos2d { result.push(*v as f64); }
+            result
         }
     }
 }
