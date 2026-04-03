@@ -1,0 +1,28 @@
+[package]
+name = "labby-algorithm"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance embedding engine for Labby keyword similarity"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Compile to WebAssembly using wasm-bindgen (browser target)
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
+# Compile to native Node.js addon using napi-rs (server target)
+node = ["dep:napi", "dep:napi-derive"]
+
+[dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+napi = { version = "2", features = ["napi8"], optional = true }
+napi-derive = { version = "2", optional = true }
+
+[build-dependencies]
+napi-build = { version = "2", optional = true }
+
+[profile.release]
+opt-level = 3

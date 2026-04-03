@@ -3,17 +3,17 @@ import { useState } from 'preact/hooks';
 import {
   keywordsSignal,
   embeddingsSignal,
-  similarityEdgesSignal,
+  positions2dSignal,
 } from '../store/index';
 import { displayName } from '@/i18n';
 import { useDatabase } from '../db/index';
 import {
   nextTripletQuery,
   applyTripletStep,
-  cloneEmbeddings,
-  embeddingsToSimilarities,
+  initEmbeddings,
+  initPositions,
 } from '@labby/core';
-import type { SimilarityEdge, TripletQuery } from '@labby/core';
+import type { TripletQuery } from '@labby/core';
 import * as s from '../styles/components.css';
 import { Button } from './ui';
 import { i18n } from '@/i18n';
@@ -28,30 +28,44 @@ export function TripletCard() {
   const keywordMap = new Map(keywords.map(k => [k.id, k]));
 
   const [answered, setAnswered] = useState(0);
-  // Track recently asked pair keys to avoid immediate repetition
   const [recentPairs, setRecentPairs] = useState<string[]>([]);
 
-  function ensureEmbeddings() {
-    const current = embeddingsSignal.value;
+  function ensureEmbeddingsAndPositions() {
+    const embeddings = embeddingsSignal.value;
+    const positions = positions2dSignal.value;
     const ids = keywords.map(k => k.id);
-    let changed = false;
-    const copy = cloneEmbeddings(current);
+    let embChanged = false;
+    let posChanged = false;
+
+    // Clone maps only if something is missing
+    let workEmb = embeddings;
+    let workPos = positions;
     for (const id of ids) {
-      if (!copy.has(id)) {
-        copy.set(id, { x: Math.random() * 2 - 1, y: Math.random() * 2 - 1 });
-        changed = true;
+      if (!workEmb.has(id)) {
+        if (!embChanged) {
+          workEmb = new Map(workEmb);
+          embChanged = true;
+        }
+        workEmb.set(id, initEmbeddings([id]).get(id)!);
+      }
+      if (!workPos.has(id)) {
+        if (!posChanged) {
+          workPos = new Map(workPos);
+          posChanged = true;
+        }
+        workPos.set(id, initPositions([id]).get(id)!);
       }
     }
-    if (changed) embeddingsSignal.value = copy;
-    return embeddingsSignal.value;
+    if (embChanged) embeddingsSignal.value = workEmb;
+    if (posChanged) positions2dSignal.value = workPos;
+    return { embeddings: embeddingsSignal.value, positions: positions2dSignal.value };
   }
 
-  const embeddings = ensureEmbeddings();
+  const { embeddings, positions } = ensureEmbeddingsAndPositions();
   const ids = keywords.map(k => k.id);
   const recentPairSet = new Set(recentPairs);
   const query = nextTripletQuery(embeddings, ids, recentPairSet);
 
-  /** Record the pair from this query as recently answered. */
   function addRecentPair(q: TripletQuery) {
     const [a, b] = [q.anchorId, q.positiveId].sort();
     const key = `${a}|${b}`;
@@ -70,21 +84,32 @@ export function TripletCard() {
           ? query
           : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
 
-      const updated = cloneEmbeddings(embeddingsSignal.value);
-      applyTripletStep(updated, effectiveQuery);
-      embeddingsSignal.value = updated;
+      const { embeddings: newEmb, positions: newPos } = applyTripletStep(
+        embeddingsSignal.value,
+        positions2dSignal.value,
+        effectiveQuery,
+      );
+      embeddingsSignal.value = newEmb;
+      positions2dSignal.value = newPos;
 
-      // Persist updated similarities
-      const simMap = embeddingsToSimilarities(updated);
-      await db.similarities.clear();
-      const newEdges: SimilarityEdge[] = [];
-      for (const [key, weight] of simMap) {
-        const [sourceId, targetId] = key.split('|');
-        const edge: SimilarityEdge = { sourceId, targetId, weight };
-        newEdges.push(edge);
-        await db.similarities.put(edge);
+      // Persist updated 64-D vectors and 2-D positions to DB
+      const affectedIds = [effectiveQuery.anchorId, effectiveQuery.positiveId, effectiveQuery.negativeId];
+      for (const id of affectedIds) {
+        const kw = keywords.find(k => k.id === id);
+        if (!kw) continue;
+        const vec = newEmb.get(id);
+        const pos = newPos.get(id);
+        if (!vec || !pos) continue;
+        const updated = {
+          ...kw,
+          metadata: {
+            ...kw.metadata,
+            embedding64: Array.from(vec),
+            position2d: { x: pos.x, y: pos.y },
+          },
+        };
+        await db.keywords.put(updated);
       }
-      similarityEdgesSignal.value = newEdges;
     }
 
     addRecentPair(query);

@@ -1,0 +1,30 @@
+{
+  "name": "@labby/algorithm",
+  "version": "0.1.0",
+  "description": "High-performance embedding engine for Labby keyword similarity (Rust + TypeScript fallback)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "Cargo.toml",
+    "build.rs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch",
+    "build:wasm": "wasm-pack build --target web --features wasm --out-dir pkg/wasm",
+    "build:node": "napi build --release --features node --js index.node.cjs --dts index.node.d.ts"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}

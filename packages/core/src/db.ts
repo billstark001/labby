@@ -5,7 +5,7 @@ import type {
   ScheduleConfig,
   SchedulePlan,
   SimilarityEdge,
-} from './types';
+} from './types.js';
 
 export interface ListQuery {
   offset: number;

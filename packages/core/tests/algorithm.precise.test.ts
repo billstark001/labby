@@ -1,21 +1,24 @@
 import { describe, expect, test } from 'vitest';
 import {
   applyTripletStep,
-  embeddingsToSimilarities,
+  computeSimilarity,
   generateSessionDates,
+  getKNearest,
   initEmbeddings,
+  initPositions,
   nextTripletQuery,
   runTripletBatch,
   solveFull,
   solveIncremental,
   type EmbeddingMap,
+  type PositionMap,
   type Person,
   type ScheduleConfig,
   type SchedulePlan,
   type Session,
   type SolverInput,
   type TripletQuery,
-} from '../src/index';
+} from '../src/index.js';
 
 function withSeed<T>(seed: number, fn: () => T): T {
   const original = Math.random;
@@ -141,33 +144,44 @@ function collectUnavailable(configId: string): Map<string, Set<string>> {
 
 describe('Keyword distance algorithm (black-box precise tests)', () => {
   test('triplet learning moves positive closer than negative over batch', () => {
-    const embeddings: EmbeddingMap = new Map([
+    // Set up deterministic embeddings: anchor 'a' at origin,
+    // 'b' (negative) close to 'a', 'c' (positive) far from 'a'.
+    // The query asks "a is closer to c than to b" so training should
+    // pull a-c together and push a-b apart.
+    const DIMS_VAL = 64;
+    const aVec = new Float32Array(DIMS_VAL); // all zeros
+    const bVec = new Float32Array(DIMS_VAL); bVec[0] = 0.1; // very close to a
+    const cVec = new Float32Array(DIMS_VAL); cVec[0] = 1.5; // far from a
+
+    const embeddings: EmbeddingMap = new Map([['a', aVec], ['b', bVec], ['c', cVec]]);
+    const positions: PositionMap = new Map([
       ['a', { x: 0, y: 0 }],
-      ['b', { x: 0.05, y: 0.05 }],
-      ['c', { x: 1.5, y: 1.5 }],
+      ['b', { x: 0.1, y: 0 }],
+      ['c', { x: 1.5, y: 0 }],
     ]);
     const query: TripletQuery = { anchorId: 'a', positiveId: 'c', negativeId: 'b' };
 
-    const before = embeddingsToSimilarities(embeddings);
-    const trained = runTripletBatch(embeddings, [query], 80);
-    const after = embeddingsToSimilarities(trained);
+    const beforeAC = computeSimilarity(embeddings.get('a')!, embeddings.get('c')!);
+    const beforeAB = computeSimilarity(embeddings.get('a')!, embeddings.get('b')!);
+    // Verify initial state: b is closer to a than c
+    expect(beforeAB).toBeGreaterThan(beforeAC);
 
-    expect(after.get('a|c') ?? 0).toBeGreaterThan(before.get('a|c') ?? 0);
-    expect(after.get('a|b') ?? 1).toBeLessThan(before.get('a|b') ?? 1);
+    const { embeddings: trained } = runTripletBatch(embeddings, positions, [query], 80);
+
+    const afterAC = computeSimilarity(trained.get('a')!, trained.get('c')!);
+    const afterAB = computeSimilarity(trained.get('a')!, trained.get('b')!);
+
+    expect(afterAC).toBeGreaterThan(beforeAC);
+    expect(afterAB).toBeLessThan(beforeAB);
   });
 
-  test('similarity key is normalized regardless of insertion order', () => {
-    const embeddings: EmbeddingMap = new Map([
-      ['z', { x: 0, y: 0 }],
-      ['a', { x: 1, y: 0 }],
-    ]);
-
-    const sim = embeddingsToSimilarities(embeddings);
-    expect(sim.has('a|z')).toBe(true);
-    expect(sim.has('z|a')).toBe(false);
-    const value = sim.get('a|z') ?? 0;
-    expect(value).toBeGreaterThan(0);
-    expect(value).toBeLessThanOrEqual(1);
+  test('computeSimilarity is symmetric', () => {
+    const embeddings: EmbeddingMap = initEmbeddings(['z', 'a']);
+    const simAZ = computeSimilarity(embeddings.get('z')!, embeddings.get('a')!);
+    const simZA = computeSimilarity(embeddings.get('a')!, embeddings.get('z')!);
+    expect(simAZ).toBeCloseTo(simZA, 10);
+    expect(simAZ).toBeGreaterThan(0);
+    expect(simAZ).toBeLessThanOrEqual(1);
   });
 
   test('nextTripletQuery returns null when keywords fewer than 3', () => {
@@ -176,14 +190,19 @@ describe('Keyword distance algorithm (black-box precise tests)', () => {
   });
 
   test('applyTripletStep is stable for missing IDs', () => {
-    const em: EmbeddingMap = new Map([
-      ['k1', { x: 0, y: 0 }],
-      ['k2', { x: 1, y: 1 }],
-    ]);
+    const embeddings: EmbeddingMap = initEmbeddings(['k1', 'k2']);
+    const positions: PositionMap = initPositions(['k1', 'k2']);
 
     expect(() => {
-      applyTripletStep(em, { anchorId: 'k1', positiveId: 'k2', negativeId: 'k404' });
+      applyTripletStep(embeddings, positions, { anchorId: 'k1', positiveId: 'k2', negativeId: 'k404' });
     }).not.toThrow();
+  });
+
+  test('getKNearest returns correct number of neighbours', () => {
+    const em = initEmbeddings(['a', 'b', 'c', 'd', 'e']);
+    const nn = getKNearest(em, 'a', 3);
+    expect(nn).toHaveLength(3);
+    expect(nn.includes('a')).toBe(false);
   });
 });
 

@@ -17,7 +17,7 @@ import {
 } from './idb';
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
-import { personsSignal, keywordsSignal, similarityEdgesSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
+import { personsSignal, keywordsSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
 import { databaseMode } from '@/lib/runtime';
 
 const DB_CONFIG = databaseMode;
@@ -104,10 +104,9 @@ export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
 }
 
 export async function loadDatabaseSignals(db: LabbyDB) {
-  const [persons, keywords, similarities, configs, schedules, unavailabilities] = await Promise.all([
+  const [persons, keywords, configs, schedules, unavailabilities] = await Promise.all([
     listAllPaginated(db.persons),
     listAllPaginated(db.keywords),
-    listAllPaginated(db.similarities),
     listAllPaginated(db.configs),
     listAllPaginated(db.schedules),
     listAllPaginated(db.unavailabilities),
@@ -115,7 +114,6 @@ export async function loadDatabaseSignals(db: LabbyDB) {
 
   personsSignal.value = persons ?? [];
   keywordsSignal.value = keywords ?? [];
-  similarityEdgesSignal.value = similarities ?? [];
   configsSignal.value = configs ?? [];
   schedulesSignal.value = schedules ?? [];
   unavailabilitiesSignal.value = unavailabilities ?? [];
@@ -133,10 +131,9 @@ export async function loadKeywordsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE
   }, pageSize);
 }
 
-export async function loadSimilaritiesFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.similarities, items => {
-    similarityEdgesSignal.value = items;
-  }, pageSize);
+export async function loadSimilaritiesFirstPage(_db: LabbyDB, _pageSize = DEFAULT_PAGE_SIZE) {
+  // Similarity edges are no longer loaded into frontend state.
+  // Similarity is computed on-demand from 64-D embeddings.
 }
 
 export async function loadConfigsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
@@ -165,8 +162,9 @@ export async function loadAllKeywords(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE)
   keywordsSignal.value = await listAllPaginated(db.keywords, pageSize);
 }
 
-export async function loadAllSimilarities(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  similarityEdgesSignal.value = await listAllPaginated(db.similarities, pageSize);
+export async function loadAllSimilarities(_db: LabbyDB, _pageSize = DEFAULT_PAGE_SIZE) {
+  // Similarity edges are no longer stored in frontend state.
+  // Similarity is computed on-demand from 64-D embeddings.
 }
 
 export async function loadAllConfigs(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {

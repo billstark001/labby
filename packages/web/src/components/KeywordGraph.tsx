@@ -1,308 +1,366 @@
-/** Keyword similarity D3 force graph with brush-select interaction. */
-import { useEffect, useRef, useState } from 'preact/hooks';
-import * as d3 from 'd3';
+/**
+ * Keyword similarity graph rendered with PixiJS (WebGL).
+ *
+ * Node positions come directly from the 2-D embedding projection maintained
+ * by the @labby/algorithm engine; there is no force simulation.  Edges are
+ * computed from the k-nearest-neighbours of each node so the count is
+ * O(N · k) rather than the old O(N²) pairwise approach.
+ *
+ * The canvas is zoomable and pannable via pointer drag and mouse-wheel.
+ * Clicking a node selects or deselects it.
+ */
+
+import { useEffect, useRef, useState, useCallback } from 'preact/hooks';
+import * as PIXI from 'pixi.js';
 import { X } from 'lucide-preact';
 import {
   keywordsSignal,
-  similarityEdgesSignal,
   embeddingsSignal,
+  positions2dSignal,
+  themeSignal,
 } from '../store/index';
-import { fallbackEntityId } from '@/i18n';
+
+// ---------------------------------------------------------------------------
+// Theme-aware colours (static lookup, avoids CSS-variable resolution issues)
+// ---------------------------------------------------------------------------
+
+const COLORS = {
+  light: {
+    node: 0x2563eb,
+    nodeSelected: 0x7c3aed,
+    edge: 0xe2e8f0,
+    edgeSelected: 0x7c3aed,
+    text: '#0f172a',
+  },
+  dark: {
+    node: 0x3b82f6,
+    nodeSelected: 0xa78bfa,
+    edge: 0x334155,
+    edgeSelected: 0xa78bfa,
+    text: '#f1f5f9',
+  },
+} as const;
 import { displayName } from '@/i18n';
 import { useDatabase } from '../db/index';
 import {
   attractKeywords,
   repelKeywords,
-  embeddingsToSimilarities,
+  getKNearest,
+  computeSimilarity,
 } from '@labby/core';
-import type { SimilarityEdge } from '@labby/core';
 import * as s from '../styles/components.css';
-import { vars } from '../styles/theme.css';
 import { Button } from './ui';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
 
-interface GraphNode extends d3.SimulationNodeDatum {
-  id: string;
-  label: string;
-}
+/** Maximum number of nearest-neighbour edges shown per node. */
+const K_EDGES = 5;
 
-interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
-  weight: number;
-}
+/** Scale factor: embedding [-1,1] → canvas pixels. */
+const SCALE = 120;
 
-function linkKey(link: GraphLink): string {
-  const source = typeof link.source === 'object' ? link.source.id : String(link.source);
-  const target = typeof link.target === 'object' ? link.target.id : String(link.target);
-  return source < target ? `${source}|${target}` : `${target}|${source}`;
-}
+/** Node visual radius in pixels. */
+const NODE_R = 10;
+const NODE_R_SEL = 14;
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export function KeywordGraph() {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
-  const graphGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const linkLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const nodeLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const labelLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const nodeSelectionRef = useRef<d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, GraphLink, SVGGElement, unknown> | null>(null);
-  const labelSelectionRef = useRef<d3.Selection<SVGTextElement, GraphNode, SVGGElement, unknown> | null>(null);
-  const nodeMapRef = useRef<Map<string, GraphNode>>(new Map());
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const appRef = useRef<PIXI.Application | null>(null);
+  const viewportRef = useRef<PIXI.Container | null>(null);
+  const nodeContainerRef = useRef<PIXI.Container | null>(null);
+  const edgeGfxRef = useRef<PIXI.Graphics | null>(null);
+  const labelContainerRef = useRef<PIXI.Container | null>(null);
+  // Map keyword id → PIXI.Graphics circle
+  const nodeGfxMapRef = useRef<Map<string, PIXI.Graphics>>(new Map());
+  // Map keyword id → PIXI.Text label
+  const labelMapRef = useRef<Map<string, PIXI.Text>>(new Map());
+
   const { t } = i18n;
   const keywords = keywordsSignal.value;
-  const edges = similarityEdgesSignal.value;
   const db = useDatabase();
-
   const [selected, setSelected] = useState<string[]>([]);
 
+  // ------------------------------------------------------------------
+  // Initialize PixiJS application
+  // ------------------------------------------------------------------
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!canvasRef.current) return;
+    const app = new PIXI.Application();
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+    (async () => {
+      await app.init({
+        canvas: canvasRef.current!,
+        resizeTo: canvasRef.current!.parentElement ?? canvasRef.current!,
+        backgroundColor: 0x000000,
+        backgroundAlpha: 0,
+        antialias: true,
+        autoDensity: true,
+        resolution: window.devicePixelRatio || 1,
+      });
 
-    const graphGroup = svg.append('g');
-    const linkLayer = graphGroup.append('g');
-    const nodeLayer = graphGroup.append('g');
-    const labelLayer = graphGroup.append('g');
+      // Viewport container for pan/zoom
+      const viewport = new PIXI.Container();
+      app.stage.addChild(viewport);
 
-    const simulation = d3
-      .forceSimulation<GraphNode>([])
-      .force(
-        'link',
-        d3
-          .forceLink<GraphNode, GraphLink>([])
-          .id(d => d.id)
-          .distance(d => 40 + (1 - d.weight) * 220),
-      )
-      .force('charge', d3.forceManyBody().strength(-110))
-      .force('center', d3.forceCenter(400, 250))
-      .force('collision', d3.forceCollide(34));
+      // Center initially
+      viewport.x = app.screen.width / 2;
+      viewport.y = app.screen.height / 2;
 
-    simulation.on('tick', () => {
-      linkSelectionRef.current
-        ?.attr('x1', d => (d.source as GraphNode).x ?? 0)
-        .attr('y1', d => (d.source as GraphNode).y ?? 0)
-        .attr('x2', d => (d.target as GraphNode).x ?? 0)
-        .attr('y2', d => (d.target as GraphNode).y ?? 0);
-      nodeSelectionRef.current
-        ?.attr('cx', d => d.x ?? 0)
-        .attr('cy', d => d.y ?? 0);
-      labelSelectionRef.current
-        ?.attr('x', d => d.x ?? 0)
-        .attr('y', d => d.y ?? 0);
-    });
+      const edgeGfx = new PIXI.Graphics();
+      const nodeContainer = new PIXI.Container();
+      const labelContainer = new PIXI.Container();
+      viewport.addChild(edgeGfx);
+      viewport.addChild(nodeContainer);
+      viewport.addChild(labelContainer);
 
-    svg.call(
-      d3.zoom<SVGSVGElement, unknown>().on('zoom', event => {
-        graphGroup.attr('transform', event.transform);
-      }),
-    );
+      appRef.current = app;
+      viewportRef.current = viewport;
+      nodeContainerRef.current = nodeContainer;
+      edgeGfxRef.current = edgeGfx;
+      labelContainerRef.current = labelContainer;
 
-    simulationRef.current = simulation;
-    graphGroupRef.current = graphGroup;
-    linkLayerRef.current = linkLayer;
-    nodeLayerRef.current = nodeLayer;
-    labelLayerRef.current = labelLayer;
+      // Pan / zoom interaction on the stage
+      let isPanning = false;
+      let panStart = { x: 0, y: 0 };
+      let vpStart = { x: 0, y: 0 };
+
+      app.stage.eventMode = 'static';
+      app.stage.hitArea = app.screen;
+
+      app.stage.on('pointerdown', (e: PIXI.FederatedPointerEvent) => {
+        isPanning = true;
+        panStart = { x: e.clientX, y: e.clientY };
+        vpStart = { x: viewport.x, y: viewport.y };
+      });
+      app.stage.on('pointermove', (e: PIXI.FederatedPointerEvent) => {
+        if (!isPanning) return;
+        viewport.x = vpStart.x + e.clientX - panStart.x;
+        viewport.y = vpStart.y + e.clientY - panStart.y;
+      });
+      app.stage.on('pointerup', () => { isPanning = false; });
+      app.stage.on('pointerupoutside', () => { isPanning = false; });
+
+      // Zoom on wheel
+      canvasRef.current!.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        const rect = canvasRef.current!.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const wx = (mx - viewport.x) / viewport.scale.x;
+        const wy = (my - viewport.y) / viewport.scale.y;
+        viewport.scale.x *= factor;
+        viewport.scale.y *= factor;
+        viewport.x = mx - wx * viewport.scale.x;
+        viewport.y = my - wy * viewport.scale.y;
+      }, { passive: false });
+    })();
 
     return () => {
-      simulation.stop();
-      simulationRef.current = null;
-      graphGroupRef.current = null;
-      linkLayerRef.current = null;
-      nodeLayerRef.current = null;
-      labelLayerRef.current = null;
-      nodeSelectionRef.current = null;
-      linkSelectionRef.current = null;
-      labelSelectionRef.current = null;
-      nodeMapRef.current = new Map();
+      app.destroy(false, { children: true });
+      appRef.current = null;
+      viewportRef.current = null;
+      nodeContainerRef.current = null;
+      edgeGfxRef.current = null;
+      labelContainerRef.current = null;
+      nodeGfxMapRef.current.clear();
+      labelMapRef.current.clear();
     };
   }, []);
 
+  // ------------------------------------------------------------------
+  // Re-render nodes + edges when keywords or positions change
+  // ------------------------------------------------------------------
   useEffect(() => {
-    const validIds = new Set(keywords.map(keyword => keyword.id));
+    const app = appRef.current;
+    const nodeContainer = nodeContainerRef.current;
+    const edgeGfx = edgeGfxRef.current;
+    const labelContainer = labelContainerRef.current;
+    if (!app || !nodeContainer || !edgeGfx || !labelContainer) return;
+
+    const positions = positions2dSignal.value;
+    const embeddings = embeddingsSignal.value;
+    const selectedSet = new Set(selected);
+    const theme = themeSignal.value;
+    const palette = COLORS[theme];
+
+    const existingIds = new Set(nodeGfxMapRef.current.keys());
+    const currentIds = new Set(keywords.map(k => k.id));
+
+    // Remove nodes no longer present
+    for (const id of existingIds) {
+      if (!currentIds.has(id)) {
+        const gfx = nodeGfxMapRef.current.get(id);
+        if (gfx) nodeContainer.removeChild(gfx);
+        nodeGfxMapRef.current.delete(id);
+        const lbl = labelMapRef.current.get(id);
+        if (lbl) labelContainer.removeChild(lbl);
+        labelMapRef.current.delete(id);
+      }
+    }
+
+    // Add or update nodes
+    for (const kw of keywords) {
+      const pos = positions.get(kw.id);
+      const nx = (pos?.x ?? 0) * SCALE;
+      const ny = (pos?.y ?? 0) * SCALE;
+      const isSel = selectedSet.has(kw.id);
+      const r = isSel ? NODE_R_SEL : NODE_R;
+
+      let gfx = nodeGfxMapRef.current.get(kw.id);
+      if (!gfx) {
+        gfx = new PIXI.Graphics();
+        gfx.eventMode = 'static';
+        gfx.cursor = 'pointer';
+        gfx.on('pointerdown', (e: PIXI.FederatedPointerEvent) => {
+          e.stopPropagation();
+          const id = kw.id;
+          setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+        });
+        nodeContainer.addChild(gfx);
+        nodeGfxMapRef.current.set(kw.id, gfx);
+      }
+      gfx.clear();
+      const col = isSel ? palette.nodeSelected : palette.node;
+      gfx.circle(0, 0, r).fill(col);
+      gfx.x = nx;
+      gfx.y = ny;
+
+      let lbl = labelMapRef.current.get(kw.id);
+      if (!lbl) {
+        lbl = new PIXI.Text({
+          text: displayName(kw),
+          style: { fontSize: 10, fill: palette.text, align: 'center' },
+        });
+        lbl.anchor.set(0.5, 0);
+        lbl.eventMode = 'none';
+        labelContainer.addChild(lbl);
+        labelMapRef.current.set(kw.id, lbl);
+      } else {
+        lbl.text = displayName(kw);
+      }
+      lbl.x = nx;
+      lbl.y = ny + r + 2;
+    }
+
+    // Draw edges (k-NN)
+    edgeGfx.clear();
+    const drawn = new Set<string>();
+    for (const kw of keywords) {
+      const vecA = embeddings.get(kw.id);
+      if (!vecA) continue;
+      const nn = getKNearest(embeddings, kw.id, K_EDGES);
+      for (const nbId of nn) {
+        const edgeKey = kw.id < nbId ? `${kw.id}|${nbId}` : `${nbId}|${kw.id}`;
+        if (drawn.has(edgeKey)) continue;
+        drawn.add(edgeKey);
+        const vecB = embeddings.get(nbId);
+        if (!vecB) continue;
+        const sim = computeSimilarity(vecA, vecB);
+        const posA = positions.get(kw.id);
+        const posB = positions.get(nbId);
+        if (!posA || !posB) continue;
+        const alpha = 0.15 + sim * 0.5;
+        const width = 0.5 + sim * 1.5;
+        const bothSel = selectedSet.has(kw.id) && selectedSet.has(nbId);
+        const anyOneSel = selectedSet.size > 0 && (selectedSet.has(kw.id) || selectedSet.has(nbId));
+        const baseAlpha = selectedSet.size > 0 && !anyOneSel ? alpha * 0.2 : alpha;
+        const col = bothSel ? palette.edgeSelected : palette.edge;
+        edgeGfx
+          .moveTo(posA.x * SCALE, posA.y * SCALE)
+          .lineTo(posB.x * SCALE, posB.y * SCALE)
+          .stroke({ color: col, alpha: baseAlpha, width });
+      }
+    }
+  }, [keywords, positions2dSignal.value, embeddingsSignal.value, selected, themeSignal.value]);
+
+  // ------------------------------------------------------------------
+  // Cleanup selected when keywords change
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    const validIds = new Set(keywords.map(k => k.id));
     setSelected(prev => {
       const next = prev.filter(id => validIds.has(id));
       return next.length === prev.length ? prev : next;
     });
   }, [keywords]);
 
-  useEffect(() => {
-    if (
-      !svgRef.current
-      || !simulationRef.current
-      || !linkLayerRef.current
-      || !nodeLayerRef.current
-      || !labelLayerRef.current
-    ) {
-      return;
-    }
-
-    const rect = svgRef.current.getBoundingClientRect();
-    const width = rect.width || 800;
-    const height = rect.height || 500;
-    const embeddings = embeddingsSignal.value;
-    const previousNodes = nodeMapRef.current;
-
-    const nodes: GraphNode[] = keywords.map(keyword => {
-      const existing = previousNodes.get(keyword.id);
-      if (existing) {
-        existing.label = displayName(keyword);
-        return existing;
-      }
-
-      const embedding = embeddings.get(keyword.id);
-      return {
-        id: keyword.id,
-        label: displayName(keyword),
-        x: embedding?.x !== undefined ? embedding.x * 120 + width / 2 : width / 2 + (Math.random() - 0.5) * 80,
-        y: embedding?.y !== undefined ? embedding.y * 120 + height / 2 : height / 2 + (Math.random() - 0.5) * 80,
-      };
-    });
-
-    nodeMapRef.current = new Map(nodes.map(node => [node.id, node]));
-
-    const links: GraphLink[] = [];
-    for (const edge of edges) {
-      if (edge.weight <= 0) continue;
-      const source = nodeMapRef.current.get(edge.sourceId);
-      const target = nodeMapRef.current.get(edge.targetId);
-      if (!source || !target) continue;
-      links.push({ source, target, weight: edge.weight });
-    }
-
-    const linkSelection = linkLayerRef.current
-      .selectAll<SVGLineElement, GraphLink>('line')
-      .data(links, link => linkKey(link));
-    const mergedLinks = linkSelection
-      .join(
-        enter => enter.append('line'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .attr('stroke', vars.color.border)
-      .attr('stroke-width', d => d.weight * 3)
-      .attr('stroke-opacity', d => 0.2 + d.weight * 0.5);
-
-    const nodeSelection = nodeLayerRef.current
-      .selectAll<SVGCircleElement, GraphNode>('circle')
-      .data(nodes, node => node.id);
-    const mergedNodes = nodeSelection
-      .join(
-        enter => enter.append('circle'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .attr('r', 14)
-      .attr('fill', vars.color.primary)
-      .attr('stroke', vars.color.surface)
-      .attr('stroke-width', 2)
-      .attr('cursor', 'pointer')
-      .on('click', (_event, node) => {
-        setSelected(prev => (
-          prev.includes(node.id) ? prev.filter(id => id !== node.id) : [...prev, node.id]
-        ));
-      });
-    mergedNodes
-      .selectAll<SVGTitleElement, GraphNode>('title')
-      .data(node => [node])
-      .join('title')
-      .text(node => node.label);
-
-    const labelSelection = labelLayerRef.current
-      .selectAll<SVGTextElement, GraphNode>('text')
-      .data(nodes, node => node.id);
-    const mergedLabels = labelSelection
-      .join(
-        enter => enter.append('text'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .text(node => node.label)
-      .attr('font-size', 11)
-      .attr('text-anchor', 'middle')
-      .attr('dy', 28)
-      .attr('fill', vars.color.text)
-      .attr('pointer-events', 'none');
-
-    linkSelectionRef.current = mergedLinks;
-    nodeSelectionRef.current = mergedNodes;
-    labelSelectionRef.current = mergedLabels;
-
-    const simulation = simulationRef.current;
-    const linkForce = simulation.force('link') as d3.ForceLink<GraphNode, GraphLink>;
-    simulation.force('center', d3.forceCenter(width / 2, height / 2));
-    simulation.nodes(nodes);
-    linkForce.links(links);
-    simulation.alpha(nodes.length === 0 ? 0 : 0.45).restart();
-  }, [keywords, edges, t('navGraph')]);
-
-  useEffect(() => {
-    const selectedSet = new Set(selected);
-    nodeSelectionRef.current
-      ?.attr('fill', (d: GraphNode) => (selectedSet.has(d.id) ? vars.color.accent : vars.color.primary))
-      .attr('r', (d: GraphNode) => (selectedSet.has(d.id) ? 17 : 14));
-
-    linkSelectionRef.current?.attr('stroke', (d: GraphLink) => {
-      const source = typeof d.source === 'object' ? d.source.id : String(d.source);
-      const target = typeof d.target === 'object' ? d.target.id : String(d.target);
-      return selectedSet.size > 0 && selectedSet.has(source) && selectedSet.has(target)
-        ? vars.color.accent
-        : vars.color.border;
-    });
-  }, [selected]);
-
-  async function handleAdjust(mode: 'attract' | 'repel') {
+  // ------------------------------------------------------------------
+  // Attract / repel
+  // ------------------------------------------------------------------
+  const handleAdjust = useCallback(async (mode: 'attract' | 'repel') => {
     if (selected.length < 2) return;
-    const current = embeddingsSignal.value;
-    const updated =
+    const { embeddings: newEmb, positions: newPos } =
       mode === 'attract'
-        ? attractKeywords(current, selected)
-        : repelKeywords(current, selected);
-    embeddingsSignal.value = updated;
+        ? attractKeywords(embeddingsSignal.value, positions2dSignal.value, selected)
+        : repelKeywords(embeddingsSignal.value, positions2dSignal.value, selected);
 
-    // Rebuild similarity edges from updated embeddings
-    const simMap = embeddingsToSimilarities(updated);
-    const newEdges: SimilarityEdge[] = [];
-    await db.similarities.clear();
-    for (const [key, weight] of simMap) {
-      const [sourceId, targetId] = key.split('|');
-      const edge: SimilarityEdge = { sourceId, targetId, weight };
-      newEdges.push(edge);
-      await db.similarities.put(edge);
+    embeddingsSignal.value = newEmb;
+    positions2dSignal.value = newPos;
+
+    // Persist updated embeddings to DB (store in keyword metadata)
+    for (const id of selected) {
+      const kw = keywords.find(k => k.id === id);
+      if (!kw) continue;
+      const vec = newEmb.get(id);
+      const pos = newPos.get(id);
+      if (!vec || !pos) continue;
+      const updated = {
+        ...kw,
+        metadata: {
+          ...kw.metadata,
+          embedding64: Array.from(vec),
+          position2d: { x: pos.x, y: pos.y },
+        },
+      };
+      await db.keywords.put(updated);
     }
-    similarityEdgesSignal.value = newEdges;
     setSelected([]);
-  }
+  }, [selected, keywords, db]);
 
+  // ------------------------------------------------------------------
+  // Sidebar: top relationships for selected nodes
+  // ------------------------------------------------------------------
   const relationshipRows = (() => {
+    const embeddings = embeddingsSignal.value;
+    const positions = positions2dSignal.value;
     const selectedSet = new Set(selected);
-    const rows = edges
-      .map(edge => ({
-        ...edge,
-        distance: 1 - edge.weight,
-      }))
-      .filter(edge => {
-        if (selectedSet.size === 0) return true;
-        if (selectedSet.size === 1) {
-          return selectedSet.has(edge.sourceId) || selectedSet.has(edge.targetId);
-        }
-        return selectedSet.has(edge.sourceId) && selectedSet.has(edge.targetId);
-      })
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, 12)
-      .map(edge => {
-        const source = keywords.find(keyword => keyword.id === edge.sourceId);
-        const target = keywords.find(keyword => keyword.id === edge.targetId);
-        return {
-          id: `${edge.sourceId}-${edge.targetId}`,
-          label: `${source ? displayName(source) : fallbackEntityId(edge.sourceId)} ↔ ${target ? displayName(target) : fallbackEntityId(edge.targetId)}`,
-          similarity: edge.weight,
-          distance: edge.distance,
-        };
-      });
+    const rows: { id: string; label: string; similarity: number; distance: number }[] = [];
 
-    return rows;
+    if (keywords.length < 2) return rows;
+
+    const pairs = new Set<string>();
+    const candidates = selectedSet.size === 0
+      ? keywords.slice(0, 20)
+      : keywords.filter(k => selectedSet.has(k.id));
+
+    for (const kw of candidates) {
+      const vecA = embeddings.get(kw.id);
+      if (!vecA) continue;
+      const nn = getKNearest(embeddings, kw.id, K_EDGES);
+      for (const nbId of nn) {
+        if (selectedSet.size === 2 && (!selectedSet.has(kw.id) || !selectedSet.has(nbId))) continue;
+        const pairKey = kw.id < nbId ? `${kw.id}|${nbId}` : `${nbId}|${kw.id}`;
+        if (pairs.has(pairKey)) continue;
+        pairs.add(pairKey);
+        const vecB = embeddings.get(nbId);
+        if (!vecB) continue;
+        const sim = computeSimilarity(vecA, vecB);
+        const kwB = keywords.find(k => k.id === nbId);
+        rows.push({
+          id: pairKey,
+          label: `${displayName(kw)} ↔ ${kwB ? displayName(kwB) : nbId}`,
+          similarity: sim,
+          distance: 1 - sim,
+        });
+      }
+    }
+    rows.sort((a, b) => a.distance - b.distance);
+    return rows.slice(0, 12);
   })();
 
   return (
@@ -331,7 +389,12 @@ export function KeywordGraph() {
         )}
       </div>
       <div class={s.graphLayout}>
-        <svg ref={svgRef} class={s.graphCanvas} />
+        <div class={s.graphCanvas} style={{ position: 'relative', overflow: 'hidden' }}>
+          <canvas
+            ref={canvasRef}
+            style={{ display: 'block', width: '100%', height: '100%' }}
+          />
+        </div>
         <aside class={s.graphSidebar}>
           <div class={`${s.card} ${s.graphSidebarCard}`}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>{t('distanceSummary')}</h3>
@@ -341,9 +404,7 @@ export function KeywordGraph() {
               ) : (
                 relationshipRows.map(row => (
                   <div key={row.id} class={s.metricRow}>
-                    <div>
-                      <div>{row.label}</div>
-                    </div>
+                    <div><div>{row.label}</div></div>
                     <div class={s.metricValue}>
                       d={row.distance.toFixed(3)} / s={row.similarity.toFixed(3)}
                     </div>

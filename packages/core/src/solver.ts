@@ -17,7 +17,7 @@ import type {
   IncrementalSolverInput,
   ScheduleConfig,
   PersonUnavailability,
-} from './types';
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,11 +77,15 @@ export function generateSessionDates(config: ScheduleConfig): string[] {
   return dates;
 }
 
+import type { EmbeddingMap } from './nlp.js';
+import { computeSimilarity } from './nlp.js';
+
 /** Look up similarity between two persons based on their keyword sets. */
 function personSimilarity(
   aKeywords: string[],
   bKeywords: string[],
-  sim: Map<string, number>,
+  sim: Map<string, number> | null,
+  embeddings: EmbeddingMap | null,
 ): number {
   if (aKeywords.length === 0 || bKeywords.length === 0) return 0;
   let total = 0;
@@ -93,11 +97,20 @@ function personSimilarity(
         count++;
         continue;
       }
-      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-      const w = sim.get(key);
-      if (w !== undefined) {
-        total += w;
-        count++;
+      if (embeddings) {
+        const vecA = embeddings.get(a);
+        const vecB = embeddings.get(b);
+        if (vecA && vecB) {
+          total += computeSimilarity(vecA, vecB);
+          count++;
+        }
+      } else if (sim) {
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        const w = sim.get(key);
+        if (w !== undefined) {
+          total += w;
+          count++;
+        }
       }
     }
   }
@@ -110,9 +123,10 @@ function personSimilarity(
 
 interface CostContext {
   personKeywords: Map<string, string[]>;
-  similarities: Map<string, number>;
+  similarities: Map<string, number> | null;
+  embeddings: EmbeddingMap | null;
   r: number; // target similarity radius
-  constraints?: import('./types').ScheduleConstraint[];
+  constraints?: import('./types.js').ScheduleConstraint[];
 }
 
 interface AssignmentState {
@@ -251,12 +265,12 @@ function chooseQuestioners(
       const leftSimilarity = personSimilarity(
         presenterKeywords,
         ctx.personKeywords.get(left.id) ?? [],
-        ctx.similarities,
+        ctx.similarities, ctx.embeddings,
       );
       const rightSimilarity = personSimilarity(
         presenterKeywords,
         ctx.personKeywords.get(right.id) ?? [],
-        ctx.similarities,
+        ctx.similarities, ctx.embeddings,
       );
       const relevanceDiff = Math.abs(leftSimilarity - ctx.r) - Math.abs(rightSimilarity - ctx.r);
       if (relevanceDiff !== 0) return relevanceDiff;
@@ -388,7 +402,7 @@ function computeCost(
       const pk = ctx.personKeywords.get(pres.presenterId) ?? [];
       for (const q of pres.questionerIds) {
         const qk = ctx.personKeywords.get(q) ?? [];
-        const s = personSimilarity(pk, qk, ctx.similarities);
+        const s = personSimilarity(pk, qk, ctx.similarities, ctx.embeddings);
         relevancePenalty += Math.abs(s - ctx.r);
       }
     }
@@ -663,14 +677,46 @@ function hammingDistance(a: Session[], b: Session[]): number {
 // ---------------------------------------------------------------------------
 
 /**
+ * Build a pre-computed similarity cache from 64-D embeddings for the set of
+ * keywords actually used by `persons`.  Only keyword pairs that appear in at
+ * least one person's keyword list are included, so the result is O(K²) where
+ * K is the total number of unique keywords across persons (typically small).
+ * This allows the solver's hot loop to use O(1) map lookups.
+ */
+function buildSimilarityCache(
+  persons: { keywordIds: string[] }[],
+  embeddings: EmbeddingMap,
+): Map<string, number> {
+  const allKeywords = new Set<string>();
+  for (const p of persons) for (const k of p.keywordIds) allKeywords.add(k);
+  const list = [...allKeywords];
+  const cache = new Map<string, number>();
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i];
+      const b = list[j];
+      const vecA = embeddings.get(a);
+      const vecB = embeddings.get(b);
+      if (vecA && vecB) {
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        cache.set(key, computeSimilarity(vecA, vecB));
+      }
+    }
+  }
+  return cache;
+}
+
+/**
  * Full solver: generate a schedule from scratch.
  */
 export function solveFull(input: SolverInput): SchedulePlan {
-  const { persons, similarities, config, unavailabilities = [], constraints = [] } = input;
+  const { persons, similarities = null, embeddings = null, config, unavailabilities = [], constraints = [] } = input;
   const activePeople = persons.filter(p => !p.disabled);
   const personIds = activePeople.map(p => p.id);
   const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
-  const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius, constraints };
+  // Pre-build similarity cache from embeddings for O(1) solver hot-path lookups
+  const simMap = similarities ?? (embeddings ? buildSimilarityCache(activePeople, embeddings) : null);
+  const ctx: CostContext = { personKeywords, similarities: simMap, embeddings: null, r: config.targetSimilarityRadius, constraints };
 
   const dates = generateSessionDates(config);
   const unavailMap = buildUnavailMap(unavailabilities, config.id);
@@ -690,7 +736,7 @@ export function solveFull(input: SolverInput): SchedulePlan {
  * minimising divergence from the previous plan.
  */
 export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
-  const { persons, similarities, config, previousPlan, changeDate, unavailabilities = [], constraints = [] } = input;
+  const { persons, similarities = null, embeddings = null, config, previousPlan, changeDate, unavailabilities = [], constraints = [] } = input;
 
   const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
   const mutableDates = previousPlan.sessions
@@ -700,7 +746,9 @@ export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
   const activePeople = persons.filter(p => !p.disabled);
   const personIds = activePeople.map(p => p.id);
   const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
-  const ctx: CostContext = { personKeywords, similarities, r: config.targetSimilarityRadius, constraints };
+  // Pre-build similarity cache from embeddings for O(1) solver hot-path lookups
+  const simMap = similarities ?? (embeddings ? buildSimilarityCache(activePeople, embeddings) : null);
+  const ctx: CostContext = { personKeywords, similarities: simMap, embeddings: null, r: config.targetSimilarityRadius, constraints };
 
   // Reference sessions from previous plan for Hamming penalty
   const hammingRef = previousPlan.sessions.filter(s => s.date >= changeDate);

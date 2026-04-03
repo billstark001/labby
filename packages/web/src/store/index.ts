@@ -1,6 +1,6 @@
 import { signal, computed } from '@preact/signals';
-import type { Person, Keyword, SchedulePlan, ScheduleConfig, SimilarityEdge, PersonUnavailability } from '@labby/core';
-import type { EmbeddingMap } from '@labby/core';
+import type { Person, Keyword, SchedulePlan, ScheduleConfig, PersonUnavailability } from '@labby/core';
+import type { EmbeddingMap, PositionMap } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -20,13 +20,17 @@ function readPersistedTheme(): 'light' | 'dark' {
 export const themeSignal = signal<'light' | 'dark'>(readPersistedTheme());
 export const personsSignal = signal<Person[]>([]);
 export const keywordsSignal = signal<Keyword[]>([]);
-export const similarityEdgesSignal = signal<SimilarityEdge[]>([]);
-export const embeddingsSignal = signal<EmbeddingMap>(new Map());
 export const configsSignal = signal<ScheduleConfig[]>([]);
 export const schedulesSignal = signal<SchedulePlan[]>([]);
 export const currentScheduleSignal = signal<SchedulePlan | null>(null);
 export const isComputingSignal = signal(false);
 export const unavailabilitiesSignal = signal<PersonUnavailability[]>([]);
+
+/** 64-D keyword embeddings. Used for similarity computation and scheduling. */
+export const embeddingsSignal = signal<EmbeddingMap>(new Map());
+
+/** 2-D visualization positions derived from the embedding engine. */
+export const positions2dSignal = signal<PositionMap>(new Map());
 
 /** Currently active nav section. */
 export type NavSection = 'persons' | 'keywords' | 'schedule' | 'graph' | 'settings';
@@ -47,19 +51,6 @@ export const personMapSignal = computed(() => {
 export const keywordMapSignal = computed(() => {
   const m = new Map<string, Keyword>();
   for (const k of keywordsSignal.value) m.set(k.id, k);
-  return m;
-});
-
-/** Flat similarity lookup: key = `${a}|${b}` (a < b lexicographically). */
-export const similarityMapSignal = computed(() => {
-  const m = new Map<string, number>();
-  for (const e of similarityEdgesSignal.value) {
-    const [a, b] =
-      e.sourceId < e.targetId
-        ? [e.sourceId, e.targetId]
-        : [e.targetId, e.sourceId];
-    m.set(`${a}|${b}`, e.weight);
-  }
   return m;
 });
 

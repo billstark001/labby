@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
-  embeddingsToSimilarities,
+  computeSimilarity,
   initEmbeddings,
+  initPositions,
   runTripletBatch,
   solveFull,
   solveIncremental,
@@ -10,7 +11,7 @@ import {
   type SchedulePlan,
   type Session,
   type TripletQuery,
-} from '../src/index';
+} from '../src/index.js';
 
 function withSeed<T>(seed: number, fn: () => T): T {
   const original = Math.random;
@@ -104,6 +105,7 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
         const keywordCount = randomInt(6, 12);
         const keywords = Array.from({ length: keywordCount }, (_, i) => `k${i}`);
         const embeddings = initEmbeddings(keywords);
+        const positions = initPositions(keywords);
 
         const queries: TripletQuery[] = Array.from({ length: randomInt(5, 20) }, () => {
           const anchorId = pick(keywords);
@@ -112,23 +114,27 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
           return { anchorId, positiveId, negativeId };
         });
 
-        const before = embeddingsToSimilarities(embeddings);
-        const afterEmbeddings = runTripletBatch(embeddings, queries, 40);
-        const after = embeddingsToSimilarities(afterEmbeddings);
+        const q = queries[0];
+        const beforePos = computeSimilarity(embeddings.get(q.anchorId)!, embeddings.get(q.positiveId)!);
+        const beforeNeg = computeSimilarity(embeddings.get(q.anchorId)!, embeddings.get(q.negativeId)!);
 
+        const { embeddings: afterEmbeddings } = runTripletBatch(embeddings, positions, queries, 40);
+
+        // Check all similarities are finite and in (0, 1]
         let finiteCount = 0;
-        for (const value of after.values()) {
-          expect(Number.isFinite(value)).toBe(true);
-          expect(value).toBeGreaterThan(0);
-          expect(value).toBeLessThanOrEqual(1);
-          finiteCount++;
+        for (const [, vecA] of afterEmbeddings) {
+          for (const [, vecB] of afterEmbeddings) {
+            if (vecA === vecB) continue;
+            const s = computeSimilarity(vecA, vecB);
+            expect(Number.isFinite(s)).toBe(true);
+            expect(s).toBeGreaterThan(0);
+            expect(s).toBeLessThanOrEqual(1);
+            finiteCount++;
+          }
         }
 
-        const q = queries[0];
-        const beforePos = before.get([q.anchorId, q.positiveId].sort().join('|')) ?? 0;
-        const beforeNeg = before.get([q.anchorId, q.negativeId].sort().join('|')) ?? 0;
-        const afterPos = after.get([q.anchorId, q.positiveId].sort().join('|')) ?? 0;
-        const afterNeg = after.get([q.anchorId, q.negativeId].sort().join('|')) ?? 0;
+        const afterPos = computeSimilarity(afterEmbeddings.get(q.anchorId)!, afterEmbeddings.get(q.positiveId)!);
+        const afterNeg = computeSimilarity(afterEmbeddings.get(q.anchorId)!, afterEmbeddings.get(q.negativeId)!);
 
         return {
           finiteCount,
@@ -154,13 +160,12 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
         const config = makeRandomConfig(`cfg-${seed}`);
 
         const baseEmbeddings = initEmbeddings(keywordPool);
-        const similarities = embeddingsToSimilarities(baseEmbeddings);
 
-        const full = solveFull({ persons, similarities, config });
+        const full = solveFull({ persons, embeddings: baseEmbeddings, config });
         const changeDate = '2026-05-01';
         const incremental: SchedulePlan = solveIncremental({
           persons,
-          similarities,
+          embeddings: baseEmbeddings,
           config,
           previousPlan: full,
           changeDate,

@@ -17,11 +17,35 @@ import {
   solveFull,
   solveIncremental,
   applyTripletStep,
-  embeddingsToSimilarities,
   initEmbeddings,
-  cloneEmbeddings,
+  initPositions,
+  DIMS,
   type EmbeddingMap,
+  type PositionMap,
 } from "@labby/core";
+
+/** Build an EmbeddingMap from keyword metadata (embedding64 field). */
+function buildEmbeddingsFromKeywords(keywords: Keyword[]): EmbeddingMap {
+  const map: EmbeddingMap = new Map();
+  for (const kw of keywords) {
+    const raw64 = kw.metadata?.embedding64 as number[] | undefined;
+    if (Array.isArray(raw64) && raw64.length === DIMS) {
+      map.set(kw.id, new Float32Array(raw64));
+    } else {
+      // Random unit vector fallback
+      const v = new Float32Array(DIMS);
+      let sq = 0;
+      for (let i = 0; i < DIMS; i++) {
+        v[i] = Math.random() * 2 - 1;
+        sq += v[i] * v[i];
+      }
+      const norm = Math.sqrt(sq) || 1e-8;
+      for (let i = 0; i < DIMS; i++) v[i] /= norm;
+      map.set(kw.id, v);
+    }
+  }
+  return map;
+}
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
 import { getActiveBackupService } from "./backup/service.js";
@@ -425,16 +449,13 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     const persons = body.personIds
       ? allPersons.filter(p => body.personIds!.includes(p.id))
       : allPersons;
-    const similarities = await store.listSimilarities();
     const unavailabilities = await store.listUnavailabilities();
 
-    const simMap = new Map<string, number>();
-    for (const e of similarities) {
-      const [a, b] = e.sourceId < e.targetId ? [e.sourceId, e.targetId] : [e.targetId, e.sourceId];
-      simMap.set(`${a}|${b}`, e.weight);
-    }
+    // Build embedding map from keyword metadata
+    const allKeywords = await store.listKeywords();
+    const embeddings = buildEmbeddingsFromKeywords(allKeywords);
 
-    const plan = solveFull({ persons, similarities: simMap, config, unavailabilities });
+    const plan = solveFull({ persons, embeddings, config, unavailabilities });
     return ok(c, plan);
   });
 
@@ -449,18 +470,14 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     const persons = body.personIds
       ? allPersons.filter(p => body.personIds!.includes(p.id))
       : allPersons;
-    const similarities = await store.listSimilarities();
     const unavailabilities = await store.listUnavailabilities();
 
-    const simMap = new Map<string, number>();
-    for (const e of similarities) {
-      const [a, b] = e.sourceId < e.targetId ? [e.sourceId, e.targetId] : [e.targetId, e.sourceId];
-      simMap.set(`${a}|${b}`, e.weight);
-    }
+    const allKeywords = await store.listKeywords();
+    const embeddings = buildEmbeddingsFromKeywords(allKeywords);
 
     const plan = solveIncremental({
       persons,
-      similarities: simMap,
+      embeddings,
       config,
       unavailabilities,
       previousPlan,
@@ -478,7 +495,13 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     positiveId: z.string().min(1),
     negativeId: z.string().min(1),
     learningRate: z.number().optional(),
-    embeddings: z.record(z.string(), z.object({ x: z.number(), y: z.number() })).optional(),
+    /**
+     * Current 64-D embeddings keyed by keyword ID.
+     * Each value is an array of 64 numbers.
+     */
+    embeddings: z.record(z.string(), z.array(z.number())).optional(),
+    /** Current 2-D positions keyed by keyword ID. */
+    positions2d: z.record(z.string(), z.object({ x: z.number(), y: z.number() })).optional(),
   });
 
   app.post("/api/v1/nlp/update-similarity", async (c) => {
@@ -489,32 +512,51 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
 
     let embeddings: EmbeddingMap;
     if (body.embeddings) {
-      embeddings = new Map(Object.entries(body.embeddings));
+      embeddings = new Map(
+        Object.entries(body.embeddings).map(([id, arr]) => [id, new Float32Array(arr)])
+      );
     } else {
       embeddings = initEmbeddings(keywordIds);
     }
 
-    // Apply one triplet gradient step (modifies embeddings clone in-place)
-    const updated = cloneEmbeddings(embeddings);
-    applyTripletStep(
-      updated,
+    let positions: PositionMap;
+    if (body.positions2d) {
+      positions = new Map(Object.entries(body.positions2d));
+    } else {
+      positions = initPositions(keywordIds);
+    }
+
+    // Apply one triplet gradient step in both 64-D and 2-D.
+    const { embeddings: updated, positions: updatedPos } = applyTripletStep(
+      embeddings,
+      positions,
       { anchorId: body.anchorId, positiveId: body.positiveId, negativeId: body.negativeId },
       body.learningRate,
     );
 
-    // Recompute and persist similarities from updated embeddings
-    const simMap = embeddingsToSimilarities(updated);
-    const updatedPairs: SimilarityEdge[] = [];
-    for (const [key, weight] of simMap) {
-      const [sourceId, targetId] = key.split('|');
-      if (!sourceId || !targetId) continue;
-      await store.putSimilarity({ sourceId, targetId, weight });
-      updatedPairs.push({ sourceId, targetId, weight });
+    // Persist updated 64-D vectors and 2-D positions into keyword metadata.
+    const affectedIds = [body.anchorId, body.positiveId, body.negativeId];
+    for (const id of affectedIds) {
+      const kw = allKeywords.find(k => k.id === id);
+      if (!kw) continue;
+      const vec = updated.get(id);
+      const pos = updatedPos.get(id);
+      if (!vec || !pos) continue;
+      await store.putKeyword({
+        ...kw,
+        metadata: {
+          ...kw.metadata,
+          embedding64: Array.from(vec),
+          position2d: { x: pos.x, y: pos.y },
+        },
+      });
     }
 
     return ok(c, {
-      embeddings: Object.fromEntries(updated),
-      updatedPairs,
+      embeddings: Object.fromEntries(
+        [...updated.entries()].map(([id, vec]) => [id, Array.from(vec)])
+      ),
+      positions2d: Object.fromEntries(updatedPos),
     });
   });
 

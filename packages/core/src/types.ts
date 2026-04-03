@@ -81,8 +81,16 @@ export interface Presentation {
 /** Input bundle for the full solver. */
 export interface SolverInput {
   persons: Person[];
-  /** Flat similarity map: key = `${sourceId}|${targetId}`, value = weight */
-  similarities: Map<string, number>;
+  /**
+   * 64-D keyword embedding map used for on-demand similarity computation.
+   * Preferred over `similarities` when provided.
+   */
+  embeddings?: import('./nlp.js').EmbeddingMap;
+  /**
+   * Pre-computed flat similarity map: key = `${a}|${b}` (a < b), value ∈ [0,1].
+   * Used as a fallback when `embeddings` is not provided (e.g. in tests).
+   */
+  similarities?: Map<string, number>;
   config: ScheduleConfig;
   /** Optional: persons unavailable on certain date ranges */
   unavailabilities?: PersonUnavailability[];

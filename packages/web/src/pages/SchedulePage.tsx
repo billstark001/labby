@@ -7,7 +7,7 @@ import {
   configsSignal,
   schedulesSignal,
   currentScheduleSignal,
-  similarityMapSignal,
+  embeddingsSignal,
   isComputingSignal,
   personMapSignal,
   unavailabilitiesSignal,
@@ -17,11 +17,11 @@ import {
   loadAllConfigs,
   loadAllPersons,
   loadAllSchedules,
-  loadAllSimilarities,
+  loadAllKeywords,
   loadAllUnavailabilities,
   useDatabase,
 } from '../db/index';
-import { solveFull, solveIncremental } from '@labby/core';
+import { solveFull, solveIncremental, computeSimilarity } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation } from '@labby/core';
 import * as s from '../styles/components.css';
 import {
@@ -216,7 +216,7 @@ function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }:
   const { t } = i18n;
   const persons = personsSignal.value.filter(p => !p.disabled);
   const current = currentScheduleSignal.value;
-  const simMap = similarityMapSignal.value;
+  const embeddings = embeddingsSignal.value;
   const personMap = personMapSignal.value;
   const db = useDatabase();
 
@@ -231,8 +231,10 @@ function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }:
 
   function similarity(aId: string, bId: string): number {
     if (aId === bId) return 1;
-    const [a, b] = aId < bId ? [aId, bId] : [bId, aId];
-    return simMap.get(`${a}|${b}`) ?? 0;
+    const vecA = embeddings.get(aId);
+    const vecB = embeddings.get(bId);
+    if (!vecA || !vecB) return 0;
+    return computeSimilarity(vecA, vecB);
   }
 
   const presenterPerson = personMap.get(pres.presenterId);
@@ -346,7 +348,7 @@ export function SchedulePage() {
         loadAllPersons(db),
         loadAllConfigs(db),
         loadAllSchedules(db),
-        loadAllSimilarities(db),
+        loadAllKeywords(db),
         loadAllUnavailabilities(db),
       ]);
       if (cancelled) return;
@@ -378,7 +380,7 @@ export function SchedulePage() {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       const plan = solveFull({
         persons,
-        similarities: similarityMapSignal.value,
+        embeddings: embeddingsSignal.value,
         config,
         unavailabilities,
       });
@@ -405,7 +407,7 @@ export function SchedulePage() {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       const plan = solveIncremental({
         persons,
-        similarities: similarityMapSignal.value,
+        embeddings: embeddingsSignal.value,
         config,
         previousPlan: current,
         changeDate,
