@@ -18,7 +18,7 @@ import {
 import type { SimilarityEdge } from '@labby/core';
 import * as s from '../styles/components.css';
 import { vars } from '../styles/theme.css';
-import { Button } from './ui';
+import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
 

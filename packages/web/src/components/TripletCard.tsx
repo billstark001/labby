@@ -15,7 +15,7 @@ import {
 } from '@labby/core';
 import type { SimilarityEdge, TripletQuery } from '@labby/core';
 import * as s from '../styles/components.css';
-import { Button } from './ui';
+import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 
 /** Max number of recently answered pair keys to exclude from next query. */

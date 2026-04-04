@@ -29,7 +29,7 @@ import {
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from '../components/ui';
+} from '../components/ui/index';
 import {
   copyScheduleTable,
   copyScheduleHtml,

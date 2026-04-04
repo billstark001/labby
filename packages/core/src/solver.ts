@@ -17,7 +17,7 @@ import type {
   IncrementalSolverInput,
   ScheduleConfig,
   PersonUnavailability,
-} from './types';
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,7 +112,7 @@ interface CostContext {
   personKeywords: Map<string, string[]>;
   similarities: Map<string, number>;
   r: number; // target similarity radius
-  constraints?: import('./types').ScheduleConstraint[];
+  constraints?: import('./types.js').ScheduleConstraint[];
 }
 
 interface AssignmentState {

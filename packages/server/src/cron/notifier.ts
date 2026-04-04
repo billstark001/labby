@@ -7,9 +7,9 @@
  */
 
 import type { ScheduleConfig } from '@labby/core';
-import type { Mailer } from '../lib/mailer';
-import type { CronScheduler } from './scheduler';
-import type { SqliteStore } from '../store/index';
+import type { Mailer } from '../lib/mailer.js';
+import type { CronScheduler } from './scheduler.js';
+import type { SqliteStore } from '../store/index.js';
 
 export interface ScheduleNotifierOptions {
   scheduler: CronScheduler;

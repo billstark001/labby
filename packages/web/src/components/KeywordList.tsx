@@ -11,7 +11,7 @@ import {
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from './ui';
+} from './ui/index';
 import { Dialog, confirmDialog } from './ui/Dialog';
 import type { Keyword } from '@labby/core';
 import { i18n } from '@/i18n';

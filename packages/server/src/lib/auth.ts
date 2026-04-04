@@ -2,9 +2,9 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 
 import { V4 } from '@mpoonuru/paseto';
 
-import { AppError } from './errors';
-import { hashPassword, verifyPassword } from './password';
-import { UserRole, type AuthRole, type RefreshTokenRecord, type SqliteStore, type StoredUser } from '../store/index';
+import { AppError } from './errors.js';
+import { hashPassword, verifyPassword } from './password.js';
+import { UserRole, type AuthRole, type RefreshTokenRecord, type SqliteStore, type StoredUser } from '../store/index.js';
 
 export { UserRole };
 export type { AuthRole };

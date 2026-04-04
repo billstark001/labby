@@ -3,10 +3,10 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
-import type { CronScheduler } from '../cron/scheduler';
-import { fetchGoogleAccessToken, loadGoogleOAuthClientFromFile } from '../lib/google';
-import type { Mailer } from '../lib/mailer';
-import type { DatabaseBackupSnapshot, SqliteStore } from '../store/index';
+import type { CronScheduler } from '../cron/scheduler.js';
+import { fetchGoogleAccessToken, loadGoogleOAuthClientFromFile } from '../lib/google.js';
+import type { Mailer } from '../lib/mailer.js';
+import type { DatabaseBackupSnapshot, SqliteStore } from '../store/index.js';
 
 type BackupFormat = 'sqlite' | 'msgpack';
 type BackupTarget = 'email' | 'google-drive' | 'onedrive';

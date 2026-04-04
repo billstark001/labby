@@ -5,7 +5,7 @@ import { dumpDatabase, loadDatabaseSignals, restoreDatabase, useDatabase } from 
 import * as s from '../styles/components.css';
 import { Button } from './ui';
 import { i18n } from '@/i18n';
-import { toast } from './ui/Toast';
+import { toast } from './ui';
 import {
   downloadServerBackup,
   fetchSystemCapabilities,
