@@ -15,8 +15,10 @@ const CALIBRATION_EPS: f32 = 1e-6;
 const CALIBRATION_SAMPLE_CAP: usize = 512;
 const CALIBRATION_EMA_ALPHA: f32 = 0.18;
 const RANK_CONSISTENCY_MARGIN: f32 = 0.02;
-const RANK_CONSISTENCY_WEIGHT: f32 = 0.12;
-const RANK_STEPS_PER_EPOCH: usize = 10;
+const RANK_CONSISTENCY_WEIGHT: f32 = 1.0;
+const RANK_STEPS_PER_EPOCH: usize = 128;
+const PAIR_DIST_STEPS_PER_EPOCH: usize = 64;
+const PAIR_DIST_WEIGHT: f32 = 0.5;
 
 pub struct AutoencoderProjector {
     encoder: [[f32; LATENT_DIM]; PROJ_DIM],
@@ -181,28 +183,11 @@ impl AutoencoderProjector {
     }
 
     fn calibrate(&self, z: [f32; PROJ_DIM]) -> [f32; PROJ_DIM] {
-        let mut cx = z[0] - self.proj_center[0];
-        let mut cy = z[1] - self.proj_center[1];
-        let r = (cx * cx + cy * cy).sqrt();
-        if r <= CALIBRATION_EPS {
-            return [0.0, 0.0];
-        }
-
-        let inner = (self.proj_median_radius * 0.72).max(0.05);
-        let outer = (self.proj_p90_radius * 1.7).max(inner + 0.05);
-        let target_r = if r < inner {
-            inner * (r / inner).powf(0.78)
-        } else if r > outer {
-            outer + (r - outer) * 0.32
-        } else {
-            r
-        };
-
         let scale = 1.0 / self.proj_p90_radius.max(CALIBRATION_EPS);
-        let factor = (target_r / r) * scale;
-        cx *= factor;
-        cy *= factor;
-        [cx, cy]
+        [
+            (z[0] - self.proj_center[0]) * scale,
+            (z[1] - self.proj_center[1]) * scale,
+        ]
     }
 
     fn refresh_projection_calibration(&mut self) {
@@ -293,7 +278,11 @@ impl AutoencoderProjector {
             for x in &samples {
                 self.train_one(x, BASE_LR);
             }
+            self.train_rank_consistency_epoch(&samples, BASE_LR);
+            self.train_pairwise_distance_epoch(&samples, BASE_LR);
         }
+
+        self.orthogonalize_encoder();
     }
 
     fn train_incremental(&mut self, changed_ids: &[u32], epochs: usize) {
@@ -316,11 +305,14 @@ impl AutoencoderProjector {
             return;
         }
 
+        let global_samples = self.active_samples();
+
         for _ in 0..epochs {
             for x in &batch {
                 self.train_one(x, BASE_LR * 0.8);
             }
-            self.train_rank_consistency_epoch(&batch, BASE_LR * 0.8);
+            self.train_rank_consistency_epoch(&global_samples, BASE_LR * 0.8);
+            self.train_pairwise_distance_epoch(&global_samples, BASE_LR * 0.8);
         }
     }
 
@@ -386,7 +378,7 @@ impl AutoencoderProjector {
             return;
         }
 
-        let steps = RANK_STEPS_PER_EPOCH.min(batch.len() * 2);
+        let steps = RANK_STEPS_PER_EPOCH.min(batch.len() * (batch.len() - 1));
         for _ in 0..steps {
             let a = self.rng.gen_range(0..batch.len());
             let mut b = self.rng.gen_range(0..batch.len());
@@ -454,6 +446,71 @@ impl AutoencoderProjector {
         }
     }
 
+    fn train_pairwise_distance_epoch(&mut self, samples: &[[f32; LATENT_DIM]], lr: f32) {
+        if samples.len() < 2 {
+            return;
+        }
+
+        let n_est = 8usize.min(samples.len());
+        let mut sum_2d = 0.0f32;
+        let mut sum_64 = 0.0f32;
+        for _ in 0..n_est {
+            let i = self.rng.gen_range(0..samples.len());
+            let j = {
+                let mut j = self.rng.gen_range(0..samples.len());
+                while j == i {
+                    j = self.rng.gen_range(0..samples.len());
+                }
+                j
+            };
+            sum_64 += l2_sq_64(&samples[i], &samples[j]).sqrt();
+            let zi = self.encode(&samples[i]);
+            let zj = self.encode(&samples[j]);
+            sum_2d += l2_sq_2d(&zi, &zj).sqrt();
+        }
+        let target_scale = sum_2d / sum_64.max(CALIBRATION_EPS);
+
+        let steps = PAIR_DIST_STEPS_PER_EPOCH.min(samples.len() * (samples.len() - 1));
+        for _ in 0..steps {
+            let i = self.rng.gen_range(0..samples.len());
+            let j = {
+                let mut j = self.rng.gen_range(0..samples.len());
+                while j == i {
+                    j = self.rng.gen_range(0..samples.len());
+                }
+                j
+            };
+
+            let xi = &samples[i];
+            let xj = &samples[j];
+            let d64 = l2_sq_64(xi, xj).sqrt();
+            if d64 < CALIBRATION_EPS {
+                continue;
+            }
+
+            let zi = self.encode(xi);
+            let zj = self.encode(xj);
+            let d2d = l2_sq_2d(&zi, &zj).sqrt();
+            if d2d < CALIBRATION_EPS {
+                continue;
+            }
+
+            let residual = d2d - target_scale * d64;
+            if residual.abs() < 0.05 * target_scale * d64 {
+                continue;
+            }
+
+            let factor = 2.0 * residual * lr * PAIR_DIST_WEIGHT / d2d;
+            for k in 0..PROJ_DIM {
+                let dz_k = zi[k] - zj[k];
+                for dim in 0..LATENT_DIM {
+                    let dx_dim = xi[dim] - xj[dim];
+                    self.encoder[k][dim] -= factor * dz_k * dx_dim;
+                }
+            }
+        }
+    }
+
     fn train_one(&mut self, x: &[f32; LATENT_DIM], lr: f32) {
         let mut z = [0.0f32; PROJ_DIM];
         for k in 0..PROJ_DIM {
@@ -498,6 +555,27 @@ impl AutoencoderProjector {
             for i in 0..LATENT_DIM {
                 let grad = dldz[k] * x[i] + L2_REG * self.encoder[k][i];
                 self.encoder[k][i] -= lr * grad;
+            }
+        }
+    }
+
+    fn orthogonalize_encoder(&mut self) {
+        let mut norm0_sq = 0.0f32;
+        for i in 0..LATENT_DIM {
+            norm0_sq += self.encoder[0][i] * self.encoder[0][i];
+        }
+        let mut dot = 0.0f32;
+        for i in 0..LATENT_DIM {
+            dot += self.encoder[1][i] * self.encoder[0][i];
+        }
+        let proj_coeff = dot / norm0_sq;
+        for i in 0..LATENT_DIM {
+            self.encoder[1][i] -= proj_coeff * self.encoder[0][i];
+        }
+
+        for j in 0..LATENT_DIM {
+            for k in 0..PROJ_DIM {
+                self.decoder[j][k] = self.encoder[k][j];
             }
         }
     }
@@ -576,6 +654,26 @@ mod tests {
             let r = (z[0] * z[0] + z[1] * z[1]).sqrt();
             max_r = max_r.max(r);
         }
-        assert!(max_r < 3.2, "calibrated projection radius should stay bounded");
+        assert!(max_r < 4.0, "calibrated projection radius should stay bounded");
+    }
+
+    #[test]
+    fn calibrate_linear_preserves_rank_ordering() {
+        let p = AutoencoderProjector::new(16);
+        let z_a = [0.001f32, 0.0];
+        let z_b = [0.003f32, 0.0]; // d(A,B) = 0.002
+        let z_c = [0.001f32, 0.0015]; // d(A,C) = 0.0015 < d(A,B)
+
+        let ca = p.calibrate(z_a);
+        let cb = p.calibrate(z_b);
+        let cc = p.calibrate(z_c);
+
+        let d_ab = l2_sq_2d(&ca, &cb).sqrt();
+        let d_ac = l2_sq_2d(&ca, &cc).sqrt();
+
+        assert!(
+            d_ac < d_ab,
+            "linear calibrate must preserve rank: d_ac={d_ac} should be < d_ab={d_ab}"
+        );
     }
 }
