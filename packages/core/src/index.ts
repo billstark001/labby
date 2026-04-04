@@ -3,3 +3,4 @@ export * from './types.js';
 export * from './db.js';
 export * from './nlp.js';
 export * from './solver.js';
+export * from './expr/index.js';
