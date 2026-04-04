@@ -68,6 +68,20 @@ mod node_ffi {
             Ok(self.inner.lock().unwrap().query_triplet_order(id_a, id_b, id_c))
         }
 
+        /// Recommend one triplet as `[anchor, positive, negative]`.
+        ///
+        /// `excluded_pairs` format: `[a0,b0,a1,b1,...]`.
+        #[napi]
+        pub fn recommend_triplet(&self, excluded_pairs: Uint32Array) -> Result<Vec<u32>> {
+            let pairs = excluded_pairs.as_ref();
+            let inner = self.inner.lock().unwrap();
+            let recommended = inner.recommend_triplet(pairs);
+            Ok(match recommended {
+                Some((a, b, c)) => vec![a, b, c],
+                None => Vec::new(),
+            })
+        }
+
         /// Triplet margin loss SGD step.  Returns the pre-update loss.
         #[napi]
         pub fn update_triplet(
@@ -212,6 +226,16 @@ mod wasm_ffi {
 
         pub fn query_triplet_order(&self, id_a: u32, id_b: u32, id_c: u32) -> bool {
             self.inner.query_triplet_order(id_a, id_b, id_c)
+        }
+
+        /// Recommend one triplet as `[anchor, positive, negative]`.
+        ///
+        /// `excluded_pairs` format: `[a0,b0,a1,b1,...]`.
+        pub fn recommend_triplet(&self, excluded_pairs: &[u32]) -> Vec<u32> {
+            match self.inner.recommend_triplet(excluded_pairs) {
+                Some((a, b, c)) => vec![a, b, c],
+                None => Vec::new(),
+            }
         }
 
         pub fn update_triplet(

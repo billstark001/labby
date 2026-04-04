@@ -191,6 +191,12 @@ export function keywordVectorsToSimilarityEdges(
   return [...edgeMap.values()];
 }
 
+/**
+ * Legacy JS heuristic triplet recommender.
+ *
+ * Keep for tests/fixtures only; production recommendation must come from Rust
+ * engine (`recommend_triplet`) via web/server embedding adapters.
+ */
 export function nextTripletQueryFromKeywordVectors(
   vectors: KeywordVector[],
   recentPairs?: Set<string>,

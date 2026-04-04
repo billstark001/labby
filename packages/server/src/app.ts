@@ -479,6 +479,45 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     learningRate: z.number().optional(),
   });
 
+  const tripletRecommendSchema = z.object({
+    excludedPairs: z.array(z.string().min(3)).optional(),
+  });
+
+  const supervisionSchema = z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('pair'),
+      leftId: z.string().min(1),
+      rightId: z.string().min(1),
+      targetDistance: z.number().nonnegative(),
+      learningRate: z.number().optional(),
+    }),
+    z.object({
+      kind: z.literal('ranked'),
+      anchorId: z.string().min(1),
+      orderedIds: z.array(z.string().min(1)).min(2),
+      margin: z.number().positive().optional(),
+      learningRate: z.number().optional(),
+    }),
+  ]);
+
+  app.post("/api/v1/nlp/recommend-triplet", async (c) => {
+    const body = tripletRecommendSchema.parse(await c.req.json());
+    const query = await embeddingService.recommendTriplet(body.excludedPairs ?? []);
+    return ok(c, {
+      query,
+    });
+  });
+
+  app.post('/api/v1/nlp/apply-supervision', async (c) => {
+    const query = supervisionSchema.parse(await c.req.json());
+    try {
+      const result = await embeddingService.applySupervision(query);
+      return ok(c, result);
+    } catch {
+      throw new AppError('VALIDATION_ERROR', 'supervision ids not found', 400);
+    }
+  });
+
   app.post("/api/v1/nlp/update-similarity", async (c) => {
     const body = tripletUpdateSchema.parse(await c.req.json());
     let updatedVectors: KeywordVector[];

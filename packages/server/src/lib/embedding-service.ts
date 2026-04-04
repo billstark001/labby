@@ -1,4 +1,4 @@
-import type { KeywordVector } from '@labby/core';
+import type { KeywordVector, SupervisionQuery, TripletQuery } from '@labby/core';
 import { initKeywordVectors } from '@labby/core';
 
 import { EmbeddingEngineAdapter } from './embedding-engine.js';
@@ -64,6 +64,42 @@ export class EmbeddingService {
     return { loss, updatedVectors };
   }
 
+  async recommendTriplet(excludedPairKeys: string[]): Promise<TripletQuery | null> {
+    await this.ensureInitialized();
+    if (!this.engine) {
+      throw new Error('embedding engine not initialized');
+    }
+
+    const pairIndices: number[] = [];
+    for (const key of excludedPairKeys) {
+      const [leftId, rightId] = key.split('|');
+      if (!leftId || !rightId) continue;
+      const left = this.keywordIndex.get(leftId);
+      const right = this.keywordIndex.get(rightId);
+      if (left === undefined || right === undefined) continue;
+      pairIndices.push(left, right);
+    }
+
+    const recommended = this.engine.recommendTriplet(Uint32Array.from(pairIndices));
+    if (!recommended) {
+      return null;
+    }
+
+    const [anchorIndex, positiveIndex, negativeIndex] = recommended;
+    const anchorId = this.orderedKeywordIds[anchorIndex];
+    const positiveId = this.orderedKeywordIds[positiveIndex];
+    const negativeId = this.orderedKeywordIds[negativeIndex];
+    if (!anchorId || !positiveId || !negativeId) {
+      return null;
+    }
+
+    return {
+      anchorId,
+      positiveId,
+      negativeId,
+    };
+  }
+
   async updatePair(
     leftId: string,
     rightId: string,
@@ -84,6 +120,67 @@ export class EmbeddingService {
       this.pendingWrites.set(vector.keywordId, vector);
     }
     return { loss, updatedVectors };
+  }
+
+  async applySupervision(
+    query: SupervisionQuery,
+  ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+    await this.ensureInitialized();
+    if (!this.engine) {
+      throw new Error('embedding engine not initialized');
+    }
+
+    if (query.kind === 'pair') {
+      return this.updatePair(
+        query.leftId,
+        query.rightId,
+        query.targetDistance,
+        query.learningRate ?? 0.05,
+      );
+    }
+
+    const anchor = this.keywordIndex.get(query.anchorId);
+    if (anchor === undefined) {
+      throw new Error('ranked supervision anchor not found');
+    }
+
+    const ordered = query.orderedIds
+      .map((keywordId: string) => ({
+        keywordId,
+        index: this.keywordIndex.get(keywordId),
+      }))
+      .filter((item: { keywordId: string; index: number | undefined }): item is { keywordId: string; index: number } => item.index !== undefined);
+
+    if (ordered.length < 2) {
+      return { loss: 0, updatedVectors: [] };
+    }
+
+    const triplets: number[] = [];
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const positive = ordered[i]?.index;
+      const negative = ordered[i + 1]?.index;
+      if (positive === undefined || negative === undefined) continue;
+      triplets.push(anchor, positive, negative);
+    }
+
+    if (triplets.length === 0) {
+      return { loss: 0, updatedVectors: [] };
+    }
+
+    const updatedNodes = this.engine.updateTripletsBatchFlush(
+      Uint32Array.from(triplets),
+      query.margin ?? 0.2,
+      query.learningRate ?? 0.05,
+    );
+    const updatedVectors = this.collectDirtyVectorsFromNodes(updatedNodes);
+    for (const vector of updatedVectors) {
+      this.pendingWrites.set(vector.keywordId, vector);
+    }
+    return {
+      // Batch API currently does not return per-triplet loss.
+      loss: 0,
+      updatedVectors,
+    };
   }
 
   async shutdown(): Promise<void> {
@@ -149,6 +246,26 @@ export class EmbeddingService {
     const dirty = this.engine.flushDirtyNodes();
     if (dirty.length === 0) return [];
 
+    const now = Date.now();
+    const updates: KeywordVector[] = [];
+    for (const node of dirty) {
+      const keywordId = this.orderedKeywordIds[node.id];
+      if (!keywordId) continue;
+      updates.push({
+        keywordId,
+        vector64: node.coords64d,
+        x: node.coords2d[0],
+        y: node.coords2d[1],
+        updatedAt: now,
+      });
+    }
+    return updates;
+  }
+
+  private collectDirtyVectorsFromNodes(
+    dirty: Array<{ id: number; coords64d: number[]; coords2d: [number, number] }>,
+  ): KeywordVector[] {
+    if (dirty.length === 0) return [];
     const now = Date.now();
     const updates: KeywordVector[] = [];
     for (const node of dirty) {

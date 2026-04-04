@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 type NativeEngineLike = {
   hydrate(data: Float32Array, nNodes: number): void;
+  recommendTriplet(excludedPairs: Uint32Array): Uint32Array | number[];
   updateTriplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
   updatePair(idA: number, idB: number, targetDistance: number, learningRate: number): number;
   updateTripletsBatchFlush(triplets: Uint32Array, margin: number, learningRate: number): Buffer | Uint8Array;
@@ -97,6 +98,13 @@ export class EmbeddingEngineAdapter {
 
   hydrate(data: Float32Array, nNodes: number): void {
     this.engine.hydrate(data, nNodes);
+  }
+
+  recommendTriplet(excludedPairs: Uint32Array): [number, number, number] | null {
+    const raw = this.engine.recommendTriplet(excludedPairs);
+    const values = Array.from(raw as ArrayLike<number>);
+    if (values.length < 3) return null;
+    return [values[0]!, values[1]!, values[2]!];
   }
 
   updateTriplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number {

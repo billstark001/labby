@@ -117,6 +117,33 @@ export interface TripletQuery {
   negativeId: string; // keyword B ("… than to B")
 }
 
+/** Pair distance supervision query (2 points). */
+export interface PairSupervisionQuery {
+  kind: 'pair';
+  leftId: string;
+  rightId: string;
+  targetDistance: number;
+  learningRate?: number;
+}
+
+/**
+ * Ranked supervision query (arbitrary points > 2).
+ *
+ * `orderedIds` are interpreted as "closer to farther from anchor".
+ * Example: [p1, p2, p3] compiles to constraints
+ * (anchor, p1, p2) and (anchor, p2, p3).
+ */
+export interface RankedSupervisionQuery {
+  kind: 'ranked';
+  anchorId: string;
+  orderedIds: string[];
+  margin?: number;
+  learningRate?: number;
+}
+
+/** Unified supervision query for similarity training. */
+export type SupervisionQuery = PairSupervisionQuery | RankedSupervisionQuery;
+
 // ---------------------------------------------------------------------------
 // Schedule constraints
 // ---------------------------------------------------------------------------

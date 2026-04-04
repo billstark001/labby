@@ -1,4 +1,4 @@
-import type { KeywordVector, TripletQuery } from '@labby/core';
+import type { KeywordVector, SupervisionQuery, TripletQuery } from '@labby/core';
 import initWasm, { WasmEmbeddingEngine } from '../../../core/native/dist/wasm-web/labby_core.js';
 import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
@@ -8,6 +8,9 @@ const FRONTEND_ONLY_MAX_NODES = 1_000;
 
 type WasmEngineLike = {
   hydrate(data: Float32Array, nNodes: number): void;
+  recommend_triplet(excludedPairs: Uint32Array): Uint32Array | number[];
+  update_triplets_batch_flush(triplets: Uint32Array, margin: number, learningRate: number): Uint8Array;
+  update_pairs_batch_flush(pairs: Uint32Array, targetDistance: number, learningRate: number): Uint8Array;
   update_triplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
   update_pair(idA: number, idB: number, targetDistance: number, learningRate: number): number;
   flush_dirty_nodes(): Uint8Array;
@@ -92,6 +95,66 @@ function parseDirtyBuffer(buffer: Uint8Array): Array<{ id: number; coords64d: nu
     result.push({ id, coords64d, coords2d: [x, y] });
   }
   return result;
+}
+
+function parseTripletRecommendation(raw: Uint32Array | number[]): [number, number, number] | null {
+  const values = Array.from(raw as ArrayLike<number>);
+  if (values.length < 3) return null;
+  return [values[0]!, values[1]!, values[2]!];
+}
+
+function pairKeysToHydratedPairs(recentPairKeys: readonly string[]): Uint32Array {
+  const out: number[] = [];
+  for (const key of recentPairKeys) {
+    const [leftId, rightId] = key.split('|');
+    if (!leftId || !rightId) continue;
+    const left = hydratedIndexById.get(leftId);
+    const right = hydratedIndexById.get(rightId);
+    if (left === undefined || right === undefined) continue;
+    out.push(left, right);
+  }
+  return Uint32Array.from(out);
+}
+
+export async function recommendTripletWithWasm(
+  vectors: KeywordVector[],
+  recentPairKeys: readonly string[],
+): Promise<TripletQuery | null> {
+  if (isServerDeployment) {
+    const response = await apiClient.request<{ query: TripletQuery | null }>('/nlp/recommend-triplet', {
+      method: 'POST',
+      body: JSON.stringify({
+        excludedPairs: [...recentPairKeys],
+      }),
+    });
+    return response.query;
+  }
+
+  ensureFrontendOnlyScale(vectors);
+
+  if (!enginePromise) {
+    enginePromise = loadEngine();
+  }
+  const engine = await enginePromise;
+  const ordered = ensureHydrated(engine, vectors);
+  const recommendation = parseTripletRecommendation(
+    engine.recommend_triplet(pairKeysToHydratedPairs(recentPairKeys)),
+  );
+  if (!recommendation) {
+    return null;
+  }
+  const [anchorIndex, positiveIndex, negativeIndex] = recommendation;
+  const anchorId = ordered[anchorIndex]?.keywordId;
+  const positiveId = ordered[positiveIndex]?.keywordId;
+  const negativeId = ordered[negativeIndex]?.keywordId;
+  if (!anchorId || !positiveId || !negativeId) {
+    return null;
+  }
+  return {
+    anchorId,
+    positiveId,
+    negativeId,
+  };
 }
 
 export async function applyTripletWithWasm(
@@ -205,4 +268,79 @@ export async function applyPairUpdate(
     .filter((item): item is KeywordVector => Boolean(item));
 
   return { loss, updatedVectors };
+}
+
+export async function applySupervision(
+  vectors: KeywordVector[],
+  query: SupervisionQuery,
+): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+  if (query.kind === 'pair') {
+    return applyPairUpdate(
+      vectors,
+      query.leftId,
+      query.rightId,
+      query.targetDistance,
+      query.learningRate ?? 0.05,
+    );
+  }
+
+  if (isServerDeployment) {
+    return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/apply-supervision', {
+      method: 'POST',
+      body: JSON.stringify(query),
+    });
+  }
+
+  ensureFrontendOnlyScale(vectors);
+
+  if (!enginePromise) {
+    enginePromise = loadEngine();
+  }
+  const engine = await enginePromise;
+  const ordered = ensureHydrated(engine, vectors);
+  const anchor = hydratedIndexById.get(query.anchorId);
+  if (anchor === undefined) {
+    throw new Error('ranked anchor id not found');
+  }
+
+  const orderedIndices = query.orderedIds
+    .map((keywordId) => hydratedIndexById.get(keywordId))
+    .filter((value): value is number => value !== undefined);
+  if (orderedIndices.length < 2) {
+    return { loss: 0, updatedVectors: [] };
+  }
+
+  const triplets: number[] = [];
+  for (let i = 0; i < orderedIndices.length - 1; i++) {
+    const positive = orderedIndices[i];
+    const negative = orderedIndices[i + 1];
+    if (positive === undefined || negative === undefined) continue;
+    triplets.push(anchor, positive, negative);
+  }
+  if (triplets.length === 0) {
+    return { loss: 0, updatedVectors: [] };
+  }
+
+  const dirtyBytes = engine.update_triplets_batch_flush(
+    Uint32Array.from(triplets),
+    query.margin ?? 0.2,
+    query.learningRate ?? 0.05,
+  );
+  const dirty = parseDirtyBuffer(dirtyBytes);
+  const now = Date.now();
+  const updatedVectors = dirty
+    .map((item) => {
+      const keywordId = ordered[item.id]?.keywordId;
+      if (!keywordId) return null;
+      return {
+        keywordId,
+        vector64: item.coords64d,
+        x: item.coords2d[0],
+        y: item.coords2d[1],
+        updatedAt: now,
+      } satisfies KeywordVector;
+    })
+    .filter((item): item is KeywordVector => Boolean(item));
+
+  return { loss: 0, updatedVectors };
 }

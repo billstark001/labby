@@ -10,6 +10,9 @@
 //! coordinates of the 2–3 involved nodes are ever written.
 
 use ndarray::Array2;
+use rand::{Rng, SeedableRng};
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
 use std::collections::HashSet;
 
 use crate::distance::{l2_dist_sq, l2_dist};
@@ -31,6 +34,10 @@ const KNN_EF:       usize = 60;
 const PROJ_SIGMA_SQ: f32  = 4.0;
 const GLOBAL_NORMALIZE_INTERVAL: usize = 128;
 const NORMALIZE_EPS: f32 = 1e-6;
+const RECOMMEND_KNN: usize = 24;
+const RECOMMEND_POSITIVE_CAP: usize = 10;
+const RECOMMEND_MARGIN_TARGET: f32 = 0.2;
+const RECOMMEND_NEAR_MARGIN: f32 = 0.28;
 
 // ── Output types ─────────────────────────────────────────────────────────────
 
@@ -212,6 +219,107 @@ impl EmbeddingEngine {
         l2_dist_sq(a, b) < l2_dist_sq(a, c)
     }
 
+    /// Recommend one high-information triplet `(anchor, positive, negative)`.
+    ///
+    /// Strategy:
+    /// - anchor-positive from near neighbours with non-trivial uncertainty
+    /// - negative from slightly farther neighbours (hard but valid)
+    /// - skip recently asked anchor-positive pairs from `excluded_pairs`
+    ///
+    /// `excluded_pairs` format: `[a0,b0,a1,b1,...]`.
+    pub fn recommend_triplet(&self, excluded_pairs: &[u32]) -> Option<(u32, u32, u32)> {
+        if self.n_active < 3 {
+            return None;
+        }
+
+        let mut rng = SmallRng::seed_from_u64(rand::random::<u64>());
+
+        let mut excluded = HashSet::new();
+        for chunk in excluded_pairs.chunks_exact(2) {
+            excluded.insert(pair_key(chunk[0], chunk[1]));
+        }
+
+        let mut anchors = self.active_ids();
+        anchors.shuffle(&mut rng);
+
+        let mut best: Option<(u32, u32, u32, f32)> = None;
+        for anchor in anchors {
+            let neighbors = self.get_knn(anchor, RECOMMEND_KNN);
+            if neighbors.len() < 2 {
+                continue;
+            }
+
+            let mut positive_indices: Vec<usize> = (0..neighbors.len().min(RECOMMEND_POSITIVE_CAP)).collect();
+            positive_indices.shuffle(&mut rng);
+
+            let anchor_norm = self.node_norm(anchor);
+            let anchor_norm_bias = (anchor_norm - 1.0).abs().min(1.2);
+
+            for pos_idx in positive_indices {
+                let (positive_id, d_ap) = neighbors[pos_idx];
+                if d_ap <= 1e-6 {
+                    continue;
+                }
+                if excluded.contains(&pair_key(anchor, positive_id)) {
+                    continue;
+                }
+
+                let sim_ap = similarity_from_distance(d_ap);
+                if !(0.2..=0.9).contains(&sim_ap) {
+                    continue;
+                }
+
+                let uncertainty = (1.0 - (sim_ap - 0.5).abs() * 2.0).max(0.0);
+                if uncertainty <= 0.0 {
+                    continue;
+                }
+
+                let mut best_negative: Option<(u32, f32)> = None;
+                let mut fallback_negative: Option<(u32, f32)> = None;
+                for neg_idx in (pos_idx + 1)..neighbors.len() {
+                    let (negative_id, d_an) = neighbors[neg_idx];
+                    if negative_id == positive_id || d_an <= d_ap {
+                        continue;
+                    }
+
+                    let gap = d_an - d_ap;
+                    let hardness = 1.0 / (1.0 + (gap - RECOMMEND_MARGIN_TARGET).abs() * 5.0);
+                    let violation_proxy = (d_ap * d_ap - d_an * d_an + RECOMMEND_MARGIN_TARGET).max(0.0);
+                    let near_margin = (gap - RECOMMEND_NEAR_MARGIN).abs();
+                    let norm_pair_bias = ((self.node_norm(positive_id) - 1.0).abs() + (self.node_norm(negative_id) - 1.0).abs()) * 0.15;
+                    let random_jitter = rng.gen_range(0.0..0.2);
+                    let score = hardness + violation_proxy * 3.0 + norm_pair_bias + random_jitter;
+
+                    if gap <= RECOMMEND_NEAR_MARGIN * 1.6 {
+                        match best_negative {
+                            Some((_, best_score)) if score <= best_score => {}
+                            _ => best_negative = Some((negative_id, score)),
+                        }
+                    }
+
+                    let fallback_score = score - near_margin * 0.4;
+                    match fallback_negative {
+                        Some((_, best_score)) if fallback_score <= best_score => {}
+                        _ => fallback_negative = Some((negative_id, fallback_score)),
+                    }
+                }
+
+                let picked_negative = best_negative.or(fallback_negative);
+                let Some((negative_id, negative_score)) = picked_negative else {
+                    continue;
+                };
+
+                let total_score = uncertainty * 2.0 + negative_score + anchor_norm_bias * 0.6;
+                match best {
+                    Some((_, _, _, best_score)) if total_score <= best_score => {}
+                    _ => best = Some((anchor, positive_id, negative_id, total_score)),
+                }
+            }
+        }
+
+        best.map(|(anchor, positive, negative, _)| (anchor, positive, negative))
+    }
+
     // ── SGD updates ──────────────────────────────────────────────────────────
 
     /// Triplet margin loss gradient step — enforces d(a,b) < d(a,c).
@@ -282,7 +390,17 @@ impl EmbeddingEngine {
         let d_ac_sq = l2_dist_sq(self.coords.row(ia), self.coords.row(ic));
 
         let loss = d_ab_sq - d_ac_sq + margin;
-        if loss <= 0.0 { return 0.0; }
+        let grad_scale = if loss > 0.0 {
+            1.0
+        } else {
+            // Smooth hinge tail: still apply tiny gradients near satisfied border
+            // to reduce "only one option changes" behavior.
+            let softness = (loss / 0.18).exp() * 0.08;
+            if softness < 1e-4 {
+                return 0.0;
+            }
+            softness
+        };
 
         // Materialize owned gradient vecs before any mutation to avoid borrow
         // conflicts on self.coords.
@@ -292,13 +410,13 @@ impl EmbeddingEngine {
             let xc = self.coords.row(ic);
 
             let ga: Vec<f32> = xa.iter().zip(xb.iter()).zip(xc.iter())
-                .map(|((a, b), c)| 2.0 * (a - b) - 2.0 * (a - c))
+                .map(|((a, b), c)| (2.0 * (a - b) - 2.0 * (a - c)) * grad_scale)
                 .collect();
             let gb: Vec<f32> = xb.iter().zip(xa.iter())
-                .map(|(b, a)| 2.0 * (b - a))
+                .map(|(b, a)| 2.0 * (b - a) * grad_scale)
                 .collect();
             let gc: Vec<f32> = xc.iter().zip(xa.iter())
-                .map(|(c, a)| -2.0 * (c - a))
+                .map(|(c, a)| -2.0 * (c - a) * grad_scale)
                 .collect();
             (ga, gb, gc)
         };
@@ -475,6 +593,9 @@ impl EmbeddingEngine {
             return;
         }
         for id in touched {
+            self.rebalance_node_norm(*id);
+        }
+        for id in touched {
             self.refresh_ann_node(*id);
         }
         for id in touched {
@@ -590,6 +711,7 @@ impl EmbeddingEngine {
             self.projection[[idx, 1]] -= my;
         }
 
+        let mut radii = Vec::with_capacity(self.n_active);
         let mut norm_sum = 0.0f32;
         for idx in 0..self.capacity {
             if !self.active[idx] {
@@ -597,19 +719,48 @@ impl EmbeddingEngine {
             }
             let x = self.projection[[idx, 0]];
             let y = self.projection[[idx, 1]];
-            norm_sum += (x * x + y * y).sqrt();
+            let r = (x * x + y * y).sqrt();
+            radii.push(r);
+            norm_sum += r;
         }
+
+        radii.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median_radius = radii[radii.len() / 2].max(NORMALIZE_EPS);
+        let p90_index = ((radii.len() as f32) * 0.9).floor() as usize;
+        let p90_radius = radii[p90_index.min(radii.len() - 1)].max(median_radius);
+
         let mean_norm = norm_sum * inv_n;
         if mean_norm <= NORMALIZE_EPS {
             return;
         }
-        let scale = 1.0f32 / mean_norm;
+
+        // Robust scaling: keep p90 near unit radius while compressing outliers
+        // and slightly expanding the dense center cloud.
+        let base_scale = 1.0f32 / p90_radius.max(mean_norm * 0.8);
         for idx in 0..self.capacity {
             if !self.active[idx] {
                 continue;
             }
-            self.projection[[idx, 0]] *= scale;
-            self.projection[[idx, 1]] *= scale;
+            let x = self.projection[[idx, 0]];
+            let y = self.projection[[idx, 1]];
+            let r = (x * x + y * y).sqrt();
+            if r <= NORMALIZE_EPS {
+                continue;
+            }
+
+            let inner = median_radius * 0.7;
+            let outer = p90_radius * 1.6;
+            let target_r = if r < inner {
+                inner * (r / inner).powf(0.78)
+            } else if r > outer {
+                outer + (r - outer) * 0.32
+            } else {
+                r
+            };
+
+            let factor = (target_r / r) * base_scale;
+            self.projection[[idx, 0]] = x * factor;
+            self.projection[[idx, 1]] = y * factor;
         }
     }
 
@@ -703,6 +854,57 @@ impl EmbeddingEngine {
         self.active.resize(new_cap, false);
         self.capacity = new_cap;
     }
+
+    #[inline]
+    fn node_norm(&self, id: u32) -> f32 {
+        let idx = id as usize;
+        if idx >= self.capacity || !self.active[idx] {
+            return 1.0;
+        }
+        let row = self.coords.row(idx);
+        row.iter().map(|v| v * v).sum::<f32>().sqrt()
+    }
+
+    fn rebalance_node_norm(&mut self, id: u32) {
+        let idx = id as usize;
+        if idx >= self.capacity || !self.active[idx] {
+            return;
+        }
+        let norm = {
+            let row = self.coords.row(idx);
+            row.iter().map(|v| v * v).sum::<f32>().sqrt()
+        };
+        if norm <= NORMALIZE_EPS {
+            return;
+        }
+
+        // Especially care about vectors with too large/small magnitude.
+        if (0.75..=1.35).contains(&norm) {
+            return;
+        }
+
+        let target = 1.0f32;
+        let adjust = if norm > target { 0.85 } else { 1.15 };
+        let scale = ((target / norm) * adjust).clamp(0.65, 1.5);
+        let mut row = self.coords.row_mut(idx);
+        for i in 0..LATENT_DIM {
+            row[i] *= scale;
+        }
+    }
+}
+
+#[inline]
+fn pair_key(a: u32, b: u32) -> u64 {
+    if a < b {
+        ((a as u64) << 32) | (b as u64)
+    } else {
+        ((b as u64) << 32) | (a as u64)
+    }
+}
+
+#[inline]
+fn similarity_from_distance(distance: f32) -> f32 {
+    1.0 / (1.0 + distance)
 }
 
 #[cfg(test)]
