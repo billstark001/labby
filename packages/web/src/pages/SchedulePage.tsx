@@ -41,6 +41,8 @@ import {
 import { Dialog, confirmDialog } from '../components/ui/Dialog';
 import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '../components/ui/Menu';
 import { toast } from '../components/ui/Toast';
+import { apiClient } from '@/lib/api';
+import { isServerDeployment } from '@/lib/runtime';
 import { i18n } from '@/i18n';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -376,12 +378,20 @@ export function SchedulePage() {
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const plan = solveFull({
-        persons,
-        similarities: similarityMapSignal.value,
-        config,
-        unavailabilities,
-      });
+      const plan = isServerDeployment
+        ? await apiClient.request<SchedulePlan>('/solver/run', {
+          method: 'POST',
+          body: JSON.stringify({
+            configId: config.id,
+            personIds: persons.map((p) => p.id),
+          }),
+        })
+        : solveFull({
+          persons,
+          similarities: similarityMapSignal.value,
+          config,
+          unavailabilities,
+        });
       await db.schedules.put(plan);
       await loadAllSchedules(db);
       currentScheduleSignal.value = plan;
@@ -403,14 +413,24 @@ export function SchedulePage() {
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const plan = solveIncremental({
-        persons,
-        similarities: similarityMapSignal.value,
-        config,
-        previousPlan: current,
-        changeDate,
-        unavailabilities,
-      });
+      const plan = isServerDeployment
+        ? await apiClient.request<SchedulePlan>('/solver/run-incremental', {
+          method: 'POST',
+          body: JSON.stringify({
+            configId: config.id,
+            previousPlanId: current.id,
+            changeDate,
+            personIds: persons.map((p) => p.id),
+          }),
+        })
+        : solveIncremental({
+          persons,
+          similarities: similarityMapSignal.value,
+          config,
+          previousPlan: current,
+          changeDate,
+          unavailabilities,
+        });
       await db.schedules.put(plan);
       await loadAllSchedules(db);
       currentScheduleSignal.value = plan;

@@ -223,7 +223,7 @@ export async function restoreIDBDatabase(dbInst: IDBPDatabase, dump: DatabaseDum
   await Promise.all([
     ...dump.persons.map(p => tx.objectStore('persons').put(p)),
     ...dump.keywords.map(k => tx.objectStore('keywords').put(k)),
-    ...dump.keywordVectors.map(v => tx.objectStore('keyword_vectors').put(toKeywordVectorRecord(v))),
+    ...(dump.keywordVectors?.map(v => tx.objectStore('keyword_vectors').put(toKeywordVectorRecord(v))) ?? []),
     ...dump.configs.map(c => tx.objectStore('configs').put(c)),
     ...dump.schedules.map(s => tx.objectStore('schedules').put(s)),
     ...dump.unavailabilities.map(u => tx.objectStore('unavailabilities').put(u)),

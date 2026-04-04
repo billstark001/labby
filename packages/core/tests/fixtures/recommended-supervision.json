@@ -1,0 +1,452 @@
+[
+  {
+    "anchorId": "constitutional-law",
+    "positiveId": "ecology",
+    "negativeId": "phonology"
+  },
+  {
+    "anchorId": "constitutional-law",
+    "positiveId": "ecology",
+    "negativeId": "phonology"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "comparative-literature",
+    "negativeId": "compiler-design"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "comparative-literature",
+    "negativeId": "computer-vision"
+  },
+  {
+    "anchorId": "medieval-literature",
+    "positiveId": "organic-chemistry",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "constitutional-law",
+    "positiveId": "compiler-design",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "ancient-history",
+    "negativeId": "constitutional-law"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "computer-vision",
+    "negativeId": "deep-learning"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "topology",
+    "negativeId": "comparative-literature"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "deep-learning",
+    "negativeId": "topology"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "deep-learning",
+    "negativeId": "constitutional-law"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "ecology",
+    "negativeId": "epidemiology"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "game-theory",
+    "negativeId": "organic-chemistry"
+  },
+  {
+    "anchorId": "ecology",
+    "positiveId": "ancient-history",
+    "negativeId": "game-theory"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "computer-vision",
+    "negativeId": "ecology"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "classical-mechanics",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "classical-mechanics",
+    "negativeId": "deep-learning"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "linear-algebra",
+    "negativeId": "deep-learning"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "compiler-design",
+    "negativeId": "computer-vision"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "linear-algebra",
+    "negativeId": "compiler-design"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "linear-algebra",
+    "negativeId": "classical-mechanics"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "deep-learning",
+    "negativeId": "linear-algebra"
+  },
+  {
+    "anchorId": "macroeconomics",
+    "positiveId": "musicology",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "macroeconomics",
+    "positiveId": "abstract-algebra",
+    "negativeId": "musicology"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "macroeconomics",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "linear-algebra",
+    "positiveId": "quantum-field-theory",
+    "negativeId": "medieval-literature"
+  },
+  {
+    "anchorId": "constitutional-law",
+    "positiveId": "compiler-design",
+    "negativeId": "deep-learning"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "ecology",
+    "negativeId": "game-theory"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "computer-vision",
+    "negativeId": "classical-mechanics"
+  },
+  {
+    "anchorId": "computer-vision",
+    "positiveId": "comparative-literature",
+    "negativeId": "musicology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "computer-vision",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "compiler-design",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "compiler-design",
+    "negativeId": "computer-vision"
+  },
+  {
+    "anchorId": "ecology",
+    "positiveId": "abstract-algebra",
+    "negativeId": "linear-algebra"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "macroeconomics",
+    "negativeId": "ecology"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "genetics",
+    "negativeId": "macroeconomics"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "ecology",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "quantum-field-theory",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "epidemiology",
+    "positiveId": "abstract-algebra",
+    "negativeId": "quantum-field-theory"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "ecology",
+    "negativeId": "epidemiology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "ecology",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "classical-mechanics",
+    "negativeId": "computer-vision"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "classical-mechanics",
+    "negativeId": "quantum-field-theory"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "macroeconomics",
+    "negativeId": "syntax"
+  },
+  {
+    "anchorId": "ecology",
+    "positiveId": "genetics",
+    "negativeId": "phonology"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "linear-algebra",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "linear-algebra",
+    "negativeId": "quantum-field-theory"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "linear-algebra",
+    "negativeId": "topology"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "linear-algebra",
+    "negativeId": "game-theory"
+  },
+  {
+    "anchorId": "linear-algebra",
+    "positiveId": "macroeconomics",
+    "negativeId": "constitutional-law"
+  },
+  {
+    "anchorId": "ecology",
+    "positiveId": "classical-mechanics",
+    "negativeId": "macroeconomics"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "comparative-literature",
+    "negativeId": "ecology"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "ancient-history",
+    "negativeId": "comparative-literature"
+  },
+  {
+    "anchorId": "linear-algebra",
+    "positiveId": "epidemiology",
+    "negativeId": "medieval-literature"
+  },
+  {
+    "anchorId": "epidemiology",
+    "positiveId": "abstract-algebra",
+    "negativeId": "linear-algebra"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "compiler-design",
+    "negativeId": "ancient-history"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "compiler-design",
+    "negativeId": "epidemiology"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "genetics",
+    "negativeId": "organic-chemistry"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "epidemiology",
+    "negativeId": "macroeconomics"
+  },
+  {
+    "anchorId": "genetics",
+    "positiveId": "abstract-algebra",
+    "negativeId": "linear-algebra"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "deep-learning",
+    "negativeId": "comparative-literature"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "deep-learning",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "compiler-design",
+    "negativeId": "deep-learning"
+  },
+  {
+    "anchorId": "ecology",
+    "positiveId": "epidemiology",
+    "negativeId": "linear-algebra"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "classical-mechanics",
+    "negativeId": "epidemiology"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "phonology",
+    "negativeId": "syntax"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "phonology",
+    "negativeId": "linear-algebra"
+  },
+  {
+    "anchorId": "classical-mechanics",
+    "positiveId": "comparative-literature",
+    "negativeId": "phonology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "phonology",
+    "negativeId": "computer-vision"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "comparative-literature",
+    "negativeId": "phonology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "deep-learning",
+    "negativeId": "ecology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "ecology",
+    "negativeId": "epidemiology"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "topology",
+    "negativeId": "cardiology"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "constitutional-law",
+    "negativeId": "organic-chemistry"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "abstract-algebra",
+    "negativeId": "constitutional-law"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "musicology",
+    "negativeId": "phonology"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "comparative-literature",
+    "negativeId": "musicology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "macroeconomics",
+    "negativeId": "topology"
+  },
+  {
+    "anchorId": "comparative-literature",
+    "positiveId": "musicology",
+    "negativeId": "syntax"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "abstract-algebra",
+    "negativeId": "musicology"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "computer-vision",
+    "negativeId": "thermodynamics"
+  },
+  {
+    "anchorId": "computer-vision",
+    "positiveId": "deep-learning",
+    "negativeId": "classical-mechanics"
+  },
+  {
+    "anchorId": "deep-learning",
+    "positiveId": "game-theory",
+    "negativeId": "macroeconomics"
+  },
+  {
+    "anchorId": "abstract-algebra",
+    "positiveId": "game-theory",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "compiler-design",
+    "positiveId": "game-theory",
+    "negativeId": "genetics"
+  },
+  {
+    "anchorId": "ancient-history",
+    "positiveId": "ecology",
+    "negativeId": "game-theory"
+  },
+  {
+    "anchorId": "constitutional-law",
+    "positiveId": "game-theory",
+    "negativeId": "deep-learning"
+  },
+  {
+    "anchorId": "game-theory",
+    "positiveId": "topology",
+    "negativeId": "ancient-history"
+  },
+  {
+    "anchorId": "computer-vision",
+    "positiveId": "comparative-literature",
+    "negativeId": "ecology"
+  },
+  {
+    "anchorId": "game-theory",
+    "positiveId": "classical-mechanics",
+    "negativeId": "medieval-literature"
+  }
+]

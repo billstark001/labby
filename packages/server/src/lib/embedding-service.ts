@@ -6,6 +6,12 @@ import type { SqliteStore } from '../store/index.js';
 
 const LATENT_DIM = 64;
 
+function stableIdCompare(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 export class EmbeddingService {
   private engine: EmbeddingEngineAdapter | null = null;
   private orderedKeywordIds: string[] = [];
@@ -58,6 +64,28 @@ export class EmbeddingService {
     return { loss, updatedVectors };
   }
 
+  async updatePair(
+    leftId: string,
+    rightId: string,
+    targetDistance: number,
+    learningRate: number,
+  ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+    await this.ensureInitialized();
+
+    const a = this.keywordIndex.get(leftId);
+    const b = this.keywordIndex.get(rightId);
+    if (a === undefined || b === undefined || !this.engine) {
+      throw new Error('pair ids not found in embedding engine');
+    }
+
+    const loss = this.engine.updatePair(a, b, targetDistance, learningRate);
+    const updatedVectors = this.collectDirtyVectors();
+    for (const vector of updatedVectors) {
+      this.pendingWrites.set(vector.keywordId, vector);
+    }
+    return { loss, updatedVectors };
+  }
+
   async shutdown(): Promise<void> {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
@@ -74,7 +102,7 @@ export class EmbeddingService {
     if (!this.stale && this.engine) return;
 
     const keywords = await this.store.listKeywords();
-    const keywordIds = keywords.map((k) => k.id).sort((a, b) => a.localeCompare(b));
+    const keywordIds = keywords.map((k) => k.id).sort(stableIdCompare);
     const persisted = await this.store.getKeywordVectors(keywordIds);
     const byId = new Map(persisted.map((item) => [item.keywordId, item]));
 

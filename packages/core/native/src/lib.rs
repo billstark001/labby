@@ -80,6 +80,25 @@ mod node_ffi {
             Ok(loss as f64)
         }
 
+        /// Batch triplet updates + one flush.
+        ///
+        /// `triplets` format: `[a0,b0,c0,a1,b1,c1,...]`.
+        /// Returns dirty-node bytes in the standard flush format.
+        #[napi]
+        pub fn update_triplets_batch_flush(
+            &self,
+            triplets: Uint32Array,
+            margin: f64,
+            learning_rate: f64,
+        ) -> Result<Buffer> {
+            let ids = triplets.as_ref();
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .update_triplets_batch_flat(ids, margin as f32, learning_rate as f32)
+                .map_err(Error::from_reason)?;
+            Ok(Buffer::from(inner.flush_dirty_nodes_bytes()))
+        }
+
         /// Pairwise push/pull SGD step.  Returns the pre-update loss.
         #[napi]
         pub fn update_pair(
@@ -90,6 +109,25 @@ mod node_ffi {
             let loss = self.inner.lock().unwrap()
                 .update_pair(id_a, id_b, target_distance as f32, learning_rate as f32);
             Ok(loss as f64)
+        }
+
+        /// Batch pair updates + one flush.
+        ///
+        /// `pairs` format: `[a0,b0,a1,b1,...]`.
+        /// Returns dirty-node bytes in the standard flush format.
+        #[napi]
+        pub fn update_pairs_batch_flush(
+            &self,
+            pairs: Uint32Array,
+            target_distance: f64,
+            learning_rate: f64,
+        ) -> Result<Buffer> {
+            let ids = pairs.as_ref();
+            let mut inner = self.inner.lock().unwrap();
+            inner
+                .update_pairs_batch_flat(ids, target_distance as f32, learning_rate as f32)
+                .map_err(Error::from_reason)?;
+            Ok(Buffer::from(inner.flush_dirty_nodes_bytes()))
         }
 
         /// k-NN query.
@@ -184,12 +222,50 @@ mod wasm_ffi {
             self.inner.update_triplet(id_a, id_b, id_c, margin, learning_rate)
         }
 
+        /// Batch triplet updates + one flush.
+        ///
+        /// `triplets` format: `[a0,b0,c0,a1,b1,c1,...]`.
+        pub fn update_triplets_batch_flush(
+            &mut self,
+            triplets: &[u32],
+            margin: f32,
+            learning_rate: f32,
+        ) -> Vec<u8> {
+            if self
+                .inner
+                .update_triplets_batch_flat(triplets, margin, learning_rate)
+                .is_err()
+            {
+                return Vec::new();
+            }
+            self.inner.flush_dirty_nodes_bytes()
+        }
+
         pub fn update_pair(
             &mut self,
             id_a: u32, id_b: u32,
             target_distance: f32, learning_rate: f32,
         ) -> f32 {
             self.inner.update_pair(id_a, id_b, target_distance, learning_rate)
+        }
+
+        /// Batch pair updates + one flush.
+        ///
+        /// `pairs` format: `[a0,b0,a1,b1,...]`.
+        pub fn update_pairs_batch_flush(
+            &mut self,
+            pairs: &[u32],
+            target_distance: f32,
+            learning_rate: f32,
+        ) -> Vec<u8> {
+            if self
+                .inner
+                .update_pairs_batch_flat(pairs, target_distance, learning_rate)
+                .is_err()
+            {
+                return Vec::new();
+            }
+            self.inner.flush_dirty_nodes_bytes()
         }
 
         /// Returns `[n:u32][id:u32, dist:f32] × n` as `Uint8Array`.

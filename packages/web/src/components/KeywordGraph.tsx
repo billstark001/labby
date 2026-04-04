@@ -1,6 +1,7 @@
-/** Keyword similarity D3 force graph with brush-select interaction. */
-import { useEffect, useRef, useState } from 'preact/hooks';
-import * as d3 from 'd3';
+/** Keyword similarity graph rendered with deck.gl (WebGL). */
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Deck, OrthographicView } from '@deck.gl/core';
+import { LineLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { X } from 'lucide-preact';
 import {
   keywordsSignal,
@@ -12,37 +13,41 @@ import {
   keywordVectorsToSimilarityEdges,
 } from '@labby/core';
 import * as s from '../styles/components.css';
-import { vars } from '../styles/theme.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
 
-interface GraphNode extends d3.SimulationNodeDatum {
+type GraphNode = {
   id: string;
   label: string;
-}
+  x: number;
+  y: number;
+};
 
-interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
+type GraphEdge = {
+  id: string;
+  sourceId: string;
+  targetId: string;
   weight: number;
-}
+  source: [number, number, number];
+  target: [number, number, number];
+};
 
-function linkKey(link: GraphLink): string {
-  const source = typeof link.source === 'object' ? link.source.id : String(link.source);
-  const target = typeof link.target === 'object' ? link.target.id : String(link.target);
-  return source < target ? `${source}|${target}` : `${target}|${source}`;
+const COLOR_NODE: [number, number, number, number] = [44, 102, 245, 220];
+const COLOR_NODE_SELECTED: [number, number, number, number] = [16, 185, 129, 240];
+const COLOR_EDGE: [number, number, number, number] = [148, 163, 184, 120];
+const COLOR_EDGE_SELECTED: [number, number, number, number] = [16, 185, 129, 200];
+const POSITION_SCALE = 140;
+const MAX_RENDER_EDGES = 8_000;
+
+function edgeKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 export function KeywordGraph() {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
-  const graphGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const linkLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const nodeLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const labelLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const nodeSelectionRef = useRef<d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, GraphLink, SVGGElement, unknown> | null>(null);
-  const labelSelectionRef = useRef<d3.Selection<SVGTextElement, GraphNode, SVGGElement, unknown> | null>(null);
-  const nodeMapRef = useRef<Map<string, GraphNode>>(new Map());
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const deckRef = useRef<Deck<any> | null>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const { t } = i18n;
   const keywords = keywordsSignal.value;
   const vectors = keywordVectorsSignal.value;
@@ -50,69 +55,83 @@ export function KeywordGraph() {
 
   const [selected, setSelected] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!svgRef.current) return;
+  const nodes = useMemo<GraphNode[]>(() => {
+    const vectorById = new Map(vectors.map((v) => [v.keywordId, v]));
+    return keywords.map((keyword, index) => {
+      const embedding = vectorById.get(keyword.id);
+      if (embedding) {
+        return {
+          id: keyword.id,
+          label: displayName(keyword),
+          x: embedding.x * POSITION_SCALE,
+          y: embedding.y * POSITION_SCALE,
+        };
+      }
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-
-    const graphGroup = svg.append('g');
-    const linkLayer = graphGroup.append('g');
-    const nodeLayer = graphGroup.append('g');
-    const labelLayer = graphGroup.append('g');
-
-    const simulation = d3
-      .forceSimulation<GraphNode>([])
-      .force(
-        'link',
-        d3
-          .forceLink<GraphNode, GraphLink>([])
-          .id(d => d.id)
-          .distance(d => 40 + (1 - d.weight) * 220),
-      )
-      .force('charge', d3.forceManyBody().strength(-110))
-      .force('center', d3.forceCenter(400, 250))
-      .force('collision', d3.forceCollide(34));
-
-    simulation.on('tick', () => {
-      linkSelectionRef.current
-        ?.attr('x1', d => (d.source as GraphNode).x ?? 0)
-        .attr('y1', d => (d.source as GraphNode).y ?? 0)
-        .attr('x2', d => (d.target as GraphNode).x ?? 0)
-        .attr('y2', d => (d.target as GraphNode).y ?? 0);
-      nodeSelectionRef.current
-        ?.attr('cx', d => d.x ?? 0)
-        .attr('cy', d => d.y ?? 0);
-      labelSelectionRef.current
-        ?.attr('x', d => d.x ?? 0)
-        .attr('y', d => d.y ?? 0);
+      const angle = (index / Math.max(keywords.length, 1)) * Math.PI * 2;
+      return {
+        id: keyword.id,
+        label: displayName(keyword),
+        x: Math.cos(angle) * POSITION_SCALE * 0.2,
+        y: Math.sin(angle) * POSITION_SCALE * 0.2,
+      };
     });
+  }, [keywords, vectors]);
 
-    svg.call(
-      d3.zoom<SVGSVGElement, unknown>().on('zoom', event => {
-        graphGroup.attr('transform', event.transform);
-      }),
-    );
+  const autoViewState = useMemo(() => {
+    const width = Math.max(1, canvasSize.width);
+    const height = Math.max(1, canvasSize.height);
+    if (nodes.length === 0) {
+      return { target: [0, 0, 0], zoom: 0 };
+    }
 
-    simulationRef.current = simulation;
-    graphGroupRef.current = graphGroup;
-    linkLayerRef.current = linkLayer;
-    nodeLayerRef.current = nodeLayer;
-    labelLayerRef.current = labelLayer;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const node of nodes) {
+      if (node.x < minX) minX = node.x;
+      if (node.y < minY) minY = node.y;
+      if (node.x > maxX) maxX = node.x;
+      if (node.y > maxY) maxY = node.y;
+    }
 
-    return () => {
-      simulation.stop();
-      simulationRef.current = null;
-      graphGroupRef.current = null;
-      linkLayerRef.current = null;
-      nodeLayerRef.current = null;
-      labelLayerRef.current = null;
-      nodeSelectionRef.current = null;
-      linkSelectionRef.current = null;
-      labelSelectionRef.current = null;
-      nodeMapRef.current = new Map();
+    const pad = 48;
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const scaleX = Math.max(0.05, (width - pad * 2) / spanX);
+    const scaleY = Math.max(0.05, (height - pad * 2) / spanY);
+    const zoom = Math.max(-6, Math.min(6, Math.log2(Math.min(scaleX, scaleY))));
+
+    return {
+      target: [(minX + maxX) / 2, (minY + maxY) / 2, 0] as [number, number, number],
+      zoom,
     };
-  }, []);
+  }, [canvasSize.height, canvasSize.width, nodes]);
+
+  const graphEdges = useMemo<GraphEdge[]>(() => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const out: GraphEdge[] = [];
+    for (const edge of edges) {
+      if (edge.weight <= 0) continue;
+      const sourceNode = nodeById.get(edge.sourceId);
+      const targetNode = nodeById.get(edge.targetId);
+      if (!sourceNode || !targetNode) continue;
+      out.push({
+        id: edgeKey(edge.sourceId, edge.targetId),
+        sourceId: edge.sourceId,
+        targetId: edge.targetId,
+        weight: edge.weight,
+        source: [sourceNode.x, sourceNode.y, 0],
+        target: [targetNode.x, targetNode.y, 0],
+      });
+    }
+    if (out.length > MAX_RENDER_EDGES) {
+      out.sort((a, b) => b.weight - a.weight);
+      out.length = MAX_RENDER_EDGES;
+    }
+    return out;
+  }, [edges, nodes]);
 
   useEffect(() => {
     const validIds = new Set(keywords.map(keyword => keyword.id));
@@ -123,128 +142,97 @@ export function KeywordGraph() {
   }, [keywords]);
 
   useEffect(() => {
-    if (
-      !svgRef.current
-      || !simulationRef.current
-      || !linkLayerRef.current
-      || !nodeLayerRef.current
-      || !labelLayerRef.current
-    ) {
-      return;
-    }
+    if (!canvasRef.current) return;
 
-    const rect = svgRef.current.getBoundingClientRect();
-    const width = rect.width || 800;
-    const height = rect.height || 500;
-    const previousNodes = nodeMapRef.current;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const nextWidth = Math.round(entry.contentRect.width);
+      const nextHeight = Math.round(entry.contentRect.height);
+      setCanvasSize((prev) => (
+        prev.width === nextWidth && prev.height === nextHeight
+          ? prev
+          : { width: nextWidth, height: nextHeight }
+      ));
+    });
+    observer.observe(canvasRef.current);
 
-    const nodes: GraphNode[] = keywords.map(keyword => {
-      const existing = previousNodes.get(keyword.id);
-      if (existing) {
-        existing.label = displayName(keyword);
-        return existing;
-      }
-
-      const embedding = vectors.find(v => v.keywordId === keyword.id);
-      return {
-        id: keyword.id,
-        label: displayName(keyword),
-        x: embedding?.x !== undefined ? embedding.x * 120 + width / 2 : width / 2 + (Math.random() - 0.5) * 80,
-        y: embedding?.y !== undefined ? embedding.y * 120 + height / 2 : height / 2 + (Math.random() - 0.5) * 80,
-      };
+    const deck = new Deck<any>({
+      parent: canvasRef.current,
+      views: [new OrthographicView({ id: 'graph-view' })],
+      initialViewState: autoViewState as any,
+      controller: true,
+      getCursor: ({ isDragging }) => (isDragging ? 'grabbing' : 'grab'),
     });
 
-    nodeMapRef.current = new Map(nodes.map(node => [node.id, node]));
-
-    const links: GraphLink[] = [];
-    for (const edge of edges) {
-      if (edge.weight <= 0) continue;
-      const source = nodeMapRef.current.get(edge.sourceId);
-      const target = nodeMapRef.current.get(edge.targetId);
-      if (!source || !target) continue;
-      links.push({ source, target, weight: edge.weight });
-    }
-
-    const linkSelection = linkLayerRef.current
-      .selectAll<SVGLineElement, GraphLink>('line')
-      .data(links, link => linkKey(link));
-    const mergedLinks = linkSelection
-      .join(
-        enter => enter.append('line'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .attr('stroke', vars.color.border)
-      .attr('stroke-width', d => d.weight * 3)
-      .attr('stroke-opacity', d => 0.2 + d.weight * 0.5);
-
-    const nodeSelection = nodeLayerRef.current
-      .selectAll<SVGCircleElement, GraphNode>('circle')
-      .data(nodes, node => node.id);
-    const mergedNodes = nodeSelection
-      .join(
-        enter => enter.append('circle'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .attr('r', 14)
-      .attr('fill', vars.color.primary)
-      .attr('stroke', vars.color.surface)
-      .attr('stroke-width', 2)
-      .attr('cursor', 'pointer')
-      .on('click', (_event, node) => {
-        setSelected(prev => (
-          prev.includes(node.id) ? prev.filter(id => id !== node.id) : [...prev, node.id]
-        ));
-      });
-    mergedNodes
-      .selectAll<SVGTitleElement, GraphNode>('title')
-      .data(node => [node])
-      .join('title')
-      .text(node => node.label);
-
-    const labelSelection = labelLayerRef.current
-      .selectAll<SVGTextElement, GraphNode>('text')
-      .data(nodes, node => node.id);
-    const mergedLabels = labelSelection
-      .join(
-        enter => enter.append('text'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .text(node => node.label)
-      .attr('font-size', 11)
-      .attr('text-anchor', 'middle')
-      .attr('dy', 28)
-      .attr('fill', vars.color.text)
-      .attr('pointer-events', 'none');
-
-    linkSelectionRef.current = mergedLinks;
-    nodeSelectionRef.current = mergedNodes;
-    labelSelectionRef.current = mergedLabels;
-
-    const simulation = simulationRef.current;
-    const linkForce = simulation.force('link') as d3.ForceLink<GraphNode, GraphLink>;
-    simulation.force('center', d3.forceCenter(width / 2, height / 2));
-    simulation.nodes(nodes);
-    linkForce.links(links);
-    simulation.alpha(nodes.length === 0 ? 0 : 0.45).restart();
-  }, [keywords, edges, t('navGraph')]);
+    deckRef.current = deck;
+    return () => {
+      observer.disconnect();
+      deck.finalize();
+      deckRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
-    const selectedSet = new Set(selected);
-    nodeSelectionRef.current
-      ?.attr('fill', (d: GraphNode) => (selectedSet.has(d.id) ? vars.color.accent : vars.color.primary))
-      .attr('r', (d: GraphNode) => (selectedSet.has(d.id) ? 17 : 14));
+    const deck = deckRef.current;
+    if (!deck) return;
 
-    linkSelectionRef.current?.attr('stroke', (d: GraphLink) => {
-      const source = typeof d.source === 'object' ? d.source.id : String(d.source);
-      const target = typeof d.target === 'object' ? d.target.id : String(d.target);
-      return selectedSet.size > 0 && selectedSet.has(source) && selectedSet.has(target)
-        ? vars.color.accent
-        : vars.color.border;
+    deck.setProps({
+      width: canvasSize.width || 1,
+      height: canvasSize.height || 1,
+      initialViewState: autoViewState as any,
     });
-  }, [selected]);
+  }, [autoViewState, canvasSize.height, canvasSize.width]);
+
+  useEffect(() => {
+    const deck = deckRef.current;
+    if (!deck) return;
+
+    const selectedSet = new Set(selected);
+    const edgeIsSelected = (edge: GraphEdge): boolean => {
+      if (selectedSet.size === 0) return false;
+      return selectedSet.has(edge.sourceId) && selectedSet.has(edge.targetId);
+    };
+
+    deck.setProps({
+      layers: [
+        new LineLayer<GraphEdge>({
+          id: 'keyword-edges',
+          data: graphEdges,
+          pickable: false,
+          getSourcePosition: (d) => d.source,
+          getTargetPosition: (d) => d.target,
+          getColor: (d) => (edgeIsSelected(d) ? COLOR_EDGE_SELECTED : COLOR_EDGE),
+          getWidth: (d) => Math.max(1, d.weight * 3),
+          widthMinPixels: 1,
+          widthMaxPixels: 4,
+        }),
+        new ScatterplotLayer<GraphNode>({
+          id: 'keyword-nodes',
+          data: nodes,
+          pickable: true,
+          radiusUnits: 'pixels',
+          stroked: true,
+          filled: true,
+          lineWidthUnits: 'pixels',
+          lineWidthMinPixels: 1,
+          getLineColor: [255, 255, 255, 220],
+          getPosition: (d) => [d.x, d.y, 0],
+          getRadius: (d) => (selectedSet.has(d.id) ? 11 : 8),
+          getFillColor: (d) => (selectedSet.has(d.id) ? COLOR_NODE_SELECTED : COLOR_NODE),
+          onClick: (info) => {
+            const picked = info.object as GraphNode | undefined;
+            if (!picked) return;
+            setSelected((prev) => (
+              prev.includes(picked.id)
+                ? prev.filter((id) => id !== picked.id)
+                : [...prev, picked.id]
+            ));
+          },
+        }),
+      ],
+    });
+  }, [graphEdges, nodes, selected]);
 
   function clearSelection() {
     setSelected([]);
@@ -300,9 +288,9 @@ export function KeywordGraph() {
         )}
       </div>
       <div class={s.graphLayout}>
-        <svg ref={svgRef} class={s.graphCanvas} />
+        <div ref={canvasRef} class={s.graphCanvas} />
         <aside class={s.graphSidebar}>
-          <div class={`${s.card} ${s.graphSidebarCard}`}>
+          <div class={`${s.card} ${s.graphSidebarCard}`} style={{ maxHeight: `${Math.max(canvasSize.height, 340)}px` }}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>{t('distanceSummary')}</h3>
             <div class={s.metricList}>
               {relationshipRows.length === 0 ? (

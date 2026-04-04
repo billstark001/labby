@@ -1,21 +1,72 @@
 import type { KeywordVector, TripletQuery } from '@labby/core';
 import initWasm, { WasmEmbeddingEngine } from '../../../core/native/dist/wasm-web/labby_core.js';
+import { apiClient } from '@/lib/api';
+import { isServerDeployment } from '@/lib/runtime';
 
 const LATENT_DIM = 64;
+const FRONTEND_ONLY_MAX_NODES = 1_000;
 
 type WasmEngineLike = {
   hydrate(data: Float32Array, nNodes: number): void;
-  update_triplet?(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
-  updateTriplet?(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
-  flush_dirty_nodes?(): Uint8Array;
-  flushDirtyNodes?(): Uint8Array;
+  update_triplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
+  update_pair(idA: number, idB: number, targetDistance: number, learningRate: number): number;
+  flush_dirty_nodes(): Uint8Array;
 };
 
 let enginePromise: Promise<WasmEngineLike> | null = null;
+let hydratedIndexById = new Map<string, number>();
+let hydratedOrderedIds: string[] = [];
+
+function stableIdCompare(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
 
 async function loadEngine(): Promise<WasmEngineLike> {
   await initWasm();
   return new WasmEmbeddingEngine(1024) as WasmEngineLike;
+}
+
+function ensureFrontendOnlyScale(vectors: KeywordVector[]): void {
+  if (vectors.length > FRONTEND_ONLY_MAX_NODES) {
+    throw new Error(
+      `frontend-only mode supports up to ${FRONTEND_ONLY_MAX_NODES} vectors; ` +
+      'for larger datasets, switch deployment mode to server',
+    );
+  }
+}
+
+function sameOrderedIds(nextOrdered: string[]): boolean {
+  if (nextOrdered.length !== hydratedOrderedIds.length) return false;
+  for (let i = 0; i < nextOrdered.length; i++) {
+    if (nextOrdered[i] !== hydratedOrderedIds[i]) return false;
+  }
+  return true;
+}
+
+function buildFlatVectors(ordered: KeywordVector[]): Float32Array {
+  const flat = new Float32Array(ordered.length * LATENT_DIM);
+  for (let i = 0; i < ordered.length; i++) {
+    const vec = ordered[i].vector64;
+    for (let j = 0; j < LATENT_DIM; j++) {
+      flat[i * LATENT_DIM + j] = vec[j] ?? 0;
+    }
+  }
+  return flat;
+}
+
+function ensureHydrated(engine: WasmEngineLike, vectors: KeywordVector[]): KeywordVector[] {
+  const ordered = [...vectors].sort((a, b) => stableIdCompare(a.keywordId, b.keywordId));
+  const orderedIds = ordered.map((item) => item.keywordId);
+  if (sameOrderedIds(orderedIds)) {
+    return ordered;
+  }
+
+  engine.hydrate(buildFlatVectors(ordered), ordered.length);
+  hydratedOrderedIds = orderedIds;
+  hydratedIndexById = new Map(orderedIds.map((id, i) => [id, i]));
+  return ordered;
 }
 
 function parseDirtyBuffer(buffer: Uint8Array): Array<{ id: number; coords64d: number[]; coords2d: [number, number] }> {
@@ -49,38 +100,94 @@ export async function applyTripletWithWasm(
   margin = 0.2,
   learningRate = 0.05,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+  if (isServerDeployment) {
+    return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-similarity', {
+      method: 'POST',
+      body: JSON.stringify({
+        anchorId: query.anchorId,
+        positiveId: query.positiveId,
+        negativeId: query.negativeId,
+        margin,
+        learningRate,
+      }),
+    });
+  }
+
+  ensureFrontendOnlyScale(vectors);
+
   if (!enginePromise) {
     enginePromise = loadEngine();
   }
   const engine = await enginePromise;
 
-  const ordered = [...vectors].sort((a, b) => a.keywordId.localeCompare(b.keywordId));
-  const indexById = new Map(ordered.map((v, i) => [v.keywordId, i]));
+  const ordered = ensureHydrated(engine, vectors);
 
-  const a = indexById.get(query.anchorId);
-  const b = indexById.get(query.positiveId);
-  const c = indexById.get(query.negativeId);
+  const a = hydratedIndexById.get(query.anchorId);
+  const b = hydratedIndexById.get(query.positiveId);
+  const c = hydratedIndexById.get(query.negativeId);
   if (a === undefined || b === undefined || c === undefined) {
     throw new Error('triplet keyword ids not found');
   }
 
-  const flat = new Float32Array(ordered.length * LATENT_DIM);
-  for (let i = 0; i < ordered.length; i++) {
-    const vec = ordered[i].vector64;
-    for (let j = 0; j < LATENT_DIM; j++) {
-      flat[i * LATENT_DIM + j] = vec[j] ?? 0;
-    }
+  const loss = engine.update_triplet(a, b, c, margin, learningRate);
+
+  const dirtyBytes = engine.flush_dirty_nodes();
+
+  const dirty = parseDirtyBuffer(dirtyBytes);
+  const now = Date.now();
+  const updatedVectors = dirty
+    .map((item) => {
+      const keywordId = ordered[item.id]?.keywordId;
+      if (!keywordId) return null;
+      return {
+        keywordId,
+        vector64: item.coords64d,
+        x: item.coords2d[0],
+        y: item.coords2d[1],
+        updatedAt: now,
+      } satisfies KeywordVector;
+    })
+    .filter((item): item is KeywordVector => Boolean(item));
+
+  return { loss, updatedVectors };
+}
+
+export async function applyPairUpdate(
+  vectors: KeywordVector[],
+  leftId: string,
+  rightId: string,
+  targetDistance: number,
+  learningRate = 0.05,
+): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+  if (isServerDeployment) {
+    return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-pair', {
+      method: 'POST',
+      body: JSON.stringify({
+        leftId,
+        rightId,
+        targetDistance,
+        learningRate,
+      }),
+    });
   }
 
-  engine.hydrate(flat, ordered.length);
-  const loss = engine.updateTriplet
-    ? engine.updateTriplet(a, b, c, margin, learningRate)
-    : (engine.update_triplet?.(a, b, c, margin, learningRate) ?? 0);
+  ensureFrontendOnlyScale(vectors);
 
-  const dirtyBytes = engine.flushDirtyNodes
-    ? engine.flushDirtyNodes()
-    : (engine.flush_dirty_nodes?.() ?? new Uint8Array());
+  if (!enginePromise) {
+    enginePromise = loadEngine();
+  }
+  const engine = await enginePromise;
 
+  const ordered = ensureHydrated(engine, vectors);
+  const a = hydratedIndexById.get(leftId);
+  const b = hydratedIndexById.get(rightId);
+  if (a === undefined || b === undefined) {
+    throw new Error('pair keyword ids not found');
+  }
+
+  const loss = engine.update_pair(a, b, targetDistance, learningRate);
+
+  const dirtyBytes = engine.flush_dirty_nodes();
   const dirty = parseDirtyBuffer(dirtyBytes);
   const now = Date.now();
   const updatedVectors = dirty

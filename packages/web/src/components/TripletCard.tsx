@@ -1,5 +1,5 @@
 /** Triplet comparison Q&A card for building keyword similarity. */
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   keywordsSignal,
   keywordVectorsSignal,
@@ -18,6 +18,7 @@ import { applyTripletWithWasm } from '@/lib/embedding-engine';
 
 /** Max number of recently answered pair keys to exclude from next query. */
 const RECENT_PAIR_LIMIT = 5;
+const PERSIST_DEBOUNCE_MS = 800;
 
 export function TripletCard() {
   const db = useDatabase();
@@ -28,6 +29,33 @@ export function TripletCard() {
   const [answered, setAnswered] = useState(0);
   // Track recently asked pair keys to avoid immediate repetition
   const [recentPairs, setRecentPairs] = useState<string[]>([]);
+  const pendingPersistRef = useRef<Map<string, KeywordVector>>(new Map());
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  async function flushPendingPersist(): Promise<void> {
+    if (pendingPersistRef.current.size === 0) return;
+    const values = [...pendingPersistRef.current.values()];
+    pendingPersistRef.current.clear();
+    await db.keywordVectors.putMany(values);
+  }
+
+  function schedulePersist(): void {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+    }
+    flushTimerRef.current = setTimeout(() => {
+      void flushPendingPersist();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+      }
+      void flushPendingPersist();
+    };
+  }, []);
 
   function ensureKeywordVectors() {
     const current = keywordVectorsSignal.value;
@@ -76,8 +104,9 @@ export function TripletCard() {
         const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
         for (const vec of result.updatedVectors) {
           merged.set(vec.keywordId, vec);
+          pendingPersistRef.current.set(vec.keywordId, vec);
         }
-        await db.keywordVectors.putMany(result.updatedVectors);
+        schedulePersist();
         keywordVectorsSignal.value = [...merged.values()];
       }
     }

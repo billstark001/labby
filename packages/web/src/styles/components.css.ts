@@ -354,8 +354,10 @@ export const historyDeleteButton = style({
 // ---------------------------------------------------------------------------
 
 export const graphCanvas = style({
+  position: 'relative',
   width: '100%',
-  height: '500px',
+  height: 'clamp(340px, 60vh, 760px)',
+  minHeight: '340px',
   background: vars.color.surface,
   border: `1px solid ${vars.color.border}`,
   borderRadius: vars.radius.lg,
@@ -564,7 +566,7 @@ export const cardNoScheduke = style([
 export const graphSidebarCard = style([
   card,
   {
-    maxHeight: '500px',
+    maxHeight: 'clamp(340px, 60vh, 760px)',
     overflowY: 'auto',
   },
 ]);

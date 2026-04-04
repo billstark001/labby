@@ -16,7 +16,7 @@ import type {
 import {
   solveFull,
   solveIncremental,
-  keywordVectorsToSimilarityMap,
+  keywordVectorsToSimilarityLookup,
 } from "@labby/core";
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
@@ -427,9 +427,9 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
 
-    const simMap = keywordVectorsToSimilarityMap(vectors);
+    const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
-    const plan = solveFull({ persons, similarities: simMap, config, unavailabilities });
+    const plan = solveFull({ persons, similarities: similarityLookup, config, unavailabilities });
     return ok(c, plan);
   });
 
@@ -447,11 +447,11 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
 
-    const simMap = keywordVectorsToSimilarityMap(vectors);
+    const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
     const plan = solveIncremental({
       persons,
-      similarities: simMap,
+      similarities: similarityLookup,
       config,
       unavailabilities,
       previousPlan,
@@ -472,6 +472,13 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     learningRate: z.number().optional(),
   });
 
+  const pairUpdateSchema = z.object({
+    leftId: z.string().min(1),
+    rightId: z.string().min(1),
+    targetDistance: z.number().nonnegative(),
+    learningRate: z.number().optional(),
+  });
+
   app.post("/api/v1/nlp/update-similarity", async (c) => {
     const body = tripletUpdateSchema.parse(await c.req.json());
     let updatedVectors: KeywordVector[];
@@ -488,6 +495,29 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       updatedVectors = result.updatedVectors;
     } catch {
       throw new AppError("VALIDATION_ERROR", "triplet ids not found", 400);
+    }
+
+    return ok(c, {
+      loss,
+      updatedVectors,
+    });
+  });
+
+  app.post("/api/v1/nlp/update-pair", async (c) => {
+    const body = pairUpdateSchema.parse(await c.req.json());
+    let updatedVectors: KeywordVector[];
+    let loss: number;
+    try {
+      const result = await embeddingService.updatePair(
+        body.leftId,
+        body.rightId,
+        body.targetDistance,
+        body.learningRate ?? 0.05,
+      );
+      loss = result.loss;
+      updatedVectors = result.updatedVectors;
+    } catch {
+      throw new AppError("VALIDATION_ERROR", "pair ids not found", 400);
     }
 
     return ok(c, {

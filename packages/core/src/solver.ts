@@ -17,6 +17,7 @@ import type {
   IncrementalSolverInput,
   ScheduleConfig,
   PersonUnavailability,
+  SimilarityLookup,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ export function generateSessionDates(config: ScheduleConfig): string[] {
 function personSimilarity(
   aKeywords: string[],
   bKeywords: string[],
-  sim: Map<string, number>,
+  sim: Map<string, number> | SimilarityLookup,
 ): number {
   if (aKeywords.length === 0 || bKeywords.length === 0) return 0;
   let total = 0;
@@ -94,7 +95,9 @@ function personSimilarity(
         continue;
       }
       const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-      const w = sim.get(key);
+      const w = sim instanceof Map
+        ? sim.get(key)
+        : sim.getPairSimilarity(a, b);
       if (w !== undefined) {
         total += w;
         count++;
@@ -110,7 +113,7 @@ function personSimilarity(
 
 interface CostContext {
   personKeywords: Map<string, string[]>;
-  similarities: Map<string, number>;
+  similarities: Map<string, number> | SimilarityLookup;
   r: number; // target similarity radius
   constraints?: import('./types.js').ScheduleConstraint[];
 }

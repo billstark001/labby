@@ -27,6 +27,11 @@ export interface SimilarityEdge {
   weight: number; // 0–1 (higher = more similar)
 }
 
+/** On-demand keyword similarity lookup, used to avoid eagerly building O(N^2) maps. */
+export interface SimilarityLookup {
+  getPairSimilarity(leftKeywordId: string, rightKeywordId: string): number | undefined;
+}
+
 /** Persistent keyword vector state owned by the Rust embedding engine. */
 export interface KeywordVector {
   keywordId: string;
@@ -91,7 +96,7 @@ export interface Presentation {
 export interface SolverInput {
   persons: Person[];
   /** Flat similarity map: key = `${sourceId}|${targetId}`, value = weight */
-  similarities: Map<string, number>;
+  similarities: Map<string, number> | SimilarityLookup;
   config: ScheduleConfig;
   /** Optional: persons unavailable on certain date ranges */
   unavailabilities?: PersonUnavailability[];

@@ -119,9 +119,9 @@ deploymentModeServer:
   ja-JP: サーバー接続あり
 
 deploymentModeFrontendHint:
-  en: This build runs entirely in the browser with IndexedDB storage. Server-side backup services are unavailable.
-  zh-CN: 当前构建完全在浏览器内运行，并使用 IndexedDB 存储。服务端备份服务不可用。
-  ja-JP: このビルドは IndexedDB を使うブラウザ単体モードです。サーバー側バックアップ機能は利用できません。
+  en: This build runs entirely in the browser with IndexedDB storage and is designed for up to 1,000 keyword vectors. For larger datasets, use server deployment mode.
+  zh-CN: 当前构建完全在浏览器内运行，并使用 IndexedDB 存储，设计规模上限为 1,000 个关键词向量。更大数据集请切换到服务端部署模式。
+  ja-JP: このビルドは IndexedDB を使うブラウザ単体モードで、設計上の上限はキーワードベクトル 1,000 件です。より大きなデータセットはサーバー接続モードを使用してください。
 
 deploymentModeServerHint:
   en: This build is connected to the API server and can use authenticated server-side backup operations.

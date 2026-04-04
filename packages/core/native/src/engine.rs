@@ -29,6 +29,8 @@ const KNN_EF:       usize = 60;
 /// Bandwidth σ² for the Gaussian projection kernel.
 /// Tuned so that the 15 nearest neighbours at d=64 receive non-trivial weight.
 const PROJ_SIGMA_SQ: f32  = 4.0;
+const GLOBAL_NORMALIZE_INTERVAL: usize = 128;
+const NORMALIZE_EPS: f32 = 1e-6;
 
 // ── Output types ─────────────────────────────────────────────────────────────
 
@@ -60,6 +62,8 @@ pub struct EmbeddingEngine {
     n_active:   usize,
     /// Total allocated row capacity of both matrices.
     capacity:   usize,
+    /// Number of update finalization rounds since the last global normalization.
+    normalize_tick: usize,
 }
 
 impl EmbeddingEngine {
@@ -77,6 +81,7 @@ impl EmbeddingEngine {
             ann:        HNSWIndex::new(HNSW_M, HNSW_EF_CONSTRUCTION),
             n_active:   0,
             capacity:   cap,
+            normalize_tick: 0,
         }
     }
 
@@ -96,6 +101,12 @@ impl EmbeddingEngine {
             self.grow(n_nodes);
         }
 
+        // Reset index/state before filling a new snapshot.
+        self.ann = HNSWIndex::new(HNSW_M, HNSW_EF_CONSTRUCTION);
+        self.active.fill(false);
+        self.free_list.clear();
+        self.dirty.clear();
+
         // ── Copy coordinates into the ndarray matrix ──────────────────────
         for i in 0..n_nodes {
             let src = &data[i * LATENT_DIM..(i + 1) * LATENT_DIM];
@@ -108,11 +119,12 @@ impl EmbeddingEngine {
 
         self.n_active = n_nodes;
         self.next_id  = n_nodes as u32;
+        self.normalize_tick = 0;
+
+        self.normalize_latent_space();
 
         // ── Build HNSW index ──────────────────────────────────────────────
-        for i in 0..n_nodes {
-            self.ann.insert(i as u32, &self.coords);
-        }
+        self.rebuild_ann_index();
 
         // ── Initialize 2-D projection via random projection (fast stand-in)
         // In production replace with a randomised-SVD PCA pass or a
@@ -220,6 +232,50 @@ impl EmbeddingEngine {
         margin: f32,
         lr: f32,
     ) -> f32 {
+        let loss = self.update_triplet_step(id_a, id_b, id_c, margin, lr);
+        if loss <= 0.0 { return 0.0; }
+
+        let touched = HashSet::from([id_a, id_b, id_c]);
+        self.finalize_touched_nodes(&touched);
+
+        loss
+    }
+
+    /// Batch triplet updates with one deduplicated ANN/projection refresh.
+    ///
+    /// `triplets` format: `[a0,b0,c0,a1,b1,c1,...]`.
+    pub fn update_triplets_batch_flat(
+        &mut self,
+        triplets: &[u32],
+        margin: f32,
+        lr: f32,
+    ) -> Result<(), &'static str> {
+        if triplets.len() % 3 != 0 {
+            return Err("triplets length must be multiple of 3");
+        }
+
+        let mut touched = HashSet::new();
+        for chunk in triplets.chunks_exact(3) {
+            let loss = self.update_triplet_step(chunk[0], chunk[1], chunk[2], margin, lr);
+            if loss <= 0.0 {
+                continue;
+            }
+            touched.insert(chunk[0]);
+            touched.insert(chunk[1]);
+            touched.insert(chunk[2]);
+        }
+        self.finalize_touched_nodes(&touched);
+        Ok(())
+    }
+
+    fn update_triplet_step(
+        &mut self,
+        id_a: u32,
+        id_b: u32,
+        id_c: u32,
+        margin: f32,
+        lr: f32,
+    ) -> f32 {
         let (ia, ib, ic) = (id_a as usize, id_b as usize, id_c as usize);
 
         let d_ab_sq = l2_dist_sq(self.coords.row(ia), self.coords.row(ib));
@@ -251,14 +307,6 @@ impl EmbeddingEngine {
         self.apply_grad(ib, &grad_b, lr);
         self.apply_grad(ic, &grad_c, lr);
 
-        self.update_projection(id_a);
-        self.update_projection(id_b);
-        self.update_projection(id_c);
-
-        self.dirty.insert(id_a);
-        self.dirty.insert(id_b);
-        self.dirty.insert(id_c);
-
         loss
     }
 
@@ -272,6 +320,48 @@ impl EmbeddingEngine {
     ///
     /// Returns the loss value before the update.
     pub fn update_pair(
+        &mut self,
+        id_a: u32,
+        id_b: u32,
+        target_distance: f32,
+        lr: f32,
+    ) -> f32 {
+        let loss = self.update_pair_step(id_a, id_b, target_distance, lr);
+        if loss <= 0.0 { return 0.0; }
+
+        let touched = HashSet::from([id_a, id_b]);
+        self.finalize_touched_nodes(&touched);
+
+        loss
+    }
+
+    /// Batch pair updates with one deduplicated ANN/projection refresh.
+    ///
+    /// `pairs` format: `[a0,b0,a1,b1,...]`.
+    pub fn update_pairs_batch_flat(
+        &mut self,
+        pairs: &[u32],
+        target_distance: f32,
+        lr: f32,
+    ) -> Result<(), &'static str> {
+        if pairs.len() % 2 != 0 {
+            return Err("pairs length must be multiple of 2");
+        }
+
+        let mut touched = HashSet::new();
+        for chunk in pairs.chunks_exact(2) {
+            let loss = self.update_pair_step(chunk[0], chunk[1], target_distance, lr);
+            if loss <= 0.0 {
+                continue;
+            }
+            touched.insert(chunk[0]);
+            touched.insert(chunk[1]);
+        }
+        self.finalize_touched_nodes(&touched);
+        Ok(())
+    }
+
+    fn update_pair_step(
         &mut self,
         id_a: u32,
         id_b: u32,
@@ -297,12 +387,6 @@ impl EmbeddingEngine {
 
         self.apply_grad(ia, &grad_a, lr);
         self.apply_grad(ib, &grad_b, lr);
-
-        self.update_projection(id_a);
-        self.update_projection(id_b);
-
-        self.dirty.insert(id_a);
-        self.dirty.insert(id_b);
 
         loss
     }
@@ -386,6 +470,168 @@ impl EmbeddingEngine {
         }
     }
 
+    fn finalize_touched_nodes(&mut self, touched: &HashSet<u32>) {
+        if touched.is_empty() {
+            return;
+        }
+        for id in touched {
+            self.refresh_ann_node(*id);
+        }
+        for id in touched {
+            self.update_projection(*id);
+            self.dirty.insert(*id);
+        }
+
+        self.normalize_tick += 1;
+        if self.normalize_tick >= GLOBAL_NORMALIZE_INTERVAL {
+            self.normalize_tick = 0;
+            self.normalize_latent_space();
+            self.normalize_projection_space();
+            self.rebuild_ann_index();
+            for id in self.active_ids() {
+                self.dirty.insert(id);
+            }
+        }
+    }
+
+    fn active_ids(&self) -> Vec<u32> {
+        let mut ids = Vec::with_capacity(self.n_active);
+        for idx in 0..self.capacity {
+            if self.active[idx] {
+                ids.push(idx as u32);
+            }
+        }
+        ids
+    }
+
+    fn normalize_latent_space(&mut self) {
+        if self.n_active == 0 {
+            return;
+        }
+
+        let mut mean = [0.0f32; LATENT_DIM];
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            let row = self.coords.row(idx);
+            for i in 0..LATENT_DIM {
+                mean[i] += row[i];
+            }
+        }
+        let inv_n = 1.0f32 / self.n_active as f32;
+        for i in 0..LATENT_DIM {
+            mean[i] *= inv_n;
+        }
+
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            let mut row = self.coords.row_mut(idx);
+            for i in 0..LATENT_DIM {
+                row[i] -= mean[i];
+            }
+        }
+
+        let mut norm_sum = 0.0f32;
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            let row = self.coords.row(idx);
+            let mut sq = 0.0f32;
+            for i in 0..LATENT_DIM {
+                sq += row[i] * row[i];
+            }
+            norm_sum += sq.sqrt();
+        }
+
+        let mean_norm = norm_sum * inv_n;
+        if mean_norm <= NORMALIZE_EPS {
+            return;
+        }
+        let scale = 1.0f32 / mean_norm;
+
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            let mut row = self.coords.row_mut(idx);
+            for i in 0..LATENT_DIM {
+                row[i] *= scale;
+            }
+        }
+    }
+
+    fn normalize_projection_space(&mut self) {
+        if self.n_active == 0 {
+            return;
+        }
+
+        let mut mx = 0.0f32;
+        let mut my = 0.0f32;
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            mx += self.projection[[idx, 0]];
+            my += self.projection[[idx, 1]];
+        }
+        let inv_n = 1.0f32 / self.n_active as f32;
+        mx *= inv_n;
+        my *= inv_n;
+
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            self.projection[[idx, 0]] -= mx;
+            self.projection[[idx, 1]] -= my;
+        }
+
+        let mut norm_sum = 0.0f32;
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            let x = self.projection[[idx, 0]];
+            let y = self.projection[[idx, 1]];
+            norm_sum += (x * x + y * y).sqrt();
+        }
+        let mean_norm = norm_sum * inv_n;
+        if mean_norm <= NORMALIZE_EPS {
+            return;
+        }
+        let scale = 1.0f32 / mean_norm;
+        for idx in 0..self.capacity {
+            if !self.active[idx] {
+                continue;
+            }
+            self.projection[[idx, 0]] *= scale;
+            self.projection[[idx, 1]] *= scale;
+        }
+    }
+
+    fn rebuild_ann_index(&mut self) {
+        self.ann = HNSWIndex::new(HNSW_M, HNSW_EF_CONSTRUCTION);
+        for idx in 0..self.capacity {
+            if self.active[idx] {
+                self.ann.insert(idx as u32, &self.coords);
+            }
+        }
+    }
+
+    #[inline]
+    fn refresh_ann_node(&mut self, id: u32) {
+        let idx = id as usize;
+        if idx >= self.capacity || !self.active[idx] {
+            return;
+        }
+        self.ann.remove(id);
+        self.ann.insert(id, &self.coords);
+    }
+
     /// Incremental 2-D projection: kernel-weighted interpolation from k-NN.
     ///
     /// New 2-D position = Σ wᵢ·p₂ᵢ / Σ wᵢ
@@ -456,5 +702,154 @@ impl EmbeddingEngine {
         self.projection = new_proj;
         self.active.resize(new_cap, false);
         self.capacity = new_cap;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn axis_vec(axis: usize, value: f32) -> [f32; LATENT_DIM] {
+        let mut v = [0.0f32; LATENT_DIM];
+        v[axis] = value;
+        v
+    }
+
+    #[test]
+    fn insert_delete_reuses_slot_and_keeps_other_nodes_stable() {
+        let mut engine = EmbeddingEngine::new(4);
+
+        let id0 = engine.insert_node(&axis_vec(0, 0.0));
+        let id1 = engine.insert_node(&axis_vec(0, 1.0));
+        let before = engine.get_coords_64d(id1);
+
+        engine.delete_node(id0);
+        let id2 = engine.insert_node(&axis_vec(0, 2.0));
+
+        assert_eq!(id2, id0, "deleted slot should be reused via free_list");
+        assert_eq!(engine.node_count(), 2);
+        assert_eq!(before, engine.get_coords_64d(id1), "unrelated node must remain unchanged");
+    }
+
+    #[test]
+    fn update_pair_push_and_pull_move_distance_toward_target() {
+        let mut engine = EmbeddingEngine::new(4);
+
+        let id_a = engine.insert_node(&axis_vec(0, 0.0));
+        let id_b = engine.insert_node(&axis_vec(0, 4.0));
+
+        let dist_before = {
+            let a = engine.get_coords_64d(id_a);
+            let b = engine.get_coords_64d(id_b);
+            (a[0] - b[0]).abs()
+        };
+
+        let _ = engine.update_pair(id_a, id_b, 1.0, 0.1);
+        let dist_after_pull = {
+            let a = engine.get_coords_64d(id_a);
+            let b = engine.get_coords_64d(id_b);
+            (a[0] - b[0]).abs()
+        };
+        assert!(dist_after_pull < dist_before, "pull should decrease pair distance");
+
+        let _ = engine.update_pair(id_a, id_b, 6.0, 0.1);
+        let dist_after_push = {
+            let a = engine.get_coords_64d(id_a);
+            let b = engine.get_coords_64d(id_b);
+            (a[0] - b[0]).abs()
+        };
+        assert!(dist_after_push > dist_after_pull, "push should increase pair distance");
+    }
+
+    #[test]
+    fn triplet_update_can_flip_order_to_satisfy_constraint() {
+        let mut engine = EmbeddingEngine::new(8);
+
+        let id_a = engine.insert_node(&axis_vec(0, 0.0));
+        let id_b = engine.insert_node(&axis_vec(0, 3.0));
+        let id_c = engine.insert_node(&axis_vec(0, 1.0));
+
+        assert!(!engine.query_triplet_order(id_a, id_b, id_c));
+
+        let mut observed_positive_loss = false;
+        for _ in 0..300 {
+            let loss = engine.update_triplet(id_a, id_b, id_c, 0.2, 0.05);
+            if loss > 0.0 {
+                observed_positive_loss = true;
+            }
+            if engine.query_triplet_order(id_a, id_b, id_c) {
+                break;
+            }
+        }
+
+        assert!(observed_positive_loss, "triplet violation should produce positive loss");
+        assert!(engine.query_triplet_order(id_a, id_b, id_c), "after SGD, a should become closer to b than c");
+    }
+
+    #[test]
+    fn dirty_flush_returns_only_touched_nodes_and_clears_state() {
+        let mut engine = EmbeddingEngine::new(8);
+
+        let id_a = engine.insert_node(&axis_vec(0, 0.0));
+        let id_b = engine.insert_node(&axis_vec(0, 2.0));
+        let id_c = engine.insert_node(&axis_vec(0, 5.0));
+
+        let _ = engine.update_pair(id_a, id_b, 1.0, 0.1);
+
+        let mut dirty = engine.flush_dirty_nodes();
+        dirty.sort_by_key(|n| n.id);
+
+        let ids: Vec<u32> = dirty.iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![id_a, id_b, id_c], "insertions + pair update should mark touched nodes dirty");
+        for node in &dirty {
+            assert!(node.coords_64d.iter().all(|v| v.is_finite()));
+            assert!(node.coords_2d.iter().all(|v| v.is_finite()));
+        }
+        assert_eq!(engine.flush_dirty_nodes().len(), 0, "flush should clear dirty set");
+    }
+
+    #[test]
+    fn periodic_global_normalization_keeps_center_and_scale_stable() {
+        let mut engine = EmbeddingEngine::new(64);
+
+        let mut ids = Vec::new();
+        for i in 0..16 {
+            let mut v = [0.0f32; LATENT_DIM];
+            v[0] = i as f32 * 0.8;
+            v[1] = (i as f32).sin();
+            v[2] = (i as f32).cos() * 0.5;
+            ids.push(engine.insert_node(&v));
+        }
+
+        let mut effective_updates = 0usize;
+        while effective_updates < GLOBAL_NORMALIZE_INTERVAL {
+            let loss = engine.update_pair(ids[0], ids[1], 50.0, 0.02);
+            if loss > 0.0 {
+                effective_updates += 1;
+            }
+        }
+
+        let mut mean = [0.0f32; LATENT_DIM];
+        let mut norm_sum = 0.0f32;
+        for id in &ids {
+            let c = engine.get_coords_64d(*id);
+            for i in 0..LATENT_DIM {
+                mean[i] += c[i];
+            }
+            let mut sq = 0.0f32;
+            for i in 0..LATENT_DIM {
+                sq += c[i] * c[i];
+            }
+            norm_sum += sq.sqrt();
+        }
+
+        let n = ids.len() as f32;
+        for i in 0..LATENT_DIM {
+            mean[i] /= n;
+            assert!(mean[i].abs() < 1e-3, "latent mean drift too large at dim {}: {}", i, mean[i]);
+        }
+
+        let mean_norm = norm_sum / n;
+        assert!((mean_norm - 1.0).abs() < 1e-2, "mean norm should stay near 1, got {}", mean_norm);
     }
 }

@@ -5,6 +5,9 @@ import { pathToFileURL } from 'node:url';
 type NativeEngineLike = {
   hydrate(data: Float32Array, nNodes: number): void;
   updateTriplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
+  updatePair(idA: number, idB: number, targetDistance: number, learningRate: number): number;
+  updateTripletsBatchFlush(triplets: Uint32Array, margin: number, learningRate: number): Buffer | Uint8Array;
+  updatePairsBatchFlush(pairs: Uint32Array, targetDistance: number, learningRate: number): Buffer | Uint8Array;
   flushDirtyNodes(): Buffer | Uint8Array;
 };
 
@@ -98,6 +101,18 @@ export class EmbeddingEngineAdapter {
 
   updateTriplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number {
     return this.engine.updateTriplet(idA, idB, idC, margin, learningRate);
+  }
+
+  updatePair(idA: number, idB: number, targetDistance: number, learningRate: number): number {
+    return this.engine.updatePair(idA, idB, targetDistance, learningRate);
+  }
+
+  updateTripletsBatchFlush(triplets: Uint32Array, margin: number, learningRate: number): DirtyNode[] {
+    return parseDirtyBuffer(this.engine.updateTripletsBatchFlush(triplets, margin, learningRate));
+  }
+
+  updatePairsBatchFlush(pairs: Uint32Array, targetDistance: number, learningRate: number): DirtyNode[] {
+    return parseDirtyBuffer(this.engine.updatePairsBatchFlush(pairs, targetDistance, learningRate));
   }
 
   flushDirtyNodes(): DirtyNode[] {
