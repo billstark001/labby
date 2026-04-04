@@ -2,21 +2,19 @@
 import { useState } from 'preact/hooks';
 import {
   keywordsSignal,
-  embeddingsSignal,
-  similarityEdgesSignal,
+  keywordVectorsSignal,
 } from '../store/index';
 import { displayName } from '@/i18n';
 import { useDatabase } from '../db/index';
 import {
-  nextTripletQuery,
-  applyTripletStep,
-  cloneEmbeddings,
-  embeddingsToSimilarities,
+  nextTripletQueryFromKeywordVectors,
+  initKeywordVectors,
 } from '@labby/core';
-import type { SimilarityEdge, TripletQuery } from '@labby/core';
+import type { KeywordVector, TripletQuery } from '@labby/core';
 import * as s from '../styles/components.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
+import { applyTripletWithWasm } from '@/lib/embedding-engine';
 
 /** Max number of recently answered pair keys to exclude from next query. */
 const RECENT_PAIR_LIMIT = 5;
@@ -31,25 +29,27 @@ export function TripletCard() {
   // Track recently asked pair keys to avoid immediate repetition
   const [recentPairs, setRecentPairs] = useState<string[]>([]);
 
-  function ensureEmbeddings() {
-    const current = embeddingsSignal.value;
+  function ensureKeywordVectors() {
+    const current = keywordVectorsSignal.value;
     const ids = keywords.map(k => k.id);
+    const copy = [...current];
+    const existing = new Set(copy.map(v => v.keywordId));
     let changed = false;
-    const copy = cloneEmbeddings(current);
     for (const id of ids) {
-      if (!copy.has(id)) {
-        copy.set(id, { x: Math.random() * 2 - 1, y: Math.random() * 2 - 1 });
+      if (!existing.has(id)) {
+        const [created] = initKeywordVectors([id]);
+        if (!created) continue;
+        copy.push(created);
         changed = true;
       }
     }
-    if (changed) embeddingsSignal.value = copy;
-    return embeddingsSignal.value;
+    if (changed) keywordVectorsSignal.value = copy;
+    return keywordVectorsSignal.value;
   }
 
-  const embeddings = ensureEmbeddings();
-  const ids = keywords.map(k => k.id);
+  const vectors = ensureKeywordVectors();
   const recentPairSet = new Set(recentPairs);
-  const query = nextTripletQuery(embeddings, ids, recentPairSet);
+  const query = nextTripletQueryFromKeywordVectors(vectors, recentPairSet);
 
   /** Record the pair from this query as recently answered. */
   function addRecentPair(q: TripletQuery) {
@@ -70,21 +70,16 @@ export function TripletCard() {
           ? query
           : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
 
-      const updated = cloneEmbeddings(embeddingsSignal.value);
-      applyTripletStep(updated, effectiveQuery);
-      embeddingsSignal.value = updated;
+      const result = await applyTripletWithWasm(keywordVectorsSignal.value, effectiveQuery);
 
-      // Persist updated similarities
-      const simMap = embeddingsToSimilarities(updated);
-      await db.similarities.clear();
-      const newEdges: SimilarityEdge[] = [];
-      for (const [key, weight] of simMap) {
-        const [sourceId, targetId] = key.split('|');
-        const edge: SimilarityEdge = { sourceId, targetId, weight };
-        newEdges.push(edge);
-        await db.similarities.put(edge);
+      if (result.updatedVectors?.length) {
+        const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
+        for (const vec of result.updatedVectors) {
+          merged.set(vec.keywordId, vec);
+        }
+        await db.keywordVectors.putMany(result.updatedVectors);
+        keywordVectorsSignal.value = [...merged.values()];
       }
-      similarityEdgesSignal.value = newEdges;
     }
 
     addRecentPair(query);

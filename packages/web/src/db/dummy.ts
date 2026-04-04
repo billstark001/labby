@@ -1,6 +1,8 @@
 import type {
   Keyword,
   KeywordStore,
+  KeywordVector,
+  KeywordVectorStore,
   LabbyDB,
   ListQuery,
   PaginatedResult,
@@ -12,8 +14,6 @@ import type {
   ScheduleConfigStore,
   SchedulePlan,
   SchedulePlanStore,
-  SimilarityEdge,
-  SimilarityStore,
 } from '@labby/core';
 
 function emptyPage<T>(query: ListQuery): PaginatedResult<T> {
@@ -44,11 +44,13 @@ export function createDummyDB(): LabbyDB {
     clear: async () => void 0,
   };
 
-  const similaritiesStore: SimilarityStore = {
-    get: async (sourceId: string, targetId: string) => undefined,
-    list: async (query: ListQuery) => emptyPage<SimilarityEdge>(query),
-    put: async (value: SimilarityEdge) => void 0,
-    delete: async (sourceId: string, targetId: string) => void 0,
+  const keywordVectorsStore: KeywordVectorStore = {
+    get: async (keywordId: string) => undefined,
+    getMany: async (keywordIds: string[]) => [],
+    list: async (query: ListQuery) => emptyPage<KeywordVector>(query),
+    put: async (value: KeywordVector) => void 0,
+    putMany: async (values: KeywordVector[]) => void 0,
+    delete: async (keywordId: string) => void 0,
     clear: async () => void 0,
   };
 
@@ -79,7 +81,7 @@ export function createDummyDB(): LabbyDB {
   const db: LabbyDB = {
     persons: personsStore,
     keywords: keywordsStore,
-    similarities: similaritiesStore,
+    keywordVectors: keywordVectorsStore,
     configs: configsStore,
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,

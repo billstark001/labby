@@ -28,7 +28,7 @@ if (dbConfig.dialect === "postgres" && !dbConfig.connectionString) {
   throw new Error("DATABASE_URL is required when DB_DRIVER=postgres");
 }
 
-const { app, store } = createApp({
+const { app, store, close } = await createApp({
   db: dbConfig,
   enableLogger: true,
   authIssuer: process.env.AUTH_ISSUER,
@@ -85,7 +85,7 @@ const server = serve({ fetch: app.fetch, port }, (info) => {
 const shutdown = () => {
   scheduler.shutdown();
   server.close(async () => {
-    await store.close();
+    await close();
     process.exit(0);
   });
 };

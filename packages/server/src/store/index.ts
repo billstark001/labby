@@ -9,11 +9,11 @@ import { Pool } from 'pg';
 
 import type {
   Keyword,
+  KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
   SchedulePlan,
-  SimilarityEdge,
 } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
@@ -50,7 +50,7 @@ export interface DatabaseBackupSnapshot {
   tables: {
     persons: Array<Record<string, string | number | null>>;
     keywords: Array<Record<string, string | number | null>>;
-    similarities: Array<Record<string, string | number | null>>;
+    keywordVectors: Array<Record<string, string | number | null>>;
     configs: Array<Record<string, string | number | null>>;
     schedules: Array<Record<string, string | number | null>>;
     unavailabilities: Array<Record<string, string | number | null>>;
@@ -76,29 +76,72 @@ type TableRow = Record<string, TableRowValue>;
 type SqliteDrizzleDb = ReturnType<typeof drizzleSqlite>;
 type PostgresDrizzleDb = ReturnType<typeof drizzlePostgres>;
 
+const LATENT_DIM = 64;
+const PROJECTION_DIM = 2;
+
 function normalizeIdentity(identity: string): string {
   return identity.trim().toLowerCase();
-}
-
-function normalizeEdge(edge: SimilarityEdge): SimilarityEdge {
-  if (edge.sourceId <= edge.targetId) return edge;
-  return {
-    sourceId: edge.targetId,
-    targetId: edge.sourceId,
-    weight: edge.weight,
-  };
 }
 
 function toSqlitePath(input: string): string {
   return input;
 }
 
+function floatArrayToBuffer(values: readonly number[], expectedLength: number): Buffer {
+  const out = Buffer.allocUnsafe(expectedLength * 4);
+  for (let i = 0; i < expectedLength; i++) {
+    out.writeFloatLE(values[i] ?? 0, i * 4);
+  }
+  return out;
+}
+
+function bufferToFloatArray(value: unknown, expectedLength: number): number[] {
+  const buffer = Buffer.isBuffer(value)
+    ? value
+    : value instanceof Uint8Array
+      ? Buffer.from(value)
+      : Buffer.alloc(0);
+  const out = new Array<number>(expectedLength).fill(0);
+  for (let i = 0; i < expectedLength && (i + 1) * 4 <= buffer.length; i++) {
+    out[i] = buffer.readFloatLE(i * 4);
+  }
+  return out;
+}
+
+function toPgVectorLiteral(values: readonly number[], expectedLength: number): string {
+  const normalized = new Array<number>(expectedLength);
+  for (let i = 0; i < expectedLength; i++) {
+    const v = values[i] ?? 0;
+    normalized[i] = Number.isFinite(v) ? v : 0;
+  }
+  return `[${normalized.join(',')}]`;
+}
+
+function fromPgVectorLiteral(value: unknown, expectedLength: number): number[] {
+  if (typeof value !== 'string') return new Array<number>(expectedLength).fill(0);
+  const trimmed = value.trim();
+  const inner = trimmed.startsWith('[') && trimmed.endsWith(']')
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  if (!inner) return new Array<number>(expectedLength).fill(0);
+  const values = inner.split(',').map((part) => Number.parseFloat(part.trim()));
+  const out = new Array<number>(expectedLength).fill(0);
+  for (let i = 0; i < expectedLength && i < values.length; i++) {
+    out[i] = Number.isFinite(values[i]) ? values[i] : 0;
+  }
+  return out;
+}
+
 function valueToTableValue(value: unknown): TableRowValue {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return value;
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return `base64:${Buffer.from(value).toString('base64')}`;
+  }
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
@@ -109,6 +152,7 @@ export class SqliteStore {
   private readonly pgPool: Pool | null;
   private readonly dialect: StoreConnectionConfig['dialect'];
   private readonly ready: Promise<void>;
+  private sqliteVecEnabled = false;
 
   constructor(configOrPath: StoreConnectionConfig | string) {
     const config: StoreConnectionConfig = typeof configOrPath === 'string'
@@ -166,7 +210,7 @@ export class SqliteStore {
   }
 
   private async migrate(): Promise<void> {
-    const migrationSql = `
+    const commonSql = `
       CREATE TABLE IF NOT EXISTS persons (
         id TEXT PRIMARY KEY,
         payload TEXT NOT NULL
@@ -175,14 +219,6 @@ export class SqliteStore {
       CREATE TABLE IF NOT EXISTS keywords (
         id TEXT PRIMARY KEY,
         payload TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS similarities (
-        source_id TEXT NOT NULL,
-        target_id TEXT NOT NULL,
-        weight DOUBLE PRECISION NOT NULL,
-        payload TEXT NOT NULL,
-        PRIMARY KEY (source_id, target_id)
       );
 
       CREATE TABLE IF NOT EXISTS configs (
@@ -233,17 +269,59 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens (user_id);
       CREATE INDEX IF NOT EXISTS refresh_tokens_expires_idx ON refresh_tokens (expires_at);
     `;
+
     if (this.sqliteRaw) {
-      this.sqliteRaw.exec(migrationSql);
+      this.sqliteRaw.exec(commonSql);
+      this.sqliteRaw.exec(`
+        CREATE TABLE IF NOT EXISTS keyword_vectors (
+          keyword_id TEXT PRIMARY KEY,
+          x DOUBLE PRECISION NOT NULL,
+          y DOUBLE PRECISION NOT NULL,
+          vector_f32 BLOB NOT NULL,
+          projection_f32 BLOB NOT NULL,
+          updated_at BIGINT NOT NULL,
+          payload TEXT NOT NULL,
+          FOREIGN KEY (keyword_id) REFERENCES keywords(id) ON DELETE CASCADE
+        );
+      `);
+      // Best effort: if sqlite-vec extension is available, create ANN index table.
+      try {
+        this.sqliteRaw.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS keyword_vectors_vec
+          USING vec0(keyword_id TEXT, embedding float[64]);
+        `);
+        this.sqliteVecEnabled = true;
+      } catch {
+        // sqlite-vec not available in current runtime; continue with blob storage.
+        this.sqliteVecEnabled = false;
+      }
       return;
     }
 
-    for (const statement of migrationSql
+    for (const statement of commonSql
       .split(';')
       .map((part) => part.trim())
       .filter(Boolean)) {
       await this.executeCommand(sql.raw(`${statement};`));
     }
+
+    await this.executeCommand(sql.raw('CREATE EXTENSION IF NOT EXISTS vector;'));
+    await this.executeCommand(sql.raw(`
+      CREATE TABLE IF NOT EXISTS keyword_vectors (
+        keyword_id TEXT PRIMARY KEY,
+        x DOUBLE PRECISION NOT NULL,
+        y DOUBLE PRECISION NOT NULL,
+        vector64 vector(64) NOT NULL,
+        projection2d vector(2) NOT NULL,
+        updated_at BIGINT NOT NULL,
+        payload JSONB NOT NULL,
+        FOREIGN KEY (keyword_id) REFERENCES keywords(id) ON DELETE CASCADE
+      );
+    `));
+    await this.executeCommand(sql.raw(`
+      CREATE INDEX IF NOT EXISTS keyword_vectors_vector64_ivfflat_idx
+      ON keyword_vectors USING ivfflat (vector64 vector_l2_ops) WITH (lists = 100);
+    `));
   }
 
   private async ensureReady(): Promise<void> {
@@ -263,6 +341,33 @@ export class SqliteStore {
     const rows = await this.queryRows(query);
     const row = rows[0];
     return row ? this.parsePayload<T>(String(row.payload)) : undefined;
+  }
+
+  private parseKeywordVectorRow(row: DbRow): KeywordVector {
+    const keywordId = String(row.keyword_id ?? row.keywordId ?? '');
+    const updatedAt = Number(row.updated_at ?? row.updatedAt ?? Date.now());
+
+    if (this.dialect === 'sqlite') {
+      const vector64 = bufferToFloatArray(row.vector_f32, LATENT_DIM);
+      const projection = bufferToFloatArray(row.projection_f32, PROJECTION_DIM);
+      return {
+        keywordId,
+        vector64,
+        x: Number(row.x ?? projection[0] ?? 0),
+        y: Number(row.y ?? projection[1] ?? 0),
+        updatedAt,
+      };
+    }
+
+    const vector64 = fromPgVectorLiteral(row.vector64, LATENT_DIM);
+    const projection = fromPgVectorLiteral(row.projection2d, PROJECTION_DIM);
+    return {
+      keywordId,
+      vector64,
+      x: Number(row.x ?? projection[0] ?? 0),
+      y: Number(row.y ?? projection[1] ?? 0),
+      updatedAt,
+    };
   }
 
   private async exportTable(tableName: string): Promise<Array<Record<string, string | number | null>>> {
@@ -318,6 +423,12 @@ export class SqliteStore {
   private toSqlValue(value: TableRowValue): string {
     if (value === null) return 'NULL';
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL';
+    if (value.startsWith('base64:')) {
+      const encoded = value.slice('base64:'.length).replace(/'/g, "''");
+      return this.dialect === 'sqlite'
+        ? `X'${Buffer.from(encoded, 'base64').toString('hex')}'`
+        : `decode('${encoded}', 'base64')`;
+    }
     const escaped = value.replace(/'/g, "''");
     return `'${escaped}'`;
   }
@@ -339,7 +450,7 @@ export class SqliteStore {
   async clearAllEntityData(): Promise<void> {
     await this.ensureReady();
     await this.run(`
-      DELETE FROM similarities;
+      DELETE FROM keyword_vectors;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
       DELETE FROM configs;
@@ -404,40 +515,156 @@ export class SqliteStore {
     await this.executeCommand(sql`DELETE FROM keywords`);
   }
 
-  async getSimilarity(sourceId: string, targetId: string): Promise<SimilarityEdge | undefined> {
+  async getKeywordVector(keywordId: string): Promise<KeywordVector | undefined> {
     await this.ensureReady();
-    const normalized = normalizeEdge({ sourceId, targetId, weight: 0 });
-    return this.getPayload<SimilarityEdge>(
-      sql`SELECT payload FROM similarities WHERE source_id = ${normalized.sourceId} AND target_id = ${normalized.targetId}`,
-    );
+    const rows = this.sqliteRaw
+      ? await this.queryRows(sql`
+        SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
+        FROM keyword_vectors
+        WHERE keyword_id = ${keywordId}
+      `)
+      : await this.queryRows(sql`
+        SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+        FROM keyword_vectors
+        WHERE keyword_id = ${keywordId}
+      `);
+    const row = rows[0];
+    return row ? this.parseKeywordVectorRow(row) : undefined;
   }
 
-  async listSimilarities(): Promise<SimilarityEdge[]> {
+  async getKeywordVectors(keywordIds: string[]): Promise<KeywordVector[]> {
     await this.ensureReady();
-    return this.listPayloads<SimilarityEdge>(sql`SELECT payload FROM similarities ORDER BY source_id, target_id`);
+    if (keywordIds.length === 0) return [];
+
+    const escapedIds = keywordIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
+    const rows = this.sqliteRaw
+      ? await this.queryRows(sql.raw(`
+        SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
+        FROM keyword_vectors
+        WHERE keyword_id IN (${escapedIds})
+      `))
+      : await this.queryRows(sql.raw(`
+        SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+        FROM keyword_vectors
+        WHERE keyword_id IN (${escapedIds})
+      `));
+    return rows.map((row) => this.parseKeywordVectorRow(row));
   }
 
-  async putSimilarity(edge: SimilarityEdge): Promise<void> {
+  async listKeywordVectors(): Promise<KeywordVector[]> {
     await this.ensureReady();
-    const normalized = normalizeEdge(edge);
-    await this.executeCommand(sql`
-      INSERT INTO similarities (source_id, target_id, weight, payload)
-      VALUES (${normalized.sourceId}, ${normalized.targetId}, ${normalized.weight}, ${JSON.stringify(normalized)})
-      ON CONFLICT(source_id, target_id) DO UPDATE SET
-        weight = excluded.weight,
-        payload = excluded.payload
-    `);
+    const rows = this.sqliteRaw
+      ? await this.queryRows(sql`
+        SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
+        FROM keyword_vectors
+        ORDER BY keyword_id
+      `)
+      : await this.queryRows(sql`
+        SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+        FROM keyword_vectors
+        ORDER BY keyword_id
+      `);
+    return rows.map((row) => this.parseKeywordVectorRow(row));
   }
 
-  async deleteSimilarity(sourceId: string, targetId: string): Promise<void> {
-    await this.ensureReady();
-    const normalized = normalizeEdge({ sourceId, targetId, weight: 0 });
-    await this.executeCommand(sql`DELETE FROM similarities WHERE source_id = ${normalized.sourceId} AND target_id = ${normalized.targetId}`);
+  async putKeywordVector(vector: KeywordVector): Promise<void> {
+    await this.putKeywordVectors([vector]);
   }
 
-  async clearSimilarities(): Promise<void> {
+  async putKeywordVectors(vectors: KeywordVector[]): Promise<void> {
     await this.ensureReady();
-    await this.executeCommand(sql`DELETE FROM similarities`);
+    if (vectors.length === 0) return;
+
+    if (this.sqliteRaw) {
+      const stmt = this.sqliteRaw.prepare(`
+        INSERT INTO keyword_vectors (keyword_id, x, y, vector_f32, projection_f32, updated_at, payload)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(keyword_id) DO UPDATE SET
+          x = excluded.x,
+          y = excluded.y,
+          vector_f32 = excluded.vector_f32,
+          projection_f32 = excluded.projection_f32,
+          updated_at = excluded.updated_at,
+          payload = excluded.payload
+      `);
+      const vecStmt = this.sqliteVecEnabled
+        ? this.sqliteRaw.prepare(`
+          INSERT INTO keyword_vectors_vec(keyword_id, embedding)
+          VALUES (?, ?)
+          ON CONFLICT(keyword_id) DO UPDATE SET embedding = excluded.embedding
+        `)
+        : null;
+      const tx = this.sqliteRaw.transaction((items: KeywordVector[]) => {
+        for (const vector of items) {
+          const embeddingBlob = floatArrayToBuffer(vector.vector64, LATENT_DIM);
+          stmt.run(
+            vector.keywordId,
+            vector.x,
+            vector.y,
+            embeddingBlob,
+            floatArrayToBuffer([vector.x, vector.y], PROJECTION_DIM),
+            vector.updatedAt,
+            JSON.stringify(vector),
+          );
+          vecStmt?.run(vector.keywordId, embeddingBlob);
+        }
+      });
+      tx(vectors);
+      return;
+    }
+
+    if (this.pgPool) {
+      const keywordIds: string[] = [];
+      const xs: number[] = [];
+      const ys: number[] = [];
+      const vector64Literals: string[] = [];
+      const projection2dLiterals: string[] = [];
+      const updatedAts: number[] = [];
+      const payloads: string[] = [];
+
+      for (const vector of vectors) {
+        keywordIds.push(vector.keywordId);
+        xs.push(vector.x);
+        ys.push(vector.y);
+        vector64Literals.push(toPgVectorLiteral(vector.vector64, LATENT_DIM));
+        projection2dLiterals.push(toPgVectorLiteral([vector.x, vector.y], PROJECTION_DIM));
+        updatedAts.push(vector.updatedAt);
+        payloads.push(JSON.stringify(vector));
+      }
+
+      await this.pgPool.query(
+        `
+          INSERT INTO keyword_vectors (keyword_id, x, y, vector64, projection2d, updated_at, payload)
+          SELECT t.keyword_id, t.x, t.y, t.vector64_text::vector(64), t.projection2d_text::vector(2), t.updated_at, t.payload::jsonb
+          FROM UNNEST($1::text[], $2::double precision[], $3::double precision[], $4::text[], $5::text[], $6::bigint[], $7::text[])
+            AS t(keyword_id, x, y, vector64_text, projection2d_text, updated_at, payload)
+          ON CONFLICT(keyword_id) DO UPDATE SET
+            x = excluded.x,
+            y = excluded.y,
+            vector64 = excluded.vector64,
+            projection2d = excluded.projection2d,
+            updated_at = excluded.updated_at,
+            payload = excluded.payload
+        `,
+        [keywordIds, xs, ys, vector64Literals, projection2dLiterals, updatedAts, payloads],
+      );
+    }
+  }
+
+  async deleteKeywordVector(keywordId: string): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM keyword_vectors WHERE keyword_id = ${keywordId}`);
+    if (this.sqliteRaw && this.sqliteVecEnabled) {
+      this.sqliteRaw.prepare('DELETE FROM keyword_vectors_vec WHERE keyword_id = ?').run(keywordId);
+    }
+  }
+
+  async clearKeywordVectors(): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM keyword_vectors`);
+    if (this.sqliteRaw && this.sqliteVecEnabled) {
+      this.sqliteRaw.prepare('DELETE FROM keyword_vectors_vec').run();
+    }
   }
 
   async getConfig(id: string): Promise<ScheduleConfig | undefined> {
@@ -649,7 +876,7 @@ export class SqliteStore {
       tables: {
         persons: await this.exportTable('persons'),
         keywords: await this.exportTable('keywords'),
-        similarities: await this.exportTable('similarities'),
+        keywordVectors: await this.exportTable('keyword_vectors'),
         configs: await this.exportTable('configs'),
         schedules: await this.exportTable('schedules'),
         unavailabilities: await this.exportTable('unavailabilities'),
@@ -681,7 +908,7 @@ export class SqliteStore {
     const tables = {
       persons: this.validateTableRows('persons', snapshotObject.tables.persons),
       keywords: this.validateTableRows('keywords', snapshotObject.tables.keywords),
-      similarities: this.validateTableRows('similarities', snapshotObject.tables.similarities),
+      keyword_vectors: this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
       configs: this.validateTableRows('configs', snapshotObject.tables.configs),
       schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
       unavailabilities: this.validateTableRows('unavailabilities', snapshotObject.tables.unavailabilities),
@@ -692,7 +919,7 @@ export class SqliteStore {
     await this.run(`
       DELETE FROM refresh_tokens;
       DELETE FROM users;
-      DELETE FROM similarities;
+      DELETE FROM keyword_vectors;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
       DELETE FROM configs;
@@ -702,7 +929,7 @@ export class SqliteStore {
 
     await this.restoreTableRows('persons', tables.persons);
     await this.restoreTableRows('keywords', tables.keywords);
-    await this.restoreTableRows('similarities', tables.similarities);
+    await this.restoreTableRows('keyword_vectors', tables.keyword_vectors);
     await this.restoreTableRows('configs', tables.configs);
     await this.restoreTableRows('schedules', tables.schedules);
     await this.restoreTableRows('unavailabilities', tables.unavailabilities);
@@ -720,7 +947,7 @@ export class SqliteStore {
     const dumpObject = dump as {
       persons?: unknown;
       keywords?: unknown;
-      similarities?: unknown;
+      keywordVectors?: unknown;
       configs?: unknown;
       schedules?: unknown;
       unavailabilities?: unknown;
@@ -728,7 +955,7 @@ export class SqliteStore {
 
     if (!Array.isArray(dumpObject.persons)
       || !Array.isArray(dumpObject.keywords)
-      || !Array.isArray(dumpObject.similarities)
+      || !Array.isArray(dumpObject.keywordVectors)
       || !Array.isArray(dumpObject.configs)
       || !Array.isArray(dumpObject.schedules)
       || !Array.isArray(dumpObject.unavailabilities)) {
@@ -737,7 +964,7 @@ export class SqliteStore {
 
     const persons = dumpObject.persons as Person[];
     const keywords = dumpObject.keywords as Keyword[];
-    const similarities = dumpObject.similarities as SimilarityEdge[];
+    const keywordVectors = dumpObject.keywordVectors as KeywordVector[];
     const configs = dumpObject.configs as ScheduleConfig[];
     const schedules = dumpObject.schedules as SchedulePlan[];
     const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[];
@@ -750,8 +977,8 @@ export class SqliteStore {
     for (const keyword of keywords) {
       await this.putKeyword(keyword);
     }
-    for (const edge of similarities) {
-      await this.putSimilarity(edge);
+    for (const vector of keywordVectors) {
+      await this.putKeywordVector(vector);
     }
     for (const config of configs) {
       await this.putConfig(config);
@@ -774,7 +1001,7 @@ export class SqliteStore {
         tables: {
           persons: source.prepare('SELECT * FROM persons').all(),
           keywords: source.prepare('SELECT * FROM keywords').all(),
-          similarities: source.prepare('SELECT * FROM similarities').all(),
+          keywordVectors: source.prepare('SELECT * FROM keyword_vectors').all(),
           configs: source.prepare('SELECT * FROM configs').all(),
           schedules: source.prepare('SELECT * FROM schedules').all(),
           unavailabilities: source.prepare('SELECT * FROM unavailabilities').all(),

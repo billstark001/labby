@@ -4,18 +4,13 @@ import * as d3 from 'd3';
 import { X } from 'lucide-preact';
 import {
   keywordsSignal,
-  similarityEdgesSignal,
-  embeddingsSignal,
+  keywordVectorsSignal,
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
-import { useDatabase } from '../db/index';
 import {
-  attractKeywords,
-  repelKeywords,
-  embeddingsToSimilarities,
+  keywordVectorsToSimilarityEdges,
 } from '@labby/core';
-import type { SimilarityEdge } from '@labby/core';
 import * as s from '../styles/components.css';
 import { vars } from '../styles/theme.css';
 import { Button } from './ui/common';
@@ -50,8 +45,8 @@ export function KeywordGraph() {
   const nodeMapRef = useRef<Map<string, GraphNode>>(new Map());
   const { t } = i18n;
   const keywords = keywordsSignal.value;
-  const edges = similarityEdgesSignal.value;
-  const db = useDatabase();
+  const vectors = keywordVectorsSignal.value;
+  const edges = keywordVectorsToSimilarityEdges(vectors);
 
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -141,7 +136,6 @@ export function KeywordGraph() {
     const rect = svgRef.current.getBoundingClientRect();
     const width = rect.width || 800;
     const height = rect.height || 500;
-    const embeddings = embeddingsSignal.value;
     const previousNodes = nodeMapRef.current;
 
     const nodes: GraphNode[] = keywords.map(keyword => {
@@ -151,7 +145,7 @@ export function KeywordGraph() {
         return existing;
       }
 
-      const embedding = embeddings.get(keyword.id);
+      const embedding = vectors.find(v => v.keywordId === keyword.id);
       return {
         id: keyword.id,
         label: displayName(keyword),
@@ -252,26 +246,7 @@ export function KeywordGraph() {
     });
   }, [selected]);
 
-  async function handleAdjust(mode: 'attract' | 'repel') {
-    if (selected.length < 2) return;
-    const current = embeddingsSignal.value;
-    const updated =
-      mode === 'attract'
-        ? attractKeywords(current, selected)
-        : repelKeywords(current, selected);
-    embeddingsSignal.value = updated;
-
-    // Rebuild similarity edges from updated embeddings
-    const simMap = embeddingsToSimilarities(updated);
-    const newEdges: SimilarityEdge[] = [];
-    await db.similarities.clear();
-    for (const [key, weight] of simMap) {
-      const [sourceId, targetId] = key.split('|');
-      const edge: SimilarityEdge = { sourceId, targetId, weight };
-      newEdges.push(edge);
-      await db.similarities.put(edge);
-    }
-    similarityEdgesSignal.value = newEdges;
+  function clearSelection() {
     setSelected([]);
   }
 
@@ -318,13 +293,7 @@ export function KeywordGraph() {
         </div>
         {selected.length >= 2 && (
           <>
-            <Button variant="primary" onClick={() => handleAdjust('attract')}>
-              {t('attractSelected')} ({selected.length})
-            </Button>
-            <Button variant="secondary" onClick={() => handleAdjust('repel')}>
-              {t('repelSelected')}
-            </Button>
-            <Button variant="ghost" onClick={() => setSelected([])}>
+            <Button variant="ghost" onClick={clearSelection}>
               <X size={14} />
             </Button>
           </>

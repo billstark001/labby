@@ -12,7 +12,11 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm rust:build && tsc -p tsconfig.json",
+    "rust:build": "node ./scripts/build-rust.mjs all",
+    "rust:build:node": "node ./scripts/build-rust.mjs node",
+    "rust:build:wasm:web": "node ./scripts/build-rust.mjs wasm-web",
+    "rust:build:wasm:node": "node ./scripts/build-rust.mjs wasm-node",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "vitest run",

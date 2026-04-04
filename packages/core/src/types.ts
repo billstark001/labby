@@ -27,6 +27,15 @@ export interface SimilarityEdge {
   weight: number; // 0–1 (higher = more similar)
 }
 
+/** Persistent keyword vector state owned by the Rust embedding engine. */
+export interface KeywordVector {
+  keywordId: string;
+  vector64: number[];
+  x: number;
+  y: number;
+  updatedAt: number;
+}
+
 /** Weekly scheduling rule configuration. */
 export interface ScheduleConfig {
   id: string;
