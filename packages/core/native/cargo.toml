@@ -14,6 +14,7 @@ wasm   = ["dep:wasm-bindgen", "dep:js-sys", "dep:console_error_panic_hook"]
 
 [dependencies]
 ndarray = "0.15"
+nalgebra = "0.32"
 rand    = { version = "0.8", features = ["small_rng"] }
 serde   = { version = "1",   features = ["derive"] }
 

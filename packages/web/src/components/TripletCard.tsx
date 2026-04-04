@@ -14,6 +14,7 @@ import * as s from '../styles/components.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 import { applyTripletWithWasm, recommendTripletWithWasm } from '@/lib/embedding-engine';
+import { isServerDeployment } from '@/lib/runtime';
 
 /** Max number of recently answered pair keys to exclude from next query. */
 const RECENT_PAIR_LIMIT = 32;
@@ -35,6 +36,10 @@ export function TripletCard() {
   const recommendSeqRef = useRef(0);
 
   async function flushPendingPersist(): Promise<void> {
+    if (isServerDeployment) {
+      pendingPersistRef.current.clear();
+      return;
+    }
     if (pendingPersistRef.current.size === 0) return;
     const values = [...pendingPersistRef.current.values()];
     pendingPersistRef.current.clear();
@@ -128,9 +133,13 @@ export function TripletCard() {
           const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
           for (const vec of result.updatedVectors) {
             merged.set(vec.keywordId, vec);
-            pendingPersistRef.current.set(vec.keywordId, vec);
+            if (!isServerDeployment) {
+              pendingPersistRef.current.set(vec.keywordId, vec);
+            }
           }
-          schedulePersist();
+          if (!isServerDeployment) {
+            schedulePersist();
+          }
           keywordVectorsSignal.value = [...merged.values()];
         }
         setFeedback(`Supervision applied. Updated ${result.updatedVectors.length} vectors.`);

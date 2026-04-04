@@ -4,7 +4,7 @@ Labby is a seminar scheduling system with a shared algorithm core, a browser UI,
 
 The monorepo contains:
 
-- `@labby/core` – scheduling and keyword-similarity logic
+- `@labby/core` – scheduling logic plus Rust-powered similarity embedding/projection
 - `@labby/web` – Preact UI for data entry, schedule review, and login
 - `@labby/server` – Hono API with SQLite storage, auth, solver endpoints, optional email notifications, and scheduled database backups
 
@@ -12,6 +12,7 @@ The monorepo contains:
 
 - Manage persons, keywords, schedules, and unavailability windows
 - Learn keyword similarity from triplet comparisons and persist the generated similarity graph
+- Run pair and ranked supervision updates on a 64D embedding, with incremental 2D projection for visualization
 - Generate full schedules or incremental re-plans with fairness, pair-diversity, relevance, and churn penalties
 - Apply scheduling constraints such as `no-overlap` and `affinity-boost`
 - Run in local-browser mode or API-backed server mode
@@ -24,7 +25,7 @@ The monorepo contains:
 
 ## Packages
 
-- `packages/core` – pure TypeScript algorithms and domain types
+- `packages/core` – scheduling algorithms, domain types, and Rust native/wasm embedding engine
 - `packages/web` – Vite app with hash routing, login UI, and API/local storage adapters
 - `packages/server` – Hono application, SQLite store, auth service, cron scheduler, mailer, and backup service
 
@@ -56,9 +57,22 @@ The server exposes authenticated REST endpoints under `/api/v1`.
 - `GET/PUT/DELETE /api/v1/db/...` – CRUD for persons, keywords, similarities, configs, schedules, and unavailabilities
 - `POST /api/v1/solver/run` – generate a full schedule
 - `POST /api/v1/solver/run-incremental` – re-plan from a change date
+- `POST /api/v1/nlp/recommend-triplet` – request one informative triplet query
+- `POST /api/v1/nlp/apply-supervision` – apply pair or ranked supervision query
 - `POST /api/v1/nlp/update-similarity` – apply one triplet-learning step and persist updated similarities
+- `POST /api/v1/nlp/update-pair` – apply one pair-distance update and persist updated vectors
 
-Read [docs/auth.md](docs/auth.md), [docs/algorithm.md](docs/algorithm.md), and [packages/server/README.md](packages/server/README.md) for details.
+Read [docs/auth.md](docs/auth.md), [docs/algorithm-scheduling.md](docs/algorithm-scheduling.md), [docs/algorithm-similarity.md](docs/algorithm-similarity.md), and [packages/server/README.md](packages/server/README.md) for details.
+
+## Rust and WASM Build
+
+The similarity engine is implemented in Rust under packages/core/native and exposed through Node addon + WebAssembly bindings.
+
+- local full core build: pnpm --filter @labby/core build
+- wasm (web target) only: pnpm --filter @labby/core rust:build:wasm:web
+- rust tests: pnpm --filter @labby/core test:rust
+
+In CI deployment workflows, Rust toolchain and wasm-pack are installed on runner and wasm is built during pipeline. Generated wasm artifacts are not committed to git.
 
 ## Docker
 
@@ -122,6 +136,7 @@ The server can maintain periodic full-database backups through the same cron run
 - Static web deployment is still supported with GitHub Pages and Netlify.
 - API-backed deployment can use Docker directly or `docker-compose`.
 - GitHub Pages and Netlify workflows now force the web app into frontend-only deployment mode.
+- Both workflows build Rust wasm artifacts before frontend build.
 
 ## Project Structure
 

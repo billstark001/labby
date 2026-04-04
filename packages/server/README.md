@@ -9,7 +9,7 @@
 - Issue and verify PASETO access and refresh tokens
 - Enforce three roles: `user`, `admin`, and `root`
 - Run full and incremental scheduling through `@labby/core`
-- Update keyword similarities from triplet feedback
+- Run Rust-backed embedding supervision (triplet, pair, ranked) and persist updated vectors
 - Register cron-based email reminders from schedule configs
 - Register cron-based whole-database backups to email, Google Drive, or OneDrive
 
@@ -50,7 +50,10 @@ CRUD endpoints exist under `/api/v1/db` for:
 
 - `POST /api/v1/solver/run`
 - `POST /api/v1/solver/run-incremental`
+- `POST /api/v1/nlp/recommend-triplet`
+- `POST /api/v1/nlp/apply-supervision`
 - `POST /api/v1/nlp/update-similarity`
+- `POST /api/v1/nlp/update-pair`
 
 ## Request Rules
 
@@ -121,3 +124,9 @@ When `BACKUP_CRON` is configured, the server registers a recurring whole-databas
 - `BACKUP_TARGET=onedrive` uploads to OneDrive using Microsoft OAuth refresh credentials.
 
 Gmail delivery can reuse the same Google OAuth client JSON by setting `SMTP_PROVIDER=gmail` and supplying a Gmail-capable refresh token.
+
+## Embedding Runtime Notes
+
+- Server boot hydrates Rust embedding runtime from stored vectors.
+- Supervision updates return dirty node deltas with both 64D and projected 2D coordinates.
+- Persisted updates are written back to keyword vector storage in batch.

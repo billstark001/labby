@@ -1,7 +1,7 @@
 /** Keyword similarity graph rendered with deck.gl (WebGL). */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Deck, OrthographicView } from '@deck.gl/core';
-import { LineLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { X } from 'lucide-preact';
 import {
   keywordsSignal,
@@ -10,15 +10,13 @@ import {
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
-import {
-  keywordVectorsToSimilarityEdges,
-} from '@labby/core';
 import * as s from '../styles/components.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
 import { useDatabase } from '@/db/index';
 import { applySupervision } from '@/lib/embedding-engine';
+import { isServerDeployment } from '@/lib/runtime';
 
 type GraphNode = {
   id: string;
@@ -27,25 +25,20 @@ type GraphNode = {
   y: number;
 };
 
-type GraphEdge = {
-  id: string;
-  sourceId: string;
-  targetId: string;
-  weight: number;
-  source: [number, number, number];
-  target: [number, number, number];
-};
-
 const COLOR_NODE: [number, number, number, number] = [44, 102, 245, 220];
 const COLOR_NODE_SELECTED: [number, number, number, number] = [16, 185, 129, 240];
 const COLOR_NODE_HALO: [number, number, number, number] = [16, 185, 129, 96];
-const COLOR_EDGE: [number, number, number, number] = [148, 163, 184, 120];
-const COLOR_EDGE_SELECTED: [number, number, number, number] = [16, 185, 129, 200];
 const POSITION_SCALE = 140;
-const MAX_RENDER_EDGES = 8_000;
+const POINT_TRANSITION_MS = 280;
 
-function edgeKey(a: string, b: string): string {
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
+function l2Distance64(a: readonly number[], b: readonly number[]): number {
+  const dim = Math.min(a.length, b.length, 64);
+  let sum = 0;
+  for (let i = 0; i < dim; i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
 }
 
 function stableHash01(text: string): number {
@@ -75,30 +68,87 @@ export function KeywordGraph() {
   const db = useDatabase();
   const canvasRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<Deck<any> | null>(null);
+  const transitionRef = useRef<number | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const { t } = i18n;
   const theme = themeSignal.value;
   const keywords = keywordsSignal.value;
   const vectors = keywordVectorsSignal.value;
-  const edges = keywordVectorsToSimilarityEdges(vectors);
 
   const [selected, setSelected] = useState<string[]>([]);
   const [targetDistanceInput, setTargetDistanceInput] = useState('0.45');
   const [learningRateInput, setLearningRateInput] = useState('0.05');
   const [marginInput, setMarginInput] = useState('0.2');
-  const [supervisionFeedback, setSupervisionFeedback] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [supervisionFeedback, setSupervisionFeedback] = useState('');
+  const [animatedPositions, setAnimatedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const animatedPositionsRef = useRef(animatedPositions);
+
+  useEffect(() => {
+    animatedPositionsRef.current = animatedPositions;
+  }, [animatedPositions]);
+
+  useEffect(() => {
+    const target = new Map(vectors.map((v) => [v.keywordId, { x: v.x, y: v.y }]));
+    const from = animatedPositionsRef.current;
+
+    if (transitionRef.current !== null) {
+      cancelAnimationFrame(transitionRef.current);
+      transitionRef.current = null;
+    }
+
+    if (from.size === 0) {
+      setAnimatedPositions(target);
+      return;
+    }
+
+    const start = performance.now();
+    const ease = (t0: number) => 1 - Math.pow(1 - t0, 3);
+
+    const step = (now: number) => {
+      const raw = Math.min(1, (now - start) / POINT_TRANSITION_MS);
+      const t0 = ease(raw);
+      const next = new Map<string, { x: number; y: number }>();
+      for (const [id, to] of target) {
+        const src = from.get(id) ?? to;
+        next.set(id, {
+          x: src.x + (to.x - src.x) * t0,
+          y: src.y + (to.y - src.y) * t0,
+        });
+      }
+      setAnimatedPositions(next);
+
+      if (raw < 1) {
+        transitionRef.current = requestAnimationFrame(step);
+      } else {
+        transitionRef.current = null;
+      }
+    };
+
+    transitionRef.current = requestAnimationFrame(step);
+  }, [vectors]);
+
+  useEffect(() => {
+    return () => {
+      if (transitionRef.current !== null) {
+        cancelAnimationFrame(transitionRef.current);
+      }
+    };
+  }, []);
 
   const nodes = useMemo<GraphNode[]>(() => {
     const vectorById = new Map(vectors.map((v) => [v.keywordId, v]));
     const raw = keywords.map((keyword, index) => {
       const embedding = vectorById.get(keyword.id);
+      const animated = animatedPositions.get(keyword.id);
       if (embedding) {
+        const x = (animated?.x ?? embedding.x) * POSITION_SCALE;
+        const y = (animated?.y ?? embedding.y) * POSITION_SCALE;
         return {
           id: keyword.id,
           label: displayName(keyword),
-          x: embedding.x * POSITION_SCALE,
-          y: embedding.y * POSITION_SCALE,
+          x,
+          y,
         };
       }
 
@@ -125,7 +175,20 @@ export function KeywordGraph() {
         y: sy - jitter * 0.6,
       };
     });
-  }, [keywords, vectors]);
+  }, [animatedPositions, keywords, vectors]);
+
+  const vectorById = useMemo(() => new Map(vectors.map((v) => [v.keywordId, v])), [vectors]);
+  const selectedPairMetrics = useMemo(() => {
+    if (selected.length !== 2) return null;
+    const [leftId, rightId] = selected;
+    if (!leftId || !rightId) return null;
+    const left = vectorById.get(leftId);
+    const right = vectorById.get(rightId);
+    if (!left || !right) return null;
+    const distance = l2Distance64(left.vector64, right.vector64);
+    const similarity = 1 / (1 + distance);
+    return { distance, similarity, leftId, rightId };
+  }, [selected, vectorById]);
 
   const autoViewState = useMemo(() => {
     const width = Math.max(1, canvasSize.width);
@@ -157,30 +220,6 @@ export function KeywordGraph() {
       zoom,
     };
   }, [canvasSize.height, canvasSize.width, nodes]);
-
-  const graphEdges = useMemo<GraphEdge[]>(() => {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const out: GraphEdge[] = [];
-    for (const edge of edges) {
-      if (edge.weight <= 0) continue;
-      const sourceNode = nodeById.get(edge.sourceId);
-      const targetNode = nodeById.get(edge.targetId);
-      if (!sourceNode || !targetNode) continue;
-      out.push({
-        id: edgeKey(edge.sourceId, edge.targetId),
-        sourceId: edge.sourceId,
-        targetId: edge.targetId,
-        weight: edge.weight,
-        source: [sourceNode.x, sourceNode.y, 0],
-        target: [targetNode.x, targetNode.y, 0],
-      });
-    }
-    if (out.length > MAX_RENDER_EDGES) {
-      out.sort((a, b) => b.weight - a.weight);
-      out.length = MAX_RENDER_EDGES;
-    }
-    return out;
-  }, [edges, nodes]);
 
   useEffect(() => {
     const validIds = new Set(keywords.map(keyword => keyword.id));
@@ -238,27 +277,13 @@ export function KeywordGraph() {
     if (!deck) return;
 
     const selectedSet = new Set(selected);
-    const edgeIsSelected = (edge: GraphEdge): boolean => {
-      if (selectedSet.size === 0) return false;
-      return selectedSet.has(edge.sourceId) && selectedSet.has(edge.targetId);
-    };
+    const selectionVersion = selected.join('|');
     const textColor: [number, number, number, number] = theme === 'dark'
       ? [241, 245, 249, 235]
       : [15, 23, 42, 220];
 
     deck.setProps({
       layers: [
-        new LineLayer<GraphEdge>({
-          id: 'keyword-edges',
-          data: graphEdges,
-          pickable: false,
-          getSourcePosition: (d) => d.source,
-          getTargetPosition: (d) => d.target,
-          getColor: (d) => (edgeIsSelected(d) ? COLOR_EDGE_SELECTED : COLOR_EDGE),
-          getWidth: (d) => Math.max(1, d.weight * 3),
-          widthMinPixels: 1,
-          widthMaxPixels: 4,
-        }),
         new ScatterplotLayer<GraphNode>({
           id: 'keyword-node-halo',
           data: nodes.filter((node) => selectedSet.has(node.id)),
@@ -286,6 +311,11 @@ export function KeywordGraph() {
           getPosition: (d) => [d.x, d.y, 0],
           getRadius: (d) => (selectedSet.has(d.id) ? 13 : 7),
           getFillColor: (d) => (selectedSet.has(d.id) ? COLOR_NODE_SELECTED : COLOR_NODE),
+          updateTriggers: {
+            getLineColor: selectionVersion,
+            getRadius: selectionVersion,
+            getFillColor: selectionVersion,
+          },
           onClick: (info) => {
             const picked = info.object as GraphNode | undefined;
             if (!picked) return;
@@ -302,28 +332,40 @@ export function KeywordGraph() {
           pickable: false,
           getText: (d) => d.label,
           getPosition: (d) => [d.x, d.y, 0],
-          getSize: (d) => (selectedSet.has(d.id) ? 13 : 11),
+          getSize: (d) => (selectedSet.has(d.id) ? 15 : 13),
           getColor: (d) => (selectedSet.has(d.id) ? [16, 185, 129, 255] : textColor),
+          updateTriggers: {
+            getColor: `${theme}|${selectionVersion}`,
+            getSize: selectionVersion,
+          },
           getPixelOffset: [0, 10],
           getTextAnchor: 'middle',
           getAlignmentBaseline: 'bottom',
           sizeUnits: 'pixels',
-          sizeMinPixels: 10,
-          sizeMaxPixels: 14,
+          sizeMinPixels: 12,
+          sizeMaxPixels: 18,
+          characterSet: 'auto',
           fontFamily: 'Noto Sans CJK SC, Noto Sans CJK JP, PingFang SC, Hiragino Sans GB, Hiragino Sans, Microsoft YaHei, sans-serif',
           fontSettings: {
-            sdf: true,
-            fontSize: 48,
-            buffer: 4,
-            radius: 8,
+            sdf: false,
+            fontSize: 64,
+            buffer: 6,
+            radius: 12,
           },
         }),
       ],
     });
-  }, [graphEdges, nodes, selected, theme]);
+  }, [nodes, selected, theme]);
+
+  function clearSelection() {
+    setSelected([]);
+  }
 
   async function applyPairSupervision(): Promise<void> {
     if (selected.length !== 2 || isSubmitting) return;
+    const [leftId, rightId] = selected;
+    if (!leftId || !rightId) return;
+
     const targetDistance = Number.parseFloat(targetDistanceInput);
     const learningRate = Number.parseFloat(learningRateInput);
     if (!Number.isFinite(targetDistance) || targetDistance < 0) {
@@ -337,11 +379,6 @@ export function KeywordGraph() {
 
     setIsSubmitting(true);
     try {
-      const [leftId, rightId] = selected;
-      if (!leftId || !rightId) {
-        setSupervisionFeedback('Please select exactly two nodes.');
-        return;
-      }
       const result = await applySupervision(keywordVectorsSignal.value, {
         kind: 'pair',
         leftId,
@@ -349,15 +386,21 @@ export function KeywordGraph() {
         targetDistance,
         learningRate,
       });
+
       if (result.updatedVectors.length > 0) {
         const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
         for (const vec of result.updatedVectors) {
           merged.set(vec.keywordId, vec);
         }
         keywordVectorsSignal.value = [...merged.values()];
-        await db.keywordVectors.putMany(result.updatedVectors);
+        if (!isServerDeployment) {
+          await db.keywordVectors.putMany(result.updatedVectors);
+        }
       }
-      setSupervisionFeedback(`Pair supervision applied (${result.updatedVectors.length} vectors updated).`);
+
+      setSupervisionFeedback(
+        `Pair supervision applied (${result.updatedVectors.length} vectors updated).`,
+      );
     } catch (error) {
       setSupervisionFeedback(error instanceof Error ? error.message : 'Pair supervision failed.');
     } finally {
@@ -367,6 +410,12 @@ export function KeywordGraph() {
 
   async function applyRankedSupervision(): Promise<void> {
     if (selected.length < 3 || isSubmitting) return;
+    const [anchorId, ...orderedIds] = selected;
+    if (!anchorId || orderedIds.length < 2) {
+      setSupervisionFeedback('Select one anchor and at least two ordered nodes.');
+      return;
+    }
+
     const learningRate = Number.parseFloat(learningRateInput);
     const margin = Number.parseFloat(marginInput);
     if (!Number.isFinite(learningRate) || learningRate <= 0) {
@@ -380,11 +429,6 @@ export function KeywordGraph() {
 
     setIsSubmitting(true);
     try {
-      const [anchorId, ...orderedIds] = selected;
-      if (!anchorId || orderedIds.length < 2) {
-        setSupervisionFeedback('Select one anchor and at least two ordered nodes.');
-        return;
-      }
       const result = await applySupervision(keywordVectorsSignal.value, {
         kind: 'ranked',
         anchorId,
@@ -392,17 +436,20 @@ export function KeywordGraph() {
         margin,
         learningRate,
       });
+
       if (result.updatedVectors.length > 0) {
         const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
         for (const vec of result.updatedVectors) {
           merged.set(vec.keywordId, vec);
         }
         keywordVectorsSignal.value = [...merged.values()];
-        await db.keywordVectors.putMany(result.updatedVectors);
+        if (!isServerDeployment) {
+          await db.keywordVectors.putMany(result.updatedVectors);
+        }
       }
-      const anchorLabel = keywords.find(k => k.id === anchorId);
+
       setSupervisionFeedback(
-        `Ranked supervision applied (anchor ${anchorLabel ? displayName(anchorLabel) : fallbackEntityId(anchorId)}, ${result.updatedVectors.length} vectors updated).`,
+        `Ranked supervision applied (${result.updatedVectors.length} vectors updated).`,
       );
     } catch (error) {
       setSupervisionFeedback(error instanceof Error ? error.message : 'Ranked supervision failed.');
@@ -410,40 +457,6 @@ export function KeywordGraph() {
       setIsSubmitting(false);
     }
   }
-
-  function clearSelection() {
-    setSelected([]);
-  }
-
-  const relationshipRows = (() => {
-    const selectedSet = new Set(selected);
-    const rows = edges
-      .map(edge => ({
-        ...edge,
-        distance: 1 - edge.weight,
-      }))
-      .filter(edge => {
-        if (selectedSet.size === 0) return true;
-        if (selectedSet.size === 1) {
-          return selectedSet.has(edge.sourceId) || selectedSet.has(edge.targetId);
-        }
-        return selectedSet.has(edge.sourceId) && selectedSet.has(edge.targetId);
-      })
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, 12)
-      .map(edge => {
-        const source = keywords.find(keyword => keyword.id === edge.sourceId);
-        const target = keywords.find(keyword => keyword.id === edge.targetId);
-        return {
-          id: `${edge.sourceId}-${edge.targetId}`,
-          label: `${source ? displayName(source) : fallbackEntityId(edge.sourceId)} ↔ ${target ? displayName(target) : fallbackEntityId(edge.targetId)}`,
-          similarity: edge.weight,
-          distance: edge.distance,
-        };
-      });
-
-    return rows;
-  })();
 
   const selectedLabels = selected
     .map((id) => {
@@ -462,7 +475,7 @@ export function KeywordGraph() {
               : t('graphHint')}
           </p>
         </div>
-        {selected.length >= 2 && (
+        {selected.length > 0 && (
           <>
             <Button variant="ghost" onClick={clearSelection}>
               <X size={14} />
@@ -474,12 +487,20 @@ export function KeywordGraph() {
         <div ref={canvasRef} class={s.graphCanvas} />
         <aside class={s.graphSidebar}>
           <div class={s.card}>
-            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Supervision</h3>
+            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Projection</h3>
             <p class={s.mutedParagraph}>
-              Selection order matters. First selected node is used as anchor for ranked supervision.
+              This view renders only projected points from the dimensionality-reduction module.
             </p>
+            <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
+              Nodes: {nodes.length}
+            </p>
+            {selectedPairMetrics && (
+              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
+                Current relative distance: {selectedPairMetrics.distance.toFixed(3)} (similarity {selectedPairMetrics.similarity.toFixed(3)})
+              </p>
+            )}
             <div class={s.formGroup}>
-              <label class={s.label} htmlFor="target-distance-input">Target distance (pair)</label>
+              <label class={s.label} htmlFor="target-distance-input">Target relative distance</label>
               <input
                 id="target-distance-input"
                 class={s.input}
@@ -511,14 +532,21 @@ export function KeywordGraph() {
                 onClick={() => void applyPairSupervision()}
                 disabled={isSubmitting || selected.length !== 2}
               >
-                Apply Pair
+                Apply Pair Supervision
               </Button>
               <Button
                 variant="primary"
                 onClick={() => void applyRankedSupervision()}
                 disabled={isSubmitting || selected.length < 3}
               >
-                Apply Ranked (N&gt;2)
+                Apply Ranked Supervision
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={clearSelection}
+                disabled={isSubmitting || selected.length === 0}
+              >
+                Clear Selection
               </Button>
             </div>
             {selectedLabels.length > 0 && (
@@ -528,7 +556,7 @@ export function KeywordGraph() {
             )}
             {selected.length >= 3 && (
               <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
-                Anchor: {selectedLabels[0] ?? ''}
+                Ranked order: {selectedLabels.join(' → ')}
               </p>
             )}
             {supervisionFeedback && (
@@ -536,18 +564,15 @@ export function KeywordGraph() {
             )}
           </div>
           <div class={`${s.card} ${s.graphSidebarCard}`} style={{ maxHeight: `${Math.max(canvasSize.height, 340)}px` }}>
-            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>{t('distanceSummary')}</h3>
+            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Selected Keywords</h3>
             <div class={s.metricList}>
-              {relationshipRows.length === 0 ? (
-                <p class={s.mutedParagraph}>{t('noRelationshipData')}</p>
+              {selectedLabels.length === 0 ? (
+                <p class={s.mutedParagraph}>Click points to inspect selected keywords.</p>
               ) : (
-                relationshipRows.map(row => (
-                  <div key={row.id} class={s.metricRow}>
+                selectedLabels.map((label) => (
+                  <div key={label} class={s.metricRow}>
                     <div>
-                      <div>{row.label}</div>
-                    </div>
-                    <div class={s.metricValue}>
-                      d={row.distance.toFixed(3)} / s={row.similarity.toFixed(3)}
+                      <div>{label}</div>
                     </div>
                   </div>
                 ))
