@@ -6,11 +6,11 @@ import test from 'node:test';
 
 import type {
   Keyword,
+  KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
   SchedulePlan,
-  SimilarityEdge,
 } from '@labby/core';
 import { SqliteStore, UserRole, type RefreshTokenRecord, type StoredUser } from '../src/store/index';
 
@@ -76,8 +76,15 @@ function sampleUnavailability(id = 'u1', personId = 'p1', configId = 'c1'): Pers
   };
 }
 
-function sampleEdge(sourceId = 'k1', targetId = 'k2'): SimilarityEdge {
-  return { sourceId, targetId, weight: 0.8 };
+function sampleVector(keywordId = 'k1'): KeywordVector {
+  const vector64 = Array.from({ length: 64 }, (_, i) => (i === 0 ? 0.5 : 0));
+  return {
+    keywordId,
+    vector64,
+    x: vector64[0] ?? 0,
+    y: vector64[1] ?? 0,
+    updatedAt: Date.now(),
+  };
 }
 
 function sampleUser(id = 'user-1'): StoredUser {
@@ -114,7 +121,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     const config = sampleConfig();
     const plan = samplePlan();
     const unavailability = sampleUnavailability();
-    const edge = sampleEdge();
+    const vector = sampleVector();
     const user = sampleUser();
     const token = sampleRefreshToken(user.id);
 
@@ -123,7 +130,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     await store.putConfig(config);
     await store.putSchedule(plan);
     await store.putUnavailability(unavailability);
-    await store.putSimilarity(edge);
+    await store.putKeywordVector(vector);
     await store.createUser(user);
     await store.saveRefreshToken(token);
 
@@ -132,7 +139,8 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     assert.equal((await store.getConfig(config.id))?.id, config.id);
     assert.equal((await store.getSchedule(plan.id))?.id, plan.id);
     assert.equal((await store.getUnavailability(unavailability.id))?.id, unavailability.id);
-    assert.equal((await store.getSimilarity('k2', 'k1'))?.weight, 0.8);
+    assert.equal((await store.getKeywordVector(vector.keywordId))?.keywordId, vector.keywordId);
+    assert.equal((await store.getKeywordVectors([vector.keywordId])).length, 1);
     assert.equal((await store.findUserByIdentity('ALICE'))?.id, user.id);
     assert.equal((await store.getRefreshToken(token.tokenId))?.tokenId, token.tokenId);
   } finally {
@@ -149,14 +157,14 @@ test('SqliteStore snapshot export and restore keeps data', async () => {
   try {
     await source.putPerson(samplePerson('p-a'));
     await source.putKeyword(sampleKeyword('k-a'));
-    await source.putSimilarity(sampleEdge('k-a', 'k-b'));
+    await source.putKeywordVector(sampleVector('k-a'));
 
     const snapshot = await source.exportBackupSnapshot();
     await target.restoreBackupSnapshot(snapshot);
 
     assert.equal((await target.listPersons()).length, 1);
     assert.equal((await target.listKeywords()).length, 1);
-    assert.equal((await target.listSimilarities()).length, 1);
+    assert.equal((await target.listKeywordVectors()).length, 1);
   } finally {
     await source.close();
     await target.close();

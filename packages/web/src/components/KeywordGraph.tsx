@@ -1,123 +1,225 @@
-/** Keyword similarity D3 force graph with brush-select interaction. */
-import { useEffect, useRef, useState } from 'preact/hooks';
-import * as d3 from 'd3';
+/** Keyword similarity graph rendered with deck.gl (WebGL). */
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { Deck, OrthographicView } from '@deck.gl/core';
+import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { X } from 'lucide-preact';
 import {
   keywordsSignal,
-  similarityEdgesSignal,
-  embeddingsSignal,
+  keywordVectorsSignal,
+  themeSignal,
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
-import { useDatabase } from '../db/index';
-import {
-  attractKeywords,
-  repelKeywords,
-  embeddingsToSimilarities,
-} from '@labby/core';
-import type { SimilarityEdge } from '@labby/core';
 import * as s from '../styles/components.css';
-import { vars } from '../styles/theme.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
+import { useDatabase } from '@/db/index';
+import { applySupervision } from '@/lib/embedding-engine';
+import { isServerDeployment } from '@/lib/runtime';
 
-interface GraphNode extends d3.SimulationNodeDatum {
+type GraphNode = {
   id: string;
   label: string;
+  x: number;
+  y: number;
+};
+
+const COLOR_NODE: [number, number, number, number] = [44, 102, 245, 220];
+const COLOR_NODE_SELECTED: [number, number, number, number] = [16, 185, 129, 240];
+const COLOR_NODE_HALO: [number, number, number, number] = [16, 185, 129, 96];
+const POSITION_SCALE = 140;
+const POINT_TRANSITION_MS = 280;
+
+function l2Distance64(a: readonly number[], b: readonly number[]): number {
+  const dim = Math.min(a.length, b.length, 64);
+  let sum = 0;
+  for (let i = 0; i < dim; i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
 }
 
-interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
-  weight: number;
+function stableHash01(text: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10_000) / 10_000;
 }
 
-function linkKey(link: GraphLink): string {
-  const source = typeof link.source === 'object' ? link.source.id : String(link.source);
-  const target = typeof link.target === 'object' ? link.target.id : String(link.target);
-  return source < target ? `${source}|${target}` : `${target}|${source}`;
+function spreadPoint(x: number, y: number, medianRadius: number, p90Radius: number): [number, number] {
+  const r = Math.hypot(x, y);
+  if (r < 1e-6) return [x, y];
+  const inner = Math.max(8, medianRadius * 0.65);
+  const outer = Math.max(inner + 16, p90Radius * 1.8);
+  const targetR = r < inner
+    ? inner * Math.pow(r / inner, 0.75)
+    : r > outer
+      ? outer + (r - outer) * 0.35
+      : r;
+  const factor = targetR / r;
+  return [x * factor, y * factor];
 }
 
 export function KeywordGraph() {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
-  const graphGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const linkLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const nodeLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const labelLayerRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const nodeSelectionRef = useRef<d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<SVGLineElement, GraphLink, SVGGElement, unknown> | null>(null);
-  const labelSelectionRef = useRef<d3.Selection<SVGTextElement, GraphNode, SVGGElement, unknown> | null>(null);
-  const nodeMapRef = useRef<Map<string, GraphNode>>(new Map());
-  const { t } = i18n;
-  const keywords = keywordsSignal.value;
-  const edges = similarityEdgesSignal.value;
   const db = useDatabase();
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const deckRef = useRef<Deck<any> | null>(null);
+  const transitionRef = useRef<number | null>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const { t } = i18n;
+  const theme = themeSignal.value;
+  const keywords = keywordsSignal.value;
+  const vectors = keywordVectorsSignal.value;
 
   const [selected, setSelected] = useState<string[]>([]);
+  const [targetDistanceInput, setTargetDistanceInput] = useState('0.45');
+  const [learningRateInput, setLearningRateInput] = useState('0.05');
+  const [marginInput, setMarginInput] = useState('0.2');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [supervisionFeedback, setSupervisionFeedback] = useState('');
+  const [animatedPositions, setAnimatedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const animatedPositionsRef = useRef(animatedPositions);
 
   useEffect(() => {
-    if (!svgRef.current) return;
+    animatedPositionsRef.current = animatedPositions;
+  }, [animatedPositions]);
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
+  useEffect(() => {
+    const target = new Map(vectors.map((v) => [v.keywordId, { x: v.x, y: v.y }]));
+    const from = animatedPositionsRef.current;
 
-    const graphGroup = svg.append('g');
-    const linkLayer = graphGroup.append('g');
-    const nodeLayer = graphGroup.append('g');
-    const labelLayer = graphGroup.append('g');
+    if (transitionRef.current !== null) {
+      cancelAnimationFrame(transitionRef.current);
+      transitionRef.current = null;
+    }
 
-    const simulation = d3
-      .forceSimulation<GraphNode>([])
-      .force(
-        'link',
-        d3
-          .forceLink<GraphNode, GraphLink>([])
-          .id(d => d.id)
-          .distance(d => 40 + (1 - d.weight) * 220),
-      )
-      .force('charge', d3.forceManyBody().strength(-110))
-      .force('center', d3.forceCenter(400, 250))
-      .force('collision', d3.forceCollide(34));
+    if (from.size === 0) {
+      setAnimatedPositions(target);
+      return;
+    }
 
-    simulation.on('tick', () => {
-      linkSelectionRef.current
-        ?.attr('x1', d => (d.source as GraphNode).x ?? 0)
-        .attr('y1', d => (d.source as GraphNode).y ?? 0)
-        .attr('x2', d => (d.target as GraphNode).x ?? 0)
-        .attr('y2', d => (d.target as GraphNode).y ?? 0);
-      nodeSelectionRef.current
-        ?.attr('cx', d => d.x ?? 0)
-        .attr('cy', d => d.y ?? 0);
-      labelSelectionRef.current
-        ?.attr('x', d => d.x ?? 0)
-        .attr('y', d => d.y ?? 0);
-    });
+    const start = performance.now();
+    const ease = (t0: number) => 1 - Math.pow(1 - t0, 3);
 
-    svg.call(
-      d3.zoom<SVGSVGElement, unknown>().on('zoom', event => {
-        graphGroup.attr('transform', event.transform);
-      }),
-    );
+    const step = (now: number) => {
+      const raw = Math.min(1, (now - start) / POINT_TRANSITION_MS);
+      const t0 = ease(raw);
+      const next = new Map<string, { x: number; y: number }>();
+      for (const [id, to] of target) {
+        const src = from.get(id) ?? to;
+        next.set(id, {
+          x: src.x + (to.x - src.x) * t0,
+          y: src.y + (to.y - src.y) * t0,
+        });
+      }
+      setAnimatedPositions(next);
 
-    simulationRef.current = simulation;
-    graphGroupRef.current = graphGroup;
-    linkLayerRef.current = linkLayer;
-    nodeLayerRef.current = nodeLayer;
-    labelLayerRef.current = labelLayer;
+      if (raw < 1) {
+        transitionRef.current = requestAnimationFrame(step);
+      } else {
+        transitionRef.current = null;
+      }
+    };
 
+    transitionRef.current = requestAnimationFrame(step);
+  }, [vectors]);
+
+  useEffect(() => {
     return () => {
-      simulation.stop();
-      simulationRef.current = null;
-      graphGroupRef.current = null;
-      linkLayerRef.current = null;
-      nodeLayerRef.current = null;
-      labelLayerRef.current = null;
-      nodeSelectionRef.current = null;
-      linkSelectionRef.current = null;
-      labelSelectionRef.current = null;
-      nodeMapRef.current = new Map();
+      if (transitionRef.current !== null) {
+        cancelAnimationFrame(transitionRef.current);
+      }
     };
   }, []);
+
+  const nodes = useMemo<GraphNode[]>(() => {
+    const vectorById = new Map(vectors.map((v) => [v.keywordId, v]));
+    const raw = keywords.map((keyword, index) => {
+      const embedding = vectorById.get(keyword.id);
+      const animated = animatedPositions.get(keyword.id);
+      if (embedding) {
+        const x = (animated?.x ?? embedding.x) * POSITION_SCALE;
+        const y = (animated?.y ?? embedding.y) * POSITION_SCALE;
+        return {
+          id: keyword.id,
+          label: displayName(keyword),
+          x,
+          y,
+        };
+      }
+
+      const angle = (index / Math.max(keywords.length, 1)) * Math.PI * 2;
+      return {
+        id: keyword.id,
+        label: displayName(keyword),
+        x: Math.cos(angle) * POSITION_SCALE * 0.2,
+        y: Math.sin(angle) * POSITION_SCALE * 0.2,
+      };
+    });
+
+    const radii = raw.map((item) => Math.hypot(item.x, item.y)).sort((a, b) => a - b);
+    if (radii.length === 0) return raw;
+    const median = radii[Math.floor(radii.length / 2)] ?? 0;
+    const p90 = radii[Math.floor(radii.length * 0.9)] ?? median;
+
+    return raw.map((item) => {
+      const [sx, sy] = spreadPoint(item.x, item.y, median, p90);
+      const jitter = (stableHash01(item.id) - 0.5) * 4;
+      return {
+        ...item,
+        x: sx + jitter,
+        y: sy - jitter * 0.6,
+      };
+    });
+  }, [animatedPositions, keywords, vectors]);
+
+  const vectorById = useMemo(() => new Map(vectors.map((v) => [v.keywordId, v])), [vectors]);
+  const selectedPairMetrics = useMemo(() => {
+    if (selected.length !== 2) return null;
+    const [leftId, rightId] = selected;
+    if (!leftId || !rightId) return null;
+    const left = vectorById.get(leftId);
+    const right = vectorById.get(rightId);
+    if (!left || !right) return null;
+    const distance = l2Distance64(left.vector64, right.vector64);
+    const similarity = 1 / (1 + distance);
+    return { distance, similarity, leftId, rightId };
+  }, [selected, vectorById]);
+
+  const autoViewState = useMemo(() => {
+    const width = Math.max(1, canvasSize.width);
+    const height = Math.max(1, canvasSize.height);
+    if (nodes.length === 0) {
+      return { target: [0, 0, 0], zoom: 0 };
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const node of nodes) {
+      if (node.x < minX) minX = node.x;
+      if (node.y < minY) minY = node.y;
+      if (node.x > maxX) maxX = node.x;
+      if (node.y > maxY) maxY = node.y;
+    }
+
+    const pad = 48;
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const scaleX = Math.max(0.05, (width - pad * 2) / spanX);
+    const scaleY = Math.max(0.05, (height - pad * 2) / spanY);
+    const zoom = Math.max(-6, Math.min(6, Math.log2(Math.min(scaleX, scaleY))));
+
+    return {
+      target: [(minX + maxX) / 2, (minY + maxY) / 2, 0] as [number, number, number],
+      zoom,
+    };
+  }, [canvasSize.height, canvasSize.width, nodes]);
 
   useEffect(() => {
     const validIds = new Set(keywords.map(keyword => keyword.id));
@@ -128,182 +230,239 @@ export function KeywordGraph() {
   }, [keywords]);
 
   useEffect(() => {
-    if (
-      !svgRef.current
-      || !simulationRef.current
-      || !linkLayerRef.current
-      || !nodeLayerRef.current
-      || !labelLayerRef.current
-    ) {
-      return;
-    }
+    if (!canvasRef.current) return;
 
-    const rect = svgRef.current.getBoundingClientRect();
-    const width = rect.width || 800;
-    const height = rect.height || 500;
-    const embeddings = embeddingsSignal.value;
-    const previousNodes = nodeMapRef.current;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const nextWidth = Math.round(entry.contentRect.width);
+      const nextHeight = Math.round(entry.contentRect.height);
+      setCanvasSize((prev) => (
+        prev.width === nextWidth && prev.height === nextHeight
+          ? prev
+          : { width: nextWidth, height: nextHeight }
+      ));
+    });
+    observer.observe(canvasRef.current);
 
-    const nodes: GraphNode[] = keywords.map(keyword => {
-      const existing = previousNodes.get(keyword.id);
-      if (existing) {
-        existing.label = displayName(keyword);
-        return existing;
-      }
-
-      const embedding = embeddings.get(keyword.id);
-      return {
-        id: keyword.id,
-        label: displayName(keyword),
-        x: embedding?.x !== undefined ? embedding.x * 120 + width / 2 : width / 2 + (Math.random() - 0.5) * 80,
-        y: embedding?.y !== undefined ? embedding.y * 120 + height / 2 : height / 2 + (Math.random() - 0.5) * 80,
-      };
+    const deck = new Deck<any>({
+      parent: canvasRef.current,
+      views: [new OrthographicView({ id: 'graph-view' })],
+      initialViewState: autoViewState as any,
+      controller: true,
+      getCursor: ({ isDragging }) => (isDragging ? 'grabbing' : 'grab'),
     });
 
-    nodeMapRef.current = new Map(nodes.map(node => [node.id, node]));
-
-    const links: GraphLink[] = [];
-    for (const edge of edges) {
-      if (edge.weight <= 0) continue;
-      const source = nodeMapRef.current.get(edge.sourceId);
-      const target = nodeMapRef.current.get(edge.targetId);
-      if (!source || !target) continue;
-      links.push({ source, target, weight: edge.weight });
-    }
-
-    const linkSelection = linkLayerRef.current
-      .selectAll<SVGLineElement, GraphLink>('line')
-      .data(links, link => linkKey(link));
-    const mergedLinks = linkSelection
-      .join(
-        enter => enter.append('line'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .attr('stroke', vars.color.border)
-      .attr('stroke-width', d => d.weight * 3)
-      .attr('stroke-opacity', d => 0.2 + d.weight * 0.5);
-
-    const nodeSelection = nodeLayerRef.current
-      .selectAll<SVGCircleElement, GraphNode>('circle')
-      .data(nodes, node => node.id);
-    const mergedNodes = nodeSelection
-      .join(
-        enter => enter.append('circle'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .attr('r', 14)
-      .attr('fill', vars.color.primary)
-      .attr('stroke', vars.color.surface)
-      .attr('stroke-width', 2)
-      .attr('cursor', 'pointer')
-      .on('click', (_event, node) => {
-        setSelected(prev => (
-          prev.includes(node.id) ? prev.filter(id => id !== node.id) : [...prev, node.id]
-        ));
-      });
-    mergedNodes
-      .selectAll<SVGTitleElement, GraphNode>('title')
-      .data(node => [node])
-      .join('title')
-      .text(node => node.label);
-
-    const labelSelection = labelLayerRef.current
-      .selectAll<SVGTextElement, GraphNode>('text')
-      .data(nodes, node => node.id);
-    const mergedLabels = labelSelection
-      .join(
-        enter => enter.append('text'),
-        update => update,
-        exit => exit.remove(),
-      )
-      .text(node => node.label)
-      .attr('font-size', 11)
-      .attr('text-anchor', 'middle')
-      .attr('dy', 28)
-      .attr('fill', vars.color.text)
-      .attr('pointer-events', 'none');
-
-    linkSelectionRef.current = mergedLinks;
-    nodeSelectionRef.current = mergedNodes;
-    labelSelectionRef.current = mergedLabels;
-
-    const simulation = simulationRef.current;
-    const linkForce = simulation.force('link') as d3.ForceLink<GraphNode, GraphLink>;
-    simulation.force('center', d3.forceCenter(width / 2, height / 2));
-    simulation.nodes(nodes);
-    linkForce.links(links);
-    simulation.alpha(nodes.length === 0 ? 0 : 0.45).restart();
-  }, [keywords, edges, t('navGraph')]);
+    deckRef.current = deck;
+    return () => {
+      observer.disconnect();
+      deck.finalize();
+      deckRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
-    const selectedSet = new Set(selected);
-    nodeSelectionRef.current
-      ?.attr('fill', (d: GraphNode) => (selectedSet.has(d.id) ? vars.color.accent : vars.color.primary))
-      .attr('r', (d: GraphNode) => (selectedSet.has(d.id) ? 17 : 14));
+    const deck = deckRef.current;
+    if (!deck) return;
 
-    linkSelectionRef.current?.attr('stroke', (d: GraphLink) => {
-      const source = typeof d.source === 'object' ? d.source.id : String(d.source);
-      const target = typeof d.target === 'object' ? d.target.id : String(d.target);
-      return selectedSet.size > 0 && selectedSet.has(source) && selectedSet.has(target)
-        ? vars.color.accent
-        : vars.color.border;
+    deck.setProps({
+      width: canvasSize.width || 1,
+      height: canvasSize.height || 1,
+      initialViewState: autoViewState as any,
     });
-  }, [selected]);
+  }, [autoViewState, canvasSize.height, canvasSize.width]);
 
-  async function handleAdjust(mode: 'attract' | 'repel') {
-    if (selected.length < 2) return;
-    const current = embeddingsSignal.value;
-    const updated =
-      mode === 'attract'
-        ? attractKeywords(current, selected)
-        : repelKeywords(current, selected);
-    embeddingsSignal.value = updated;
+  useEffect(() => {
+    const deck = deckRef.current;
+    if (!deck) return;
 
-    // Rebuild similarity edges from updated embeddings
-    const simMap = embeddingsToSimilarities(updated);
-    const newEdges: SimilarityEdge[] = [];
-    await db.similarities.clear();
-    for (const [key, weight] of simMap) {
-      const [sourceId, targetId] = key.split('|');
-      const edge: SimilarityEdge = { sourceId, targetId, weight };
-      newEdges.push(edge);
-      await db.similarities.put(edge);
-    }
-    similarityEdgesSignal.value = newEdges;
+    const selectedSet = new Set(selected);
+    const selectionVersion = selected.join('|');
+    const textColor: [number, number, number, number] = theme === 'dark'
+      ? [241, 245, 249, 235]
+      : [15, 23, 42, 220];
+
+    deck.setProps({
+      layers: [
+        new ScatterplotLayer<GraphNode>({
+          id: 'keyword-node-halo',
+          data: nodes.filter((node) => selectedSet.has(node.id)),
+          pickable: false,
+          radiusUnits: 'pixels',
+          stroked: true,
+          filled: true,
+          lineWidthUnits: 'pixels',
+          lineWidthMinPixels: 2,
+          getLineColor: [16, 185, 129, 200],
+          getPosition: (d) => [d.x, d.y, 0],
+          getRadius: 18,
+          getFillColor: COLOR_NODE_HALO,
+        }),
+        new ScatterplotLayer<GraphNode>({
+          id: 'keyword-nodes',
+          data: nodes,
+          pickable: true,
+          radiusUnits: 'pixels',
+          stroked: true,
+          filled: true,
+          lineWidthUnits: 'pixels',
+          lineWidthMinPixels: 1,
+          getLineColor: (d) => (selectedSet.has(d.id) ? [16, 185, 129, 255] : [255, 255, 255, 210]),
+          getPosition: (d) => [d.x, d.y, 0],
+          getRadius: (d) => (selectedSet.has(d.id) ? 13 : 7),
+          getFillColor: (d) => (selectedSet.has(d.id) ? COLOR_NODE_SELECTED : COLOR_NODE),
+          updateTriggers: {
+            getLineColor: selectionVersion,
+            getRadius: selectionVersion,
+            getFillColor: selectionVersion,
+          },
+          onClick: (info) => {
+            const picked = info.object as GraphNode | undefined;
+            if (!picked) return;
+            setSelected((prev) => (
+              prev.includes(picked.id)
+                ? prev.filter((id) => id !== picked.id)
+                : [...prev, picked.id]
+            ));
+          },
+        }),
+        new TextLayer<GraphNode>({
+          id: 'keyword-labels',
+          data: nodes,
+          pickable: false,
+          getText: (d) => d.label,
+          getPosition: (d) => [d.x, d.y, 0],
+          getSize: (d) => (selectedSet.has(d.id) ? 15 : 13),
+          getColor: (d) => (selectedSet.has(d.id) ? [16, 185, 129, 255] : textColor),
+          updateTriggers: {
+            getColor: `${theme}|${selectionVersion}`,
+            getSize: selectionVersion,
+          },
+          getPixelOffset: [0, 10],
+          getTextAnchor: 'middle',
+          getAlignmentBaseline: 'bottom',
+          sizeUnits: 'pixels',
+          sizeMinPixels: 12,
+          sizeMaxPixels: 18,
+          characterSet: 'auto',
+          fontFamily: 'Noto Sans CJK SC, Noto Sans CJK JP, PingFang SC, Hiragino Sans GB, Hiragino Sans, Microsoft YaHei, sans-serif',
+          fontSettings: {
+            sdf: false,
+            fontSize: 64,
+            buffer: 6,
+            radius: 12,
+          },
+        }),
+      ],
+    });
+  }, [nodes, selected, theme]);
+
+  function clearSelection() {
     setSelected([]);
   }
 
-  const relationshipRows = (() => {
-    const selectedSet = new Set(selected);
-    const rows = edges
-      .map(edge => ({
-        ...edge,
-        distance: 1 - edge.weight,
-      }))
-      .filter(edge => {
-        if (selectedSet.size === 0) return true;
-        if (selectedSet.size === 1) {
-          return selectedSet.has(edge.sourceId) || selectedSet.has(edge.targetId);
-        }
-        return selectedSet.has(edge.sourceId) && selectedSet.has(edge.targetId);
-      })
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, 12)
-      .map(edge => {
-        const source = keywords.find(keyword => keyword.id === edge.sourceId);
-        const target = keywords.find(keyword => keyword.id === edge.targetId);
-        return {
-          id: `${edge.sourceId}-${edge.targetId}`,
-          label: `${source ? displayName(source) : fallbackEntityId(edge.sourceId)} ↔ ${target ? displayName(target) : fallbackEntityId(edge.targetId)}`,
-          similarity: edge.weight,
-          distance: edge.distance,
-        };
+  async function applyPairSupervision(): Promise<void> {
+    if (selected.length !== 2 || isSubmitting) return;
+    const [leftId, rightId] = selected;
+    if (!leftId || !rightId) return;
+
+    const targetDistance = Number.parseFloat(targetDistanceInput);
+    const learningRate = Number.parseFloat(learningRateInput);
+    if (!Number.isFinite(targetDistance) || targetDistance < 0) {
+      setSupervisionFeedback('Invalid target distance.');
+      return;
+    }
+    if (!Number.isFinite(learningRate) || learningRate <= 0) {
+      setSupervisionFeedback('Invalid learning rate.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await applySupervision(keywordVectorsSignal.value, {
+        kind: 'pair',
+        leftId,
+        rightId,
+        targetDistance,
+        learningRate,
       });
 
-    return rows;
-  })();
+      if (result.updatedVectors.length > 0) {
+        const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
+        for (const vec of result.updatedVectors) {
+          merged.set(vec.keywordId, vec);
+        }
+        keywordVectorsSignal.value = [...merged.values()];
+        if (!isServerDeployment) {
+          await db.keywordVectors.putMany(result.updatedVectors);
+        }
+      }
+
+      setSupervisionFeedback(
+        `Pair supervision applied (${result.updatedVectors.length} vectors updated).`,
+      );
+    } catch (error) {
+      setSupervisionFeedback(error instanceof Error ? error.message : 'Pair supervision failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function applyRankedSupervision(): Promise<void> {
+    if (selected.length < 3 || isSubmitting) return;
+    const [anchorId, ...orderedIds] = selected;
+    if (!anchorId || orderedIds.length < 2) {
+      setSupervisionFeedback('Select one anchor and at least two ordered nodes.');
+      return;
+    }
+
+    const learningRate = Number.parseFloat(learningRateInput);
+    const margin = Number.parseFloat(marginInput);
+    if (!Number.isFinite(learningRate) || learningRate <= 0) {
+      setSupervisionFeedback('Invalid learning rate.');
+      return;
+    }
+    if (!Number.isFinite(margin) || margin <= 0) {
+      setSupervisionFeedback('Invalid margin.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await applySupervision(keywordVectorsSignal.value, {
+        kind: 'ranked',
+        anchorId,
+        orderedIds,
+        margin,
+        learningRate,
+      });
+
+      if (result.updatedVectors.length > 0) {
+        const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
+        for (const vec of result.updatedVectors) {
+          merged.set(vec.keywordId, vec);
+        }
+        keywordVectorsSignal.value = [...merged.values()];
+        if (!isServerDeployment) {
+          await db.keywordVectors.putMany(result.updatedVectors);
+        }
+      }
+
+      setSupervisionFeedback(
+        `Ranked supervision applied (${result.updatedVectors.length} vectors updated).`,
+      );
+    } catch (error) {
+      setSupervisionFeedback(error instanceof Error ? error.message : 'Ranked supervision failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const selectedLabels = selected
+    .map((id) => {
+      const keyword = keywords.find((item) => item.id === id);
+      return keyword ? displayName(keyword) : fallbackEntityId(id);
+    });
 
   return (
     <div>
@@ -316,36 +475,104 @@ export function KeywordGraph() {
               : t('graphHint')}
           </p>
         </div>
-        {selected.length >= 2 && (
+        {selected.length > 0 && (
           <>
-            <Button variant="primary" onClick={() => handleAdjust('attract')}>
-              {t('attractSelected')} ({selected.length})
-            </Button>
-            <Button variant="secondary" onClick={() => handleAdjust('repel')}>
-              {t('repelSelected')}
-            </Button>
-            <Button variant="ghost" onClick={() => setSelected([])}>
+            <Button variant="ghost" onClick={clearSelection}>
               <X size={14} />
             </Button>
           </>
         )}
       </div>
       <div class={s.graphLayout}>
-        <svg ref={svgRef} class={s.graphCanvas} />
+        <div ref={canvasRef} class={s.graphCanvas} />
         <aside class={s.graphSidebar}>
-          <div class={`${s.card} ${s.graphSidebarCard}`}>
-            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>{t('distanceSummary')}</h3>
+          <div class={s.card}>
+            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Projection</h3>
+            <p class={s.mutedParagraph}>
+              This view renders only projected points from the dimensionality-reduction module.
+            </p>
+            <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
+              Nodes: {nodes.length}
+            </p>
+            {selectedPairMetrics && (
+              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
+                Current relative distance: {selectedPairMetrics.distance.toFixed(3)} (similarity {selectedPairMetrics.similarity.toFixed(3)})
+              </p>
+            )}
+            <div class={s.formGroup}>
+              <label class={s.label} htmlFor="target-distance-input">Target relative distance</label>
+              <input
+                id="target-distance-input"
+                class={s.input}
+                value={targetDistanceInput}
+                onInput={(event) => setTargetDistanceInput((event.target as HTMLInputElement).value)}
+              />
+            </div>
+            <div class={s.formGroup}>
+              <label class={s.label} htmlFor="learning-rate-input">Learning rate</label>
+              <input
+                id="learning-rate-input"
+                class={s.input}
+                value={learningRateInput}
+                onInput={(event) => setLearningRateInput((event.target as HTMLInputElement).value)}
+              />
+            </div>
+            <div class={s.formGroup}>
+              <label class={s.label} htmlFor="margin-input">Margin (ranked)</label>
+              <input
+                id="margin-input"
+                class={s.input}
+                value={marginInput}
+                onInput={(event) => setMarginInput((event.target as HTMLInputElement).value)}
+              />
+            </div>
+            <div class={s.flexGapSm}>
+              <Button
+                variant="secondary"
+                onClick={() => void applyPairSupervision()}
+                disabled={isSubmitting || selected.length !== 2}
+              >
+                Apply Pair Supervision
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void applyRankedSupervision()}
+                disabled={isSubmitting || selected.length < 3}
+              >
+                Apply Ranked Supervision
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={clearSelection}
+                disabled={isSubmitting || selected.length === 0}
+              >
+                Clear Selection
+              </Button>
+            </div>
+            {selectedLabels.length > 0 && (
+              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
+                Selected: {selectedLabels.join(' | ')}
+              </p>
+            )}
+            {selected.length >= 3 && (
+              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
+                Ranked order: {selectedLabels.join(' → ')}
+              </p>
+            )}
+            {supervisionFeedback && (
+              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>{supervisionFeedback}</p>
+            )}
+          </div>
+          <div class={`${s.card} ${s.graphSidebarCard}`} style={{ maxHeight: `${Math.max(canvasSize.height, 340)}px` }}>
+            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Selected Keywords</h3>
             <div class={s.metricList}>
-              {relationshipRows.length === 0 ? (
-                <p class={s.mutedParagraph}>{t('noRelationshipData')}</p>
+              {selectedLabels.length === 0 ? (
+                <p class={s.mutedParagraph}>Click points to inspect selected keywords.</p>
               ) : (
-                relationshipRows.map(row => (
-                  <div key={row.id} class={s.metricRow}>
+                selectedLabels.map((label) => (
+                  <div key={label} class={s.metricRow}>
                     <div>
-                      <div>{row.label}</div>
-                    </div>
-                    <div class={s.metricValue}>
-                      d={row.distance.toFixed(3)} / s={row.similarity.toFixed(3)}
+                      <div>{label}</div>
                     </div>
                   </div>
                 ))

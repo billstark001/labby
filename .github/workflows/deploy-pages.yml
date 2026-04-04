@@ -32,16 +32,26 @@ jobs:
         with:
           version: 10
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @labby/web build:frontend
+        run: |
+          pnpm --filter @labby/core rust:build:wasm:web
+          pnpm --filter @labby/web build:frontend
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: packages/web/dist
+          path: web/dist
 
   deploy:
     needs: build

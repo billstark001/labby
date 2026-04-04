@@ -1,15 +1,14 @@
 import { describe, expect, test } from 'vitest';
 import {
-  embeddingsToSimilarities,
-  initEmbeddings,
-  runTripletBatch,
+  initKeywordVectors,
+  keywordVectorsToSimilarityMap,
+  nextTripletQueryFromKeywordVectors,
   solveFull,
   solveIncremental,
   type Person,
   type ScheduleConfig,
   type SchedulePlan,
   type Session,
-  type TripletQuery,
 } from '../src/index';
 
 function withSeed<T>(seed: number, fn: () => T): T {
@@ -24,10 +23,6 @@ function withSeed<T>(seed: number, fn: () => T): T {
   } finally {
     Math.random = original;
   }
-}
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function randomInt(min: number, max: number): number {
@@ -95,52 +90,34 @@ function assertBasicScheduleInvariants(
 }
 
 describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', () => {
-  test('keyword-distance random triplet benchmark', () => {
+  test('keyword-vector random query benchmark', () => {
     const rounds = 80;
-    let improved = 0;
+    let valid = 0;
 
     for (let seed = 1; seed <= rounds; seed++) {
       const result = withSeed(seed, () => {
-        const keywordCount = randomInt(6, 12);
+        const keywordCount = randomInt(30, 50);
         const keywords = Array.from({ length: keywordCount }, (_, i) => `k${i}`);
-        const embeddings = initEmbeddings(keywords);
-
-        const queries: TripletQuery[] = Array.from({ length: randomInt(5, 20) }, () => {
-          const anchorId = pick(keywords);
-          const positiveId = pick(keywords.filter(k => k !== anchorId));
-          const negativeId = pick(keywords.filter(k => k !== anchorId && k !== positiveId));
-          return { anchorId, positiveId, negativeId };
-        });
-
-        const before = embeddingsToSimilarities(embeddings);
-        const afterEmbeddings = runTripletBatch(embeddings, queries, 40);
-        const after = embeddingsToSimilarities(afterEmbeddings);
+        const vectors = initKeywordVectors(keywords);
+        const simMap = keywordVectorsToSimilarityMap(vectors);
+        const query = nextTripletQueryFromKeywordVectors(vectors);
 
         let finiteCount = 0;
-        for (const value of after.values()) {
+        for (const value of simMap.values()) {
           expect(Number.isFinite(value)).toBe(true);
           expect(value).toBeGreaterThan(0);
           expect(value).toBeLessThanOrEqual(1);
           finiteCount++;
         }
 
-        const q = queries[0];
-        const beforePos = before.get([q.anchorId, q.positiveId].sort().join('|')) ?? 0;
-        const beforeNeg = before.get([q.anchorId, q.negativeId].sort().join('|')) ?? 0;
-        const afterPos = after.get([q.anchorId, q.positiveId].sort().join('|')) ?? 0;
-        const afterNeg = after.get([q.anchorId, q.negativeId].sort().join('|')) ?? 0;
-
-        return {
-          finiteCount,
-          improvedMargin: (afterPos - afterNeg) >= (beforePos - beforeNeg),
-        };
+        return finiteCount > 0 && query !== null;
       });
 
-      if (result.improvedMargin) improved++;
+      if (result) valid++;
     }
 
-    console.log(`keyword fuzz improved margin ratio=${improved}/${rounds}`);
-    expect(improved).toBeGreaterThan(Math.floor(rounds * 0.45));
+    console.log(`keyword-vector fuzz valid ratio=${valid}/${rounds}`);
+    expect(valid).toBe(rounds);
   });
 
   test('scheduling random scenario benchmark (full + incremental)', () => {
@@ -149,12 +126,12 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
 
     for (let seed = 100; seed < 100 + rounds; seed++) {
       const ok = withSeed(seed, () => {
-        const keywordPool = Array.from({ length: randomInt(6, 10) }, (_, i) => `k${i}`);
+        const keywordPool = Array.from({ length: randomInt(30, 50) }, (_, i) => `k${i}`);
         const persons = makeRandomPersons(randomInt(5, 12), keywordPool);
         const config = makeRandomConfig(`cfg-${seed}`);
 
-        const baseEmbeddings = initEmbeddings(keywordPool);
-        const similarities = embeddingsToSimilarities(baseEmbeddings);
+        const baseVectors = initKeywordVectors(keywordPool);
+        const similarities = keywordVectorsToSimilarityMap(baseVectors);
 
         const full = solveFull({ persons, similarities, config });
         const changeDate = '2026-05-01';
@@ -182,5 +159,52 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
 
     console.log(`schedule fuzz valid ratio=${validRounds}/${rounds}`);
     expect(validRounds).toBe(rounds);
+  });
+
+  test('large-point metric fuzz preserves L2 triangle inequality', () => {
+    const rounds = 24;
+    let pass = 0;
+
+    const l2 = (va: number[], vb: number[]) => {
+      let sum = 0;
+      for (let i = 0; i < 64; i++) {
+        const d = (va[i] ?? 0) - (vb[i] ?? 0);
+        sum += d * d;
+      }
+      return Math.sqrt(sum);
+    };
+
+    for (let seed = 300; seed < 300 + rounds; seed++) {
+      const ok = withSeed(seed, () => {
+        const ids = Array.from({ length: randomInt(90, 140) }, (_, i) => `v-${i}`);
+        const vectors = initKeywordVectors(ids);
+        const simMap = keywordVectorsToSimilarityMap(vectors);
+
+        // Pairwise similarity map must be dense and finite.
+        expect(simMap.size).toBe((ids.length * (ids.length - 1)) / 2);
+        for (const value of simMap.values()) {
+          expect(Number.isFinite(value)).toBe(true);
+          expect(value).toBeGreaterThan(0);
+          expect(value).toBeLessThanOrEqual(1);
+        }
+
+        // Random triplets satisfy triangle inequality in 64D Euclidean space.
+        for (let i = 0; i < 320; i++) {
+          const a = vectors[randomInt(0, vectors.length - 1)];
+          const b = vectors[randomInt(0, vectors.length - 1)];
+          const c = vectors[randomInt(0, vectors.length - 1)];
+          const dAB = l2(a.vector64, b.vector64);
+          const dAC = l2(a.vector64, c.vector64);
+          const dBC = l2(b.vector64, c.vector64);
+          expect(dAC).toBeLessThanOrEqual(dAB + dBC + 1e-6);
+        }
+        return true;
+      });
+
+      if (ok) pass++;
+    }
+
+    console.log(`metric fuzz valid ratio=${pass}/${rounds}`);
+    expect(pass).toBe(rounds);
   });
 });

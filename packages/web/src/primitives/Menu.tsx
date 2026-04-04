@@ -187,11 +187,3 @@ export function MenuSeparator() {
   return <hr />;
 }
 
-// ---------------------------------------------------------------------------
-// Keep old names for backwards compatibility
-// ---------------------------------------------------------------------------
-export { Menu as DropdownMenu };
-export { MenuTrigger as DropdownTrigger };
-export { MenuContent as DropdownContent };
-export { MenuItem as DropdownItem };
-export { MenuSeparator as DropdownSeparator };

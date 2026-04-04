@@ -1,20 +1,17 @@
 import { describe, expect, test } from 'vitest';
 import {
-  applyTripletStep,
-  embeddingsToSimilarities,
   generateSessionDates,
-  initEmbeddings,
-  nextTripletQuery,
-  runTripletBatch,
+  initKeywordVectors,
+  keywordSimilarity,
+  keywordVectorsToSimilarityMap,
+  nextTripletQueryFromKeywordVectors,
   solveFull,
   solveIncremental,
-  type EmbeddingMap,
   type Person,
   type ScheduleConfig,
   type SchedulePlan,
   type Session,
   type SolverInput,
-  type TripletQuery,
 } from '../src/index';
 
 function withSeed<T>(seed: number, fn: () => T): T {
@@ -140,29 +137,25 @@ function collectUnavailable(configId: string): Map<string, Set<string>> {
 }
 
 describe('Keyword distance algorithm (black-box precise tests)', () => {
-  test('triplet learning moves positive closer than negative over batch', () => {
-    const embeddings: EmbeddingMap = new Map([
-      ['a', { x: 0, y: 0 }],
-      ['b', { x: 0.05, y: 0.05 }],
-      ['c', { x: 1.5, y: 1.5 }],
-    ]);
-    const query: TripletQuery = { anchorId: 'a', positiveId: 'c', negativeId: 'b' };
+  test('similarity map key is normalized regardless of insertion order', () => {
+    const vectors = [
+      {
+        keywordId: 'z',
+        vector64: Array.from({ length: 64 }, () => 0),
+        x: 0,
+        y: 0,
+        updatedAt: 0,
+      },
+      {
+        keywordId: 'a',
+        vector64: Array.from({ length: 64 }, (_, i) => (i === 0 ? 1 : 0)),
+        x: 1,
+        y: 0,
+        updatedAt: 0,
+      },
+    ];
 
-    const before = embeddingsToSimilarities(embeddings);
-    const trained = runTripletBatch(embeddings, [query], 80);
-    const after = embeddingsToSimilarities(trained);
-
-    expect(after.get('a|c') ?? 0).toBeGreaterThan(before.get('a|c') ?? 0);
-    expect(after.get('a|b') ?? 1).toBeLessThan(before.get('a|b') ?? 1);
-  });
-
-  test('similarity key is normalized regardless of insertion order', () => {
-    const embeddings: EmbeddingMap = new Map([
-      ['z', { x: 0, y: 0 }],
-      ['a', { x: 1, y: 0 }],
-    ]);
-
-    const sim = embeddingsToSimilarities(embeddings);
+    const sim = keywordVectorsToSimilarityMap(vectors);
     expect(sim.has('a|z')).toBe(true);
     expect(sim.has('z|a')).toBe(false);
     const value = sim.get('a|z') ?? 0;
@@ -170,20 +163,66 @@ describe('Keyword distance algorithm (black-box precise tests)', () => {
     expect(value).toBeLessThanOrEqual(1);
   });
 
-  test('nextTripletQuery returns null when keywords fewer than 3', () => {
-    const em = initEmbeddings(['k1', 'k2']);
-    expect(nextTripletQuery(em, ['k1', 'k2'])).toBeNull();
+  test('nextTripletQuery returns null when vectors fewer than 3', () => {
+    const vectors = initKeywordVectors(['k1', 'k2']);
+    expect(nextTripletQueryFromKeywordVectors(vectors)).toBeNull();
   });
 
-  test('applyTripletStep is stable for missing IDs', () => {
-    const em: EmbeddingMap = new Map([
-      ['k1', { x: 0, y: 0 }],
-      ['k2', { x: 1, y: 1 }],
-    ]);
+  test('keyword similarity stays within (0,1]', () => {
+    const vectors = initKeywordVectors(['k1', 'k2']);
+    const [a, b] = vectors;
+    const s = keywordSimilarity(a, b);
+    expect(s).toBeGreaterThan(0);
+    expect(s).toBeLessThanOrEqual(1);
+  });
 
-    expect(() => {
-      applyTripletStep(em, { anchorId: 'k1', positiveId: 'k2', negativeId: 'k404' });
-    }).not.toThrow();
+  test('64D vectors satisfy metric axioms on larger point set', () => {
+    const vectors = withSeed(2026, () => initKeywordVectors(
+      Array.from({ length: 96 }, (_, i) => `k-${i}`),
+    ));
+
+    const l2 = (va: number[], vb: number[]) => {
+      let sum = 0;
+      for (let i = 0; i < 64; i++) {
+        const d = (va[i] ?? 0) - (vb[i] ?? 0);
+        sum += d * d;
+      }
+      return Math.sqrt(sum);
+    };
+
+    for (let i = 0; i < 180; i++) {
+      const a = vectors[(i * 17) % vectors.length];
+      const b = vectors[(i * 31 + 7) % vectors.length];
+      const c = vectors[(i * 47 + 13) % vectors.length];
+      if (!a || !b || !c) continue;
+
+      const dAB = l2(a.vector64, b.vector64);
+      const dBA = l2(b.vector64, a.vector64);
+      const dAC = l2(a.vector64, c.vector64);
+      const dBC = l2(b.vector64, c.vector64);
+
+      expect(dAB).toBeGreaterThanOrEqual(0);
+      expect(Math.abs(dAB - dBA)).toBeLessThan(1e-6);
+      expect(dAC).toBeLessThanOrEqual(dAB + dBC + 1e-6);
+    }
+  });
+
+  test('triplet query selection remains valid under dense pair graph', () => {
+    const vectors = withSeed(99, () => initKeywordVectors(
+      Array.from({ length: 120 }, (_, i) => `node-${i}`),
+    ));
+    const recent = new Set<string>();
+
+    for (let i = 0; i < 32; i++) {
+      const q = nextTripletQueryFromKeywordVectors(vectors, recent);
+      expect(q).not.toBeNull();
+      if (!q) continue;
+      expect(q.anchorId).not.toBe(q.positiveId);
+      expect(q.anchorId).not.toBe(q.negativeId);
+      expect(q.positiveId).not.toBe(q.negativeId);
+      const pair = [q.anchorId, q.positiveId].sort().join('|');
+      recent.add(pair);
+    }
   });
 });
 

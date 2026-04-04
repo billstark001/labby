@@ -1,10 +1,10 @@
 import type {
   Keyword,
+  KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
   SchedulePlan,
-  SimilarityEdge,
 } from './types.js';
 
 export interface ListQuery {
@@ -35,11 +35,13 @@ export interface KeywordStore {
   clear(): Promise<void>;
 }
 
-export interface SimilarityStore {
-  get(sourceId: string, targetId: string): Promise<SimilarityEdge | undefined>;
-  list(query: ListQuery): Promise<PaginatedResult<SimilarityEdge>>;
-  put(value: SimilarityEdge): Promise<void>;
-  delete(sourceId: string, targetId: string): Promise<void>;
+export interface KeywordVectorStore {
+  get(keywordId: string): Promise<KeywordVector | undefined>;
+  getMany(keywordIds: string[]): Promise<KeywordVector[]>;
+  list(query: ListQuery): Promise<PaginatedResult<KeywordVector>>;
+  put(value: KeywordVector): Promise<void>;
+  putMany(values: KeywordVector[]): Promise<void>;
+  delete(keywordId: string): Promise<void>;
   clear(): Promise<void>;
 }
 
@@ -70,7 +72,7 @@ export interface PersonUnavailabilityStore {
 export interface LabbyDB {
   persons: PersonStore;
   keywords: KeywordStore;
-  similarities: SimilarityStore;
+  keywordVectors: KeywordVectorStore;
   configs: ScheduleConfigStore;
   schedules: SchedulePlanStore;
   unavailabilities: PersonUnavailabilityStore;
@@ -79,7 +81,7 @@ export interface LabbyDB {
 export interface DatabaseDump {
   persons: Person[];
   keywords: Keyword[];
-  similarities: SimilarityEdge[];
+  keywordVectors: KeywordVector[];
   configs: ScheduleConfig[];
   schedules: SchedulePlan[];
   unavailabilities: PersonUnavailability[];

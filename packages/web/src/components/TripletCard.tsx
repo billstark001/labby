@@ -1,25 +1,24 @@
 /** Triplet comparison Q&A card for building keyword similarity. */
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   keywordsSignal,
-  embeddingsSignal,
-  similarityEdgesSignal,
+  keywordVectorsSignal,
 } from '../store/index';
 import { displayName } from '@/i18n';
 import { useDatabase } from '../db/index';
 import {
-  nextTripletQuery,
-  applyTripletStep,
-  cloneEmbeddings,
-  embeddingsToSimilarities,
+  initKeywordVectors,
 } from '@labby/core';
-import type { SimilarityEdge, TripletQuery } from '@labby/core';
+import type { KeywordVector, TripletQuery } from '@labby/core';
 import * as s from '../styles/components.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
+import { applyTripletWithWasm, recommendTripletWithWasm } from '@/lib/embedding-engine';
+import { isServerDeployment } from '@/lib/runtime';
 
 /** Max number of recently answered pair keys to exclude from next query. */
-const RECENT_PAIR_LIMIT = 5;
+const RECENT_PAIR_LIMIT = 32;
+const PERSIST_DEBOUNCE_MS = 800;
 
 export function TripletCard() {
   const db = useDatabase();
@@ -30,26 +29,80 @@ export function TripletCard() {
   const [answered, setAnswered] = useState(0);
   // Track recently asked pair keys to avoid immediate repetition
   const [recentPairs, setRecentPairs] = useState<string[]>([]);
+  const [query, setQuery] = useState<TripletQuery | null>(null);
+  const [feedback, setFeedback] = useState<string>('');
+  const pendingPersistRef = useRef<Map<string, KeywordVector>>(new Map());
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recommendSeqRef = useRef(0);
 
-  function ensureEmbeddings() {
-    const current = embeddingsSignal.value;
+  async function flushPendingPersist(): Promise<void> {
+    if (isServerDeployment) {
+      pendingPersistRef.current.clear();
+      return;
+    }
+    if (pendingPersistRef.current.size === 0) return;
+    const values = [...pendingPersistRef.current.values()];
+    pendingPersistRef.current.clear();
+    await db.keywordVectors.putMany(values);
+  }
+
+  function schedulePersist(): void {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+    }
+    flushTimerRef.current = setTimeout(() => {
+      void flushPendingPersist();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+      }
+      void flushPendingPersist();
+    };
+  }, []);
+
+  function ensureKeywordVectors() {
+    const current = keywordVectorsSignal.value;
     const ids = keywords.map(k => k.id);
+    const copy = [...current];
+    const existing = new Set(copy.map(v => v.keywordId));
     let changed = false;
-    const copy = cloneEmbeddings(current);
     for (const id of ids) {
-      if (!copy.has(id)) {
-        copy.set(id, { x: Math.random() * 2 - 1, y: Math.random() * 2 - 1 });
+      if (!existing.has(id)) {
+        const [created] = initKeywordVectors([id]);
+        if (!created) continue;
+        copy.push(created);
         changed = true;
       }
     }
-    if (changed) embeddingsSignal.value = copy;
-    return embeddingsSignal.value;
+    if (changed) keywordVectorsSignal.value = copy;
+    return keywordVectorsSignal.value;
   }
 
-  const embeddings = ensureEmbeddings();
-  const ids = keywords.map(k => k.id);
-  const recentPairSet = new Set(recentPairs);
-  const query = nextTripletQuery(embeddings, ids, recentPairSet);
+  const vectors = ensureKeywordVectors();
+
+  useEffect(() => {
+    if (vectors.length < 3) {
+      setQuery(null);
+      return;
+    }
+
+    recommendSeqRef.current += 1;
+    const seq = recommendSeqRef.current;
+
+    void recommendTripletWithWasm(vectors, recentPairs)
+      .then((next) => {
+        if (recommendSeqRef.current !== seq) return;
+        setQuery(next);
+      })
+      .catch(() => {
+        if (recommendSeqRef.current !== seq) return;
+        setQuery(null);
+      });
+  }, [vectors, recentPairs]);
 
   /** Record the pair from this query as recently answered. */
   function addRecentPair(q: TripletQuery) {
@@ -64,30 +117,40 @@ export function TripletCard() {
   async function handleAnswer(choice: 'positive' | 'negative' | 'equal') {
     if (!query) return;
 
+    let answeredQuery = query;
+
     if (choice !== 'equal') {
-      const effectiveQuery: TripletQuery =
-        choice === 'positive'
-          ? query
-          : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
+      try {
+        const effectiveQuery: TripletQuery =
+          choice === 'positive'
+            ? query
+            : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
+        answeredQuery = effectiveQuery;
 
-      const updated = cloneEmbeddings(embeddingsSignal.value);
-      applyTripletStep(updated, effectiveQuery);
-      embeddingsSignal.value = updated;
+        const result = await applyTripletWithWasm(keywordVectorsSignal.value, effectiveQuery);
 
-      // Persist updated similarities
-      const simMap = embeddingsToSimilarities(updated);
-      await db.similarities.clear();
-      const newEdges: SimilarityEdge[] = [];
-      for (const [key, weight] of simMap) {
-        const [sourceId, targetId] = key.split('|');
-        const edge: SimilarityEdge = { sourceId, targetId, weight };
-        newEdges.push(edge);
-        await db.similarities.put(edge);
+        if (result.updatedVectors?.length) {
+          const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
+          for (const vec of result.updatedVectors) {
+            merged.set(vec.keywordId, vec);
+            if (!isServerDeployment) {
+              pendingPersistRef.current.set(vec.keywordId, vec);
+            }
+          }
+          if (!isServerDeployment) {
+            schedulePersist();
+          }
+          keywordVectorsSignal.value = [...merged.values()];
+        }
+        setFeedback(`Supervision applied. Updated ${result.updatedVectors.length} vectors.`);
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : 'Supervision failed.');
       }
-      similarityEdgesSignal.value = newEdges;
+    } else {
+      setFeedback('Equal selected. No vector update applied.');
     }
 
-    addRecentPair(query);
+    addRecentPair(answeredQuery);
     setAnswered(n => n + 1);
   }
 
@@ -128,6 +191,9 @@ export function TripletCard() {
         <p class={`${s.mt16} ${s.text12} ${s.textMuted}`}>
           {answered} comparison{answered > 1 ? 's' : ''} answered this session
         </p>
+      )}
+      {feedback && (
+        <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>{feedback}</p>
       )}
     </div>
   );

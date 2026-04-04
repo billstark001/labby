@@ -1,6 +1,6 @@
 import { signal, computed } from '@preact/signals';
-import type { Person, Keyword, SchedulePlan, ScheduleConfig, SimilarityEdge, PersonUnavailability } from '@labby/core';
-import type { EmbeddingMap } from '@labby/core';
+import { keywordVectorsToSimilarityMap } from '@labby/core';
+import type { Person, Keyword, SchedulePlan, ScheduleConfig, KeywordVector, PersonUnavailability } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -20,8 +20,7 @@ function readPersistedTheme(): 'light' | 'dark' {
 export const themeSignal = signal<'light' | 'dark'>(readPersistedTheme());
 export const personsSignal = signal<Person[]>([]);
 export const keywordsSignal = signal<Keyword[]>([]);
-export const similarityEdgesSignal = signal<SimilarityEdge[]>([]);
-export const embeddingsSignal = signal<EmbeddingMap>(new Map());
+export const keywordVectorsSignal = signal<KeywordVector[]>([]);
 export const configsSignal = signal<ScheduleConfig[]>([]);
 export const schedulesSignal = signal<SchedulePlan[]>([]);
 export const currentScheduleSignal = signal<SchedulePlan | null>(null);
@@ -52,15 +51,7 @@ export const keywordMapSignal = computed(() => {
 
 /** Flat similarity lookup: key = `${a}|${b}` (a < b lexicographically). */
 export const similarityMapSignal = computed(() => {
-  const m = new Map<string, number>();
-  for (const e of similarityEdgesSignal.value) {
-    const [a, b] =
-      e.sourceId < e.targetId
-        ? [e.sourceId, e.targetId]
-        : [e.targetId, e.sourceId];
-    m.set(`${a}|${b}`, e.weight);
-  }
-  return m;
+  return keywordVectorsToSimilarityMap(keywordVectorsSignal.value);
 });
 
 /** Presentation count per person in the current schedule. */

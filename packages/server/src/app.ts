@@ -7,23 +7,20 @@ import { z } from "zod";
 
 import type {
   Keyword,
+  KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
   SchedulePlan,
-  SimilarityEdge,
 } from "@labby/core";
 import {
   solveFull,
   solveIncremental,
-  applyTripletStep,
-  embeddingsToSimilarities,
-  initEmbeddings,
-  cloneEmbeddings,
-  type EmbeddingMap,
+  keywordVectorsToSimilarityLookup,
 } from "@labby/core";
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
+import { EmbeddingService } from "./lib/embedding-service.js";
 import { getActiveBackupService } from "./backup/service.js";
 import { AppError } from "./lib/errors.js";
 import { fail, ok } from "./lib/http.js";
@@ -56,13 +53,15 @@ export interface CreateAppOptions {
   bootstrapEmail?: string;
 }
 
-export function createApp(options: CreateAppOptions): { app: Hono; store: SqliteStore; } {
+export async function createApp(options: CreateAppOptions): Promise<{ app: Hono; store: SqliteStore; close: () => Promise<void>; }> {
   const dbConfig = options.db ?? { dialect: "sqlite", path: options.dbPath ?? "./run/labby.db" };
   if (dbConfig.dialect === "sqlite") {
     fs.mkdirSync(path.dirname(dbConfig.path), { recursive: true });
   }
 
   const store = new SqliteStore(dbConfig);
+  const embeddingService = new EmbeddingService(store);
+  await embeddingService.start();
   const authService = new AuthService({
     store,
     issuer: options.authIssuer ?? "labby-server",
@@ -327,31 +326,31 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
   app.put("/api/v1/db/keywords/:id", async (c) => {
     const keyword = await c.req.json<Keyword>();
     await store.putKeyword({ ...keyword, id: c.req.param("id") });
+    embeddingService.invalidate();
     return ok(c, await store.getKeyword(c.req.param("id")), 201);
   });
   app.delete("/api/v1/db/keywords/:id", async (c) => {
     await store.deleteKeyword(c.req.param("id"));
+    embeddingService.invalidate();
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/db/similarities", async (c) => {
+  app.get("/api/v1/db/keyword-vectors", async (c) => {
     const { offset, limit } = parsePagination(c.req.query());
-    return ok(c, toPage(await store.listSimilarities(), offset, limit));
+    return ok(c, toPage(await store.listKeywordVectors(), offset, limit));
   });
-  app.get("/api/v1/db/similarities/:sourceId/:targetId", async (c) => {
-    return ok(c, (await store.getSimilarity(c.req.param("sourceId"), c.req.param("targetId"))) ?? null);
+  app.get("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
+    return ok(c, (await store.getKeywordVector(c.req.param("keywordId"))) ?? null);
   });
-  app.put("/api/v1/db/similarities/:sourceId/:targetId", async (c) => {
-    const edge = await c.req.json<SimilarityEdge>();
-    await store.putSimilarity({
-      ...edge,
-      sourceId: c.req.param("sourceId"),
-      targetId: c.req.param("targetId"),
-    });
-    return ok(c, await store.getSimilarity(c.req.param("sourceId"), c.req.param("targetId")), 201);
+  app.put("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
+    const vector = await c.req.json<KeywordVector>();
+    await store.putKeywordVector({ ...vector, keywordId: c.req.param("keywordId") });
+    embeddingService.invalidate();
+    return ok(c, await store.getKeywordVector(c.req.param("keywordId")), 201);
   });
-  app.delete("/api/v1/db/similarities/:sourceId/:targetId", async (c) => {
-    await store.deleteSimilarity(c.req.param("sourceId"), c.req.param("targetId"));
+  app.delete("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
+    await store.deleteKeywordVector(c.req.param("keywordId"));
+    embeddingService.invalidate();
     return c.body(null, 204);
   });
 
@@ -425,16 +424,12 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     const persons = body.personIds
       ? allPersons.filter(p => body.personIds!.includes(p.id))
       : allPersons;
-    const similarities = await store.listSimilarities();
+    const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
 
-    const simMap = new Map<string, number>();
-    for (const e of similarities) {
-      const [a, b] = e.sourceId < e.targetId ? [e.sourceId, e.targetId] : [e.targetId, e.sourceId];
-      simMap.set(`${a}|${b}`, e.weight);
-    }
+    const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
-    const plan = solveFull({ persons, similarities: simMap, config, unavailabilities });
+    const plan = solveFull({ persons, similarities: similarityLookup, config, unavailabilities });
     return ok(c, plan);
   });
 
@@ -449,18 +444,14 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     const persons = body.personIds
       ? allPersons.filter(p => body.personIds!.includes(p.id))
       : allPersons;
-    const similarities = await store.listSimilarities();
+    const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
 
-    const simMap = new Map<string, number>();
-    for (const e of similarities) {
-      const [a, b] = e.sourceId < e.targetId ? [e.sourceId, e.targetId] : [e.targetId, e.sourceId];
-      simMap.set(`${a}|${b}`, e.weight);
-    }
+    const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
     const plan = solveIncremental({
       persons,
-      similarities: simMap,
+      similarities: similarityLookup,
       config,
       unavailabilities,
       previousPlan,
@@ -477,44 +468,100 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
     anchorId: z.string().min(1),
     positiveId: z.string().min(1),
     negativeId: z.string().min(1),
+    margin: z.number().positive().optional(),
     learningRate: z.number().optional(),
-    embeddings: z.record(z.string(), z.object({ x: z.number(), y: z.number() })).optional(),
+  });
+
+  const pairUpdateSchema = z.object({
+    leftId: z.string().min(1),
+    rightId: z.string().min(1),
+    targetDistance: z.number().nonnegative(),
+    learningRate: z.number().optional(),
+  });
+
+  const tripletRecommendSchema = z.object({
+    excludedPairs: z.array(z.string().min(3)).optional(),
+  });
+
+  const supervisionSchema = z.discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('pair'),
+      leftId: z.string().min(1),
+      rightId: z.string().min(1),
+      targetDistance: z.number().nonnegative(),
+      learningRate: z.number().optional(),
+    }),
+    z.object({
+      kind: z.literal('ranked'),
+      anchorId: z.string().min(1),
+      orderedIds: z.array(z.string().min(1)).min(2),
+      margin: z.number().positive().optional(),
+      learningRate: z.number().optional(),
+    }),
+  ]);
+
+  app.post("/api/v1/nlp/recommend-triplet", async (c) => {
+    const body = tripletRecommendSchema.parse(await c.req.json());
+    const query = await embeddingService.recommendTriplet(body.excludedPairs ?? []);
+    return ok(c, {
+      query,
+    });
+  });
+
+  app.post('/api/v1/nlp/apply-supervision', async (c) => {
+    const query = supervisionSchema.parse(await c.req.json());
+    try {
+      const result = await embeddingService.applySupervision(query);
+      return ok(c, result);
+    } catch {
+      throw new AppError('VALIDATION_ERROR', 'supervision ids not found', 400);
+    }
   });
 
   app.post("/api/v1/nlp/update-similarity", async (c) => {
     const body = tripletUpdateSchema.parse(await c.req.json());
-
-    const allKeywords = await store.listKeywords();
-    const keywordIds = allKeywords.map(k => k.id);
-
-    let embeddings: EmbeddingMap;
-    if (body.embeddings) {
-      embeddings = new Map(Object.entries(body.embeddings));
-    } else {
-      embeddings = initEmbeddings(keywordIds);
-    }
-
-    // Apply one triplet gradient step (modifies embeddings clone in-place)
-    const updated = cloneEmbeddings(embeddings);
-    applyTripletStep(
-      updated,
-      { anchorId: body.anchorId, positiveId: body.positiveId, negativeId: body.negativeId },
-      body.learningRate,
-    );
-
-    // Recompute and persist similarities from updated embeddings
-    const simMap = embeddingsToSimilarities(updated);
-    const updatedPairs: SimilarityEdge[] = [];
-    for (const [key, weight] of simMap) {
-      const [sourceId, targetId] = key.split('|');
-      if (!sourceId || !targetId) continue;
-      await store.putSimilarity({ sourceId, targetId, weight });
-      updatedPairs.push({ sourceId, targetId, weight });
+    let updatedVectors: KeywordVector[];
+    let loss: number;
+    try {
+      const result = await embeddingService.updateTriplet(
+        body.anchorId,
+        body.positiveId,
+        body.negativeId,
+        body.margin ?? 0.2,
+        body.learningRate ?? 0.05,
+      );
+      loss = result.loss;
+      updatedVectors = result.updatedVectors;
+    } catch {
+      throw new AppError("VALIDATION_ERROR", "triplet ids not found", 400);
     }
 
     return ok(c, {
-      embeddings: Object.fromEntries(updated),
-      updatedPairs,
+      loss,
+      updatedVectors,
+    });
+  });
+
+  app.post("/api/v1/nlp/update-pair", async (c) => {
+    const body = pairUpdateSchema.parse(await c.req.json());
+    let updatedVectors: KeywordVector[];
+    let loss: number;
+    try {
+      const result = await embeddingService.updatePair(
+        body.leftId,
+        body.rightId,
+        body.targetDistance,
+        body.learningRate ?? 0.05,
+      );
+      loss = result.loss;
+      updatedVectors = result.updatedVectors;
+    } catch {
+      throw new AppError("VALIDATION_ERROR", "pair ids not found", 400);
+    }
+
+    return ok(c, {
+      loss,
+      updatedVectors,
     });
   });
 
@@ -531,5 +578,12 @@ export function createApp(options: CreateAppOptions): { app: Hono; store: Sqlite
 
   app.notFound((c) => fail(c, "VALIDATION_ERROR", "route not found", 404));
 
-  return { app, store };
+  return {
+    app,
+    store,
+    close: async () => {
+      await embeddingService.shutdown();
+      await store.close();
+    },
+  };
 }

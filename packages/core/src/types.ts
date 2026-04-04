@@ -27,6 +27,20 @@ export interface SimilarityEdge {
   weight: number; // 0–1 (higher = more similar)
 }
 
+/** On-demand keyword similarity lookup, used to avoid eagerly building O(N^2) maps. */
+export interface SimilarityLookup {
+  getPairSimilarity(leftKeywordId: string, rightKeywordId: string): number | undefined;
+}
+
+/** Persistent keyword vector state owned by the Rust embedding engine. */
+export interface KeywordVector {
+  keywordId: string;
+  vector64: number[];
+  x: number;
+  y: number;
+  updatedAt: number;
+}
+
 /** Weekly scheduling rule configuration. */
 export interface ScheduleConfig {
   id: string;
@@ -82,7 +96,7 @@ export interface Presentation {
 export interface SolverInput {
   persons: Person[];
   /** Flat similarity map: key = `${sourceId}|${targetId}`, value = weight */
-  similarities: Map<string, number>;
+  similarities: Map<string, number> | SimilarityLookup;
   config: ScheduleConfig;
   /** Optional: persons unavailable on certain date ranges */
   unavailabilities?: PersonUnavailability[];
@@ -102,6 +116,33 @@ export interface TripletQuery {
   positiveId: string; // keyword C ("A is closer to C …")
   negativeId: string; // keyword B ("… than to B")
 }
+
+/** Pair distance supervision query (2 points). */
+export interface PairSupervisionQuery {
+  kind: 'pair';
+  leftId: string;
+  rightId: string;
+  targetDistance: number;
+  learningRate?: number;
+}
+
+/**
+ * Ranked supervision query (arbitrary points > 2).
+ *
+ * `orderedIds` are interpreted as "closer to farther from anchor".
+ * Example: [p1, p2, p3] compiles to constraints
+ * (anchor, p1, p2) and (anchor, p2, p3).
+ */
+export interface RankedSupervisionQuery {
+  kind: 'ranked';
+  anchorId: string;
+  orderedIds: string[];
+  margin?: number;
+  learningRate?: number;
+}
+
+/** Unified supervision query for similarity training. */
+export type SupervisionQuery = PairSupervisionQuery | RankedSupervisionQuery;
 
 // ---------------------------------------------------------------------------
 // Schedule constraints

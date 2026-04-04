@@ -1,6 +1,6 @@
 /**
  * IndexedDB abstraction using the `idb` library.
- * Object stores: persons, keywords, similarities, configs, schedules, unavailabilities.
+ * Object stores: persons, keywords, keyword vectors, configs, schedules, unavailabilities.
  */
 
 import { IDBPDatabase } from 'idb';
@@ -17,7 +17,7 @@ import {
 } from './idb';
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
-import { personsSignal, keywordsSignal, similarityEdgesSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
+import { personsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
 import { databaseMode } from '@/lib/runtime';
 
 const DB_CONFIG = databaseMode;
@@ -83,15 +83,15 @@ export function useDatabase() {
 export async function dumpDatabase(): Promise<DatabaseDump> {
   const dbInstance = db.value;
   if (!dbInstance) throw new Error('Database is not initialized');
-  const [persons, keywords, similarities, configs, schedules, unavailabilities] = await Promise.all([
+  const [persons, keywords, keywordVectors, configs, schedules, unavailabilities] = await Promise.all([
     listAllPaginated(dbInstance.persons),
     listAllPaginated(dbInstance.keywords),
-    listAllPaginated(dbInstance.similarities),
+    listAllPaginated(dbInstance.keywordVectors),
     listAllPaginated(dbInstance.configs),
     listAllPaginated(dbInstance.schedules),
     listAllPaginated(dbInstance.unavailabilities),
   ]);
-  return { persons, keywords, similarities, configs, schedules, unavailabilities };
+  return { persons, keywords, keywordVectors, configs, schedules, unavailabilities };
 }
 
 export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
@@ -104,10 +104,10 @@ export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
 }
 
 export async function loadDatabaseSignals(db: LabbyDB) {
-  const [persons, keywords, similarities, configs, schedules, unavailabilities] = await Promise.all([
+  const [persons, keywords, keywordVectors, configs, schedules, unavailabilities] = await Promise.all([
     listAllPaginated(db.persons),
     listAllPaginated(db.keywords),
-    listAllPaginated(db.similarities),
+    listAllPaginated(db.keywordVectors),
     listAllPaginated(db.configs),
     listAllPaginated(db.schedules),
     listAllPaginated(db.unavailabilities),
@@ -115,7 +115,7 @@ export async function loadDatabaseSignals(db: LabbyDB) {
 
   personsSignal.value = persons ?? [];
   keywordsSignal.value = keywords ?? [];
-  similarityEdgesSignal.value = similarities ?? [];
+  keywordVectorsSignal.value = keywordVectors ?? [];
   configsSignal.value = configs ?? [];
   schedulesSignal.value = schedules ?? [];
   unavailabilitiesSignal.value = unavailabilities ?? [];
@@ -134,8 +134,8 @@ export async function loadKeywordsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE
 }
 
 export async function loadSimilaritiesFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.similarities, items => {
-    similarityEdgesSignal.value = items;
+  await setSignalFromFirstPage(db.keywordVectors, items => {
+    keywordVectorsSignal.value = items;
   }, pageSize);
 }
 
@@ -166,7 +166,7 @@ export async function loadAllKeywords(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE)
 }
 
 export async function loadAllSimilarities(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  similarityEdgesSignal.value = await listAllPaginated(db.similarities, pageSize);
+  keywordVectorsSignal.value = await listAllPaginated(db.keywordVectors, pageSize);
 }
 
 export async function loadAllConfigs(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
@@ -190,7 +190,7 @@ export async function listKeywordsPage(db: LabbyDB, offset: number, limit: numbe
 }
 
 export async function listSimilaritiesPage(db: LabbyDB, offset: number, limit: number) {
-  return db.similarities.list({ offset, limit });
+  return db.keywordVectors.list({ offset, limit });
 }
 
 export async function listConfigsPage(db: LabbyDB, offset: number, limit: number) {

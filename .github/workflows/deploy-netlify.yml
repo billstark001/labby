@@ -30,16 +30,26 @@ jobs:
         with:
           version: 10
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter @labby/web build:frontend
+        run: |
+          pnpm --filter @labby/core rust:build:wasm:web
+          pnpm --filter @labby/web build:frontend
 
       - name: Deploy to Netlify
         uses: nwtgck/actions-netlify@v3
         with:
-          publish-dir: packages/web/dist
+          publish-dir: web/dist
           production-branch: main
           github-token: ${{ secrets.GITHUB_TOKEN }}
           deploy-message: "Deploy from GitHub Actions – ${{ github.sha }}"

@@ -1,6 +1,8 @@
 import type {
   Keyword,
   KeywordStore,
+  KeywordVector,
+  KeywordVectorStore,
   LabbyDB,
   Person,
   PersonStore,
@@ -10,8 +12,6 @@ import type {
   ScheduleConfigStore,
   SchedulePlan,
   SchedulePlanStore,
-  SimilarityEdge,
-  SimilarityStore,
   ListQuery,
   PaginatedResult,
 } from '@labby/core';
@@ -65,10 +65,17 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   const schedules = createEntityStore<SchedulePlan>(client, '/db/schedules') satisfies SchedulePlanStore;
   const unavailabilities = createEntityStore<PersonUnavailability>(client, '/db/unavailabilities') satisfies PersonUnavailabilityStore;
 
-  const similarities: SimilarityStore = {
-    get: async (sourceId: string, targetId: string) => {
-      const value = await client.request<SimilarityEdge | null>(`/db/similarities/${sourceId}/${targetId}`, { method: 'GET' });
+  const keywordVectors: KeywordVectorStore = {
+    get: async (keywordId: string) => {
+      const value = await client.request<KeywordVector | null>(`/db/keyword-vectors/${keywordId}`, { method: 'GET' });
       return value ?? undefined;
+    },
+    getMany: async (keywordIds: string[]) => {
+      const tasks = keywordIds.map((keywordId) =>
+        client.request<KeywordVector | null>(`/db/keyword-vectors/${keywordId}`, { method: 'GET' }),
+      );
+      const values = await Promise.all(tasks);
+      return values.filter((value): value is KeywordVector => Boolean(value));
     },
     list: (query: ListQuery) => {
       const normalized = normalizeListQuery(query);
@@ -76,30 +83,38 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
         offset: String(normalized.offset),
         limit: String(normalized.limit),
       });
-      return client.request<PaginatedResult<SimilarityEdge>>(`/db/similarities?${params.toString()}`, { method: 'GET' });
+      return client.request<PaginatedResult<KeywordVector>>(`/db/keyword-vectors?${params.toString()}`, { method: 'GET' });
     },
-    put: (value: SimilarityEdge) => client.request<SimilarityEdge>(`/db/similarities/${value.sourceId}/${value.targetId}`, {
+    put: (value: KeywordVector) => client.request<KeywordVector>(`/db/keyword-vectors/${value.keywordId}`, {
       method: 'PUT',
       body: JSON.stringify(value),
     }).then(() => undefined),
-    delete: (sourceId: string, targetId: string) => client.request<void>(`/db/similarities/${sourceId}/${targetId}`, { method: 'DELETE' }),
+    putMany: async (values: KeywordVector[]) => {
+      await Promise.all(values.map((value) =>
+        client.request<KeywordVector>(`/db/keyword-vectors/${value.keywordId}`, {
+          method: 'PUT',
+          body: JSON.stringify(value),
+        }),
+      ));
+    },
+    delete: (keywordId: string) => client.request<void>(`/db/keyword-vectors/${keywordId}`, { method: 'DELETE' }),
     clear: async () => {
-      const firstPage = await client.request<PaginatedResult<SimilarityEdge>>('/db/similarities?offset=0&limit=100', { method: 'GET' });
+      const firstPage = await client.request<PaginatedResult<KeywordVector>>('/db/keyword-vectors?offset=0&limit=100', { method: 'GET' });
       let values = [...firstPage.items];
       let offset = firstPage.items.length;
       while (offset < firstPage.total) {
-        const page = await client.request<PaginatedResult<SimilarityEdge>>(`/db/similarities?offset=${offset}&limit=100`, { method: 'GET' });
+        const page = await client.request<PaginatedResult<KeywordVector>>(`/db/keyword-vectors?offset=${offset}&limit=100`, { method: 'GET' });
         values = values.concat(page.items);
         offset += page.items.length;
       }
-      await Promise.all(values.map(value => client.request<void>(`/db/similarities/${value.sourceId}/${value.targetId}`, { method: 'DELETE' })));
+      await Promise.all(values.map(value => client.request<void>(`/db/keyword-vectors/${value.keywordId}`, { method: 'DELETE' })));
     },
   };
 
   return {
     persons,
     keywords,
-    similarities,
+    keywordVectors,
     configs,
     schedules,
     unavailabilities,
