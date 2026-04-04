@@ -1,5 +1,6 @@
 import type { KeywordVector, SupervisionQuery, TripletQuery } from '@labby/core';
 import initWasm, { WasmEmbeddingEngine } from '../../../core/native/dist/wasm-web/labby_core.js';
+import wasmBinaryUrl from '../../../core/native/dist/wasm-web/labby_core_bg.wasm?url';
 import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
 
@@ -27,7 +28,7 @@ function stableIdCompare(a: string, b: string): number {
 }
 
 async function loadEngine(): Promise<WasmEngineLike> {
-  await initWasm();
+  await initWasm({ module_or_path: wasmBinaryUrl });
   return new WasmEmbeddingEngine(1024) as WasmEngineLike;
 }
 
