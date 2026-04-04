@@ -6,6 +6,7 @@ import { logger } from "hono/logger";
 import { z } from "zod";
 
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
@@ -14,6 +15,9 @@ import type {
   SchedulePlan,
 } from "@labby/core";
 import {
+  computeScheduleMetrics,
+  explainScheduleMetrics,
+  renderTemplate,
   solveFull,
   solveIncremental,
   keywordVectorsToSimilarityLookup,
@@ -132,6 +136,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.use("/api/v1/db/*", requireClientAuth(authService));
   app.use("/api/v1/solver/*", requireClientAuth(authService));
   app.use("/api/v1/nlp/*", requireClientAuth(authService));
+  app.use("/api/v1/templates/*", requireClientAuth(authService));
   app.use("/api/v1/users/*", requireClientAuth(authService));
   app.use("/api/v1/system/*", requireClientAuth(authService));
   app.use("/api/v1/auth/logout", requireClientAuth(authService));
@@ -145,7 +150,18 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   });
   app.use("/api/v1/solver/*", requireMinRole(UserRole.Admin));
   app.use("/api/v1/nlp/*", requireMinRole(UserRole.Admin));
+  app.use("/api/v1/templates/*", requireMinRole(UserRole.Admin));
   app.use("/api/v1/system/backup/*", requireMinRole(UserRole.Admin));
+
+  function toIsoDateFromEpoch(epochMs: number): string {
+    return new Date(epochMs).toISOString().slice(0, 10);
+  }
+
+  function defaultIncrementalDate(): string {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() + 7);
+    return toIsoDateFromEpoch(date.getTime());
+  }
 
   app.get("/health", (c) => c.json({ ok: true, now: Date.now() }));
 
@@ -399,6 +415,21 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return c.body(null, 204);
   });
 
+  app.get("/api/v1/db/email-tasks", async (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(await store.listEmailTasks(), offset, limit));
+  });
+  app.get("/api/v1/db/email-tasks/:id", async (c) => ok(c, (await store.getEmailTask(c.req.param("id"))) ?? null));
+  app.put("/api/v1/db/email-tasks/:id", async (c) => {
+    const task = await c.req.json<EmailTask>();
+    await store.putEmailTask({ ...task, id: c.req.param("id") });
+    return ok(c, await store.getEmailTask(c.req.param("id")), 201);
+  });
+  app.delete("/api/v1/db/email-tasks/:id", async (c) => {
+    await store.deleteEmailTask(c.req.param("id"));
+    return c.body(null, 204);
+  });
+
   // ---------------------------------------------------------------------------
   // Solver routes (call @labby/core)
   // ---------------------------------------------------------------------------
@@ -413,6 +444,11 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     previousPlanId: z.string().min(1),
     changeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     personIds: z.array(z.string()).optional(),
+  });
+
+  const solverMetricsInputSchema = z.object({
+    scheduleId: z.string().min(1),
+    sessionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   });
 
   app.post("/api/v1/solver/run", async (c) => {
@@ -430,7 +466,18 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
     const plan = solveFull({ persons, similarities: similarityLookup, config, unavailabilities });
-    return ok(c, plan);
+    const metrics = computeScheduleMetrics(plan, {
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+    });
+    return ok(c, {
+      plan,
+      metrics,
+      explanations: explainScheduleMetrics(metrics),
+      warnings: [] as string[],
+    });
   });
 
   app.post("/api/v1/solver/run-incremental", async (c) => {
@@ -449,6 +496,12 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
+    const warnings: string[] = [];
+    const suggestedDate = defaultIncrementalDate();
+    if (body.changeDate < suggestedDate) {
+      warnings.push(`changeDate ${body.changeDate} is earlier than suggested default ${suggestedDate}`);
+    }
+
     const plan = solveIncremental({
       persons,
       similarities: similarityLookup,
@@ -457,7 +510,84 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       previousPlan,
       changeDate: body.changeDate,
     });
-    return ok(c, plan);
+    const metrics = computeScheduleMetrics(plan, {
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+    });
+    return ok(c, {
+      plan,
+      metrics,
+      explanations: explainScheduleMetrics(metrics),
+      warnings,
+      startsInclusive: true,
+      suggestedChangeDate: suggestedDate,
+    });
+  });
+
+  app.post("/api/v1/solver/metrics", async (c) => {
+    const body = solverMetricsInputSchema.parse(await c.req.json());
+    const plan = await store.getSchedule(body.scheduleId);
+    if (!plan) throw new AppError("VALIDATION_ERROR", "schedule not found", 404);
+    const config = await store.getConfig(plan.configId);
+    if (!config) throw new AppError("VALIDATION_ERROR", "config not found", 404);
+
+    const persons = await store.listPersons();
+    const vectors = await store.listKeywordVectors();
+    const unavailabilities = await store.listUnavailabilities();
+    const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
+
+    if (!body.sessionDate) {
+      const metrics = computeScheduleMetrics(plan, {
+        persons,
+        similarities: similarityLookup,
+        config,
+        unavailabilities,
+      });
+      return ok(c, { metrics, explanations: explainScheduleMetrics(metrics) });
+    }
+
+    const sessionIndex = plan.sessions.findIndex((s) => s.date === body.sessionDate);
+    if (sessionIndex < 0) {
+      throw new AppError("VALIDATION_ERROR", "session date not found in schedule", 404);
+    }
+
+    const sessionOnlyPlan: SchedulePlan = {
+      ...plan,
+      sessions: [plan.sessions[sessionIndex]],
+    };
+
+    const historical = plan.sessions.slice(0, sessionIndex);
+    const metrics = computeScheduleMetrics(sessionOnlyPlan, {
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+    }, historical);
+
+    return ok(c, {
+      metrics,
+      explanations: explainScheduleMetrics(metrics),
+      scope: {
+        scheduleId: body.scheduleId,
+        sessionDate: body.sessionDate,
+      },
+    });
+  });
+
+  const templatePreviewSchema = z.object({
+    templateText: z.string(),
+    context: z.record(z.string(), z.unknown()).default({}),
+    format: z.enum(['markdown', 'html']).optional(),
+  });
+
+  app.post('/api/v1/templates/preview', async (c) => {
+    const body = templatePreviewSchema.parse(await c.req.json());
+    const result = renderTemplate(body.templateText, body.context, {
+      format: body.format,
+    });
+    return ok(c, result);
   });
 
   // ---------------------------------------------------------------------------

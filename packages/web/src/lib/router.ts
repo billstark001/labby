@@ -1,7 +1,7 @@
 import { signal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 
-export type AppRoute = "/login" | "/schedule" | "/persons" | "/keywords" | "/graph" | "/settings";
+export type AppRoute = "/login" | "/schedule" | "/persons" | "/keywords" | "/email-tasks" | "/graph" | "/settings";
 
 export function normalizePath(rawHash: string): string {
   // Strip one or more leading '#' characters, not just one

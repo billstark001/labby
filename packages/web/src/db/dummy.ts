@@ -1,4 +1,6 @@
 import type {
+  EmailTask,
+  EmailTaskStore,
   Keyword,
   KeywordStore,
   KeywordVector,
@@ -78,6 +80,14 @@ export function createDummyDB(): LabbyDB {
     clear: async () => void 0,
   };
 
+  const emailTasksStore: EmailTaskStore = {
+    get: async (id: string) => undefined,
+    list: async (query: ListQuery) => emptyPage<EmailTask>(query),
+    put: async (value: EmailTask) => void 0,
+    delete: async (id: string) => void 0,
+    clear: async () => void 0,
+  };
+
   const db: LabbyDB = {
     persons: personsStore,
     keywords: keywordsStore,
@@ -85,6 +95,7 @@ export function createDummyDB(): LabbyDB {
     configs: configsStore,
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
+    emailTasks: emailTasksStore,
   };
 
   return db;

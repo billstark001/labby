@@ -10,7 +10,9 @@
  */
 
 import type {
+  MetricExplanation,
   SchedulePlan,
+  ScheduleMetrics,
   Session,
   Presentation,
   SolverInput,
@@ -116,6 +118,17 @@ interface CostContext {
   similarities: Map<string, number> | SimilarityLookup;
   r: number; // target similarity radius
   constraints?: import('./types.js').ScheduleConstraint[];
+}
+
+interface CostBreakdown {
+  uniformityPenalty: number;
+  questionerPenalty: number;
+  relevancePenalty: number;
+  presenterLoadPenalty: number;
+  questionerLoadPenalty: number;
+  totalRolePenalty: number;
+  invalidAssignmentPenalty: number;
+  constraintPenalty: number;
 }
 
 interface AssignmentState {
@@ -319,11 +332,11 @@ function repairQuestionersForTargets(
   }
 }
 
-function computeCost(
+function computeCostBreakdown(
   sessions: Session[],
   ctx: CostContext,
   historicalSessions: Session[] = [],
-): number {
+): CostBreakdown {
   const allSessions = [...historicalSessions, ...sessions];
   const personIds = [...ctx.personKeywords.keys()];
 
@@ -437,16 +450,97 @@ function computeCost(
     }
   }
 
+  return {
+    uniformityPenalty,
+    questionerPenalty,
+    relevancePenalty,
+    presenterLoadPenalty,
+    questionerLoadPenalty,
+    totalRolePenalty,
+    invalidAssignmentPenalty,
+    constraintPenalty,
+  };
+}
+
+function weightedTotalCost(breakdown: CostBreakdown): number {
   return (
-    uniformityPenalty * 2
-    + questionerPenalty * 5
-    + relevancePenalty
-    + presenterLoadPenalty * 12
-    + questionerLoadPenalty * 10
-    + totalRolePenalty * 4
-    + invalidAssignmentPenalty
-    + constraintPenalty
+    breakdown.uniformityPenalty * 2
+    + breakdown.questionerPenalty * 5
+    + breakdown.relevancePenalty
+    + breakdown.presenterLoadPenalty * 12
+    + breakdown.questionerLoadPenalty * 10
+    + breakdown.totalRolePenalty * 4
+    + breakdown.invalidAssignmentPenalty
+    + breakdown.constraintPenalty
   );
+}
+
+function toScheduleMetrics(breakdown: CostBreakdown): ScheduleMetrics {
+  return {
+    ...breakdown,
+    totalCost: weightedTotalCost(breakdown),
+  };
+}
+
+function buildCostContext(input: SolverInput): CostContext {
+  const activePeople = input.persons.filter(p => !p.disabled);
+  const personKeywords = new Map(activePeople.map(p => [p.id, p.keywordIds]));
+  return {
+    personKeywords,
+    similarities: input.similarities,
+    r: input.config.targetSimilarityRadius,
+    constraints: input.constraints ?? [],
+  };
+}
+
+function metricSummary(key: keyof ScheduleMetrics, value: number): string {
+  if (key === 'totalCost') return `Overall objective value: ${value.toFixed(3)} (lower is better).`;
+  if (key === 'uniformityPenalty') return `Presentation interval variance is ${value.toFixed(3)}.`;
+  if (key === 'questionerPenalty') return `Repeated questioner-presenter pairs contribute ${value.toFixed(3)}.`;
+  if (key === 'relevancePenalty') return `Similarity mismatch contributes ${value.toFixed(3)}.`;
+  if (key === 'presenterLoadPenalty') return `Presenter load imbalance variance is ${value.toFixed(3)}.`;
+  if (key === 'questionerLoadPenalty') return `Questioner load imbalance variance is ${value.toFixed(3)}.`;
+  if (key === 'totalRolePenalty') return `Overall role imbalance variance is ${value.toFixed(3)}.`;
+  if (key === 'invalidAssignmentPenalty') return `Hard assignment violations contribute ${value.toFixed(3)}.`;
+  return `Constraint effects contribute ${value.toFixed(3)}.`;
+}
+
+export function explainScheduleMetrics(metrics: ScheduleMetrics): MetricExplanation[] {
+  const orderedKeys: Array<keyof ScheduleMetrics> = [
+    'uniformityPenalty',
+    'questionerPenalty',
+    'relevancePenalty',
+    'presenterLoadPenalty',
+    'questionerLoadPenalty',
+    'totalRolePenalty',
+    'invalidAssignmentPenalty',
+    'constraintPenalty',
+    'totalCost',
+  ];
+  return orderedKeys.map((key) => ({
+    key,
+    label: key,
+    value: metrics[key],
+    summary: metricSummary(key, metrics[key]),
+  }));
+}
+
+export function computeScheduleMetrics(
+  plan: SchedulePlan,
+  input: SolverInput,
+  historicalSessions: Session[] = [],
+): ScheduleMetrics {
+  const ctx = buildCostContext(input);
+  const breakdown = computeCostBreakdown(plan.sessions, ctx, historicalSessions);
+  return toScheduleMetrics(breakdown);
+}
+
+function computeCost(
+  sessions: Session[],
+  ctx: CostContext,
+  historicalSessions: Session[] = [],
+): number {
+  return weightedTotalCost(computeCostBreakdown(sessions, ctx, historicalSessions));
 }
 
 // ---------------------------------------------------------------------------

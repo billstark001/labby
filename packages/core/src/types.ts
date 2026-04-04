@@ -62,6 +62,66 @@ export interface ScheduleConfig {
   metadata?: Record<string, unknown>;
 }
 
+/** User-configurable scheduled email task. */
+export interface EmailTask {
+  id: string;
+  configId: string;
+  /** 0=Sun..6=Sat */
+  daysOfWeek: number[];
+  emails: string[];
+  /** 0 means unlimited sends for each recipient. */
+  recentTimes: number;
+  /** Template source text, parsed by the template module. */
+  templateText: string;
+  /** Per-recipient successful send count. */
+  sentCounts?: Record<string, number>;
+  /** Last execution timestamp in epoch ms. */
+  lastRunAt?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export type TemplateFormat = 'markdown' | 'html';
+
+export interface TemplateRenderError {
+  expression: string;
+  message: string;
+  start: number;
+  end: number;
+  kind: 'lex' | 'parse' | 'eval' | 'template';
+}
+
+export interface TemplateRenderResult {
+  output: string;
+  errors: TemplateRenderError[];
+}
+
+export interface ScheduleMetrics {
+  uniformityPenalty: number;
+  questionerPenalty: number;
+  relevancePenalty: number;
+  presenterLoadPenalty: number;
+  questionerLoadPenalty: number;
+  totalRolePenalty: number;
+  invalidAssignmentPenalty: number;
+  constraintPenalty: number;
+  totalCost: number;
+}
+
+export interface MetricExplanation {
+  key: keyof ScheduleMetrics;
+  label: string;
+  value: number;
+  summary: string;
+}
+
+export interface ScheduleMutationInput {
+  previousPlan: SchedulePlan;
+  /** Target session index in the previous plan. */
+  index: number;
+  action: 'insert' | 'delete';
+  strategy: 'shift' | 'in-place';
+}
+
 /** Immutable snapshot of a generated schedule. */
 export interface SchedulePlan {
   id: string;

@@ -5,6 +5,8 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type {
   DatabaseDump,
+  EmailTask,
+  EmailTaskStore,
   Keyword,
   KeywordStore,
   KeywordVector,
@@ -23,7 +25,7 @@ import type {
 } from '@labby/core';
 
 const DB_NAME = 'labby';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 interface KeywordVectorRecord {
   keywordId: string;
@@ -88,6 +90,12 @@ export async function createDB(): Promise<IDBPDatabase> {
         }
         if (!db.objectStoreNames.contains('keyword_vectors')) {
           db.createObjectStore('keyword_vectors', { keyPath: 'keywordId' });
+        }
+      }
+      if (oldVersion < 4) {
+        if (!db.objectStoreNames.contains('email_tasks')) {
+          const store = db.createObjectStore('email_tasks', { keyPath: 'id' });
+          store.createIndex('configId', 'configId');
         }
       }
     },
@@ -202,6 +210,14 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
     clear: () => idb.clear('unavailabilities'),
   };
 
+  const emailTasksStore: EmailTaskStore = {
+    get: (id: string) => idb.get('email_tasks', id),
+    list: (query: ListQuery) => listStore<EmailTask>(idb, 'email_tasks', query),
+    put: (value: EmailTask) => idb.put('email_tasks', value).then(() => void 0),
+    delete: (id: string) => idb.delete('email_tasks', id),
+    clear: () => idb.clear('email_tasks'),
+  };
+
   const db: LabbyDB = {
     persons: personsStore,
     keywords: keywordsStore,
@@ -209,6 +225,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
     configs: configsStore,
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
+    emailTasks: emailTasksStore,
   };
 
   return db;
@@ -217,7 +234,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
 
 export async function restoreIDBDatabase(dbInst: IDBPDatabase, dump: DatabaseDump): Promise<void> {
-  const storeNames = ['persons', 'keywords', 'keyword_vectors', 'configs', 'schedules', 'unavailabilities'] as const;
+  const storeNames = ['persons', 'keywords', 'keyword_vectors', 'configs', 'schedules', 'unavailabilities', 'email_tasks'] as const;
   const tx = dbInst.transaction(storeNames, 'readwrite');
   await Promise.all(storeNames.map(n => tx.objectStore(n).clear()));
   await Promise.all([
@@ -227,6 +244,7 @@ export async function restoreIDBDatabase(dbInst: IDBPDatabase, dump: DatabaseDum
     ...dump.configs.map(c => tx.objectStore('configs').put(c)),
     ...dump.schedules.map(s => tx.objectStore('schedules').put(s)),
     ...dump.unavailabilities.map(u => tx.objectStore('unavailabilities').put(u)),
+    ...dump.emailTasks.map(e => tx.objectStore('email_tasks').put(e)),
   ]);
   await tx.done;
 }

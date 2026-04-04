@@ -8,6 +8,7 @@ import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
@@ -54,6 +55,7 @@ export interface DatabaseBackupSnapshot {
     configs: Array<Record<string, string | number | null>>;
     schedules: Array<Record<string, string | number | null>>;
     unavailabilities: Array<Record<string, string | number | null>>;
+    emailTasks: Array<Record<string, string | number | null>>;
     users: Array<Record<string, string | number | null>>;
     refreshTokens: Array<Record<string, string | number | null>>;
   };
@@ -244,6 +246,13 @@ export class SqliteStore {
       );
       CREATE INDEX IF NOT EXISTS unavailabilities_person_idx ON unavailabilities (person_id);
       CREATE INDEX IF NOT EXISTS unavailabilities_config_idx ON unavailabilities (config_id);
+
+      CREATE TABLE IF NOT EXISTS email_tasks (
+        id TEXT PRIMARY KEY,
+        config_id TEXT NOT NULL,
+        payload TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS email_tasks_config_idx ON email_tasks (config_id);
 
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -451,6 +460,7 @@ export class SqliteStore {
     await this.ensureReady();
     await this.run(`
       DELETE FROM keyword_vectors;
+      DELETE FROM email_tasks;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
       DELETE FROM configs;
@@ -695,6 +705,37 @@ export class SqliteStore {
     await this.executeCommand(sql`DELETE FROM configs`);
   }
 
+  async getEmailTask(id: string): Promise<EmailTask | undefined> {
+    await this.ensureReady();
+    return this.getPayload<EmailTask>(sql`SELECT payload FROM email_tasks WHERE id = ${id}`);
+  }
+
+  async listEmailTasks(): Promise<EmailTask[]> {
+    await this.ensureReady();
+    return this.listPayloads<EmailTask>(sql`SELECT payload FROM email_tasks ORDER BY id`);
+  }
+
+  async putEmailTask(task: EmailTask): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`
+      INSERT INTO email_tasks (id, config_id, payload)
+      VALUES (${task.id}, ${task.configId}, ${JSON.stringify(task)})
+      ON CONFLICT(id) DO UPDATE SET
+        config_id = excluded.config_id,
+        payload = excluded.payload
+    `);
+  }
+
+  async deleteEmailTask(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM email_tasks WHERE id = ${id}`);
+  }
+
+  async clearEmailTasks(): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM email_tasks`);
+  }
+
   async getSchedule(id: string): Promise<SchedulePlan | undefined> {
     await this.ensureReady();
     return this.getPayload<SchedulePlan>(sql`SELECT payload FROM schedules WHERE id = ${id}`);
@@ -880,6 +921,7 @@ export class SqliteStore {
         configs: await this.exportTable('configs'),
         schedules: await this.exportTable('schedules'),
         unavailabilities: await this.exportTable('unavailabilities'),
+        emailTasks: await this.exportTable('email_tasks'),
         users: await this.exportTable('users'),
         refreshTokens: await this.exportTable('refresh_tokens'),
       },
@@ -912,6 +954,7 @@ export class SqliteStore {
       configs: this.validateTableRows('configs', snapshotObject.tables.configs),
       schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
       unavailabilities: this.validateTableRows('unavailabilities', snapshotObject.tables.unavailabilities),
+      email_tasks: this.validateTableRows('email_tasks', snapshotObject.tables.emailTasks),
       users: this.validateTableRows('users', snapshotObject.tables.users),
       refresh_tokens: this.validateTableRows('refresh_tokens', snapshotObject.tables.refreshTokens),
     };
@@ -920,6 +963,7 @@ export class SqliteStore {
       DELETE FROM refresh_tokens;
       DELETE FROM users;
       DELETE FROM keyword_vectors;
+      DELETE FROM email_tasks;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
       DELETE FROM configs;
@@ -933,6 +977,7 @@ export class SqliteStore {
     await this.restoreTableRows('configs', tables.configs);
     await this.restoreTableRows('schedules', tables.schedules);
     await this.restoreTableRows('unavailabilities', tables.unavailabilities);
+    await this.restoreTableRows('email_tasks', tables.email_tasks);
     await this.restoreTableRows('users', tables.users);
     await this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
   }
@@ -951,6 +996,7 @@ export class SqliteStore {
       configs?: unknown;
       schedules?: unknown;
       unavailabilities?: unknown;
+      emailTasks?: unknown;
     };
 
     if (!Array.isArray(dumpObject.persons)
@@ -958,7 +1004,8 @@ export class SqliteStore {
       || !Array.isArray(dumpObject.keywordVectors)
       || !Array.isArray(dumpObject.configs)
       || !Array.isArray(dumpObject.schedules)
-      || !Array.isArray(dumpObject.unavailabilities)) {
+      || !Array.isArray(dumpObject.unavailabilities)
+      || !Array.isArray(dumpObject.emailTasks)) {
       throw new Error('Invalid backup payload: missing entity lists');
     }
 
@@ -968,6 +1015,7 @@ export class SqliteStore {
     const configs = dumpObject.configs as ScheduleConfig[];
     const schedules = dumpObject.schedules as SchedulePlan[];
     const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[];
+    const emailTasks = dumpObject.emailTasks as EmailTask[];
 
     await this.clearAllEntityData();
 
@@ -989,6 +1037,9 @@ export class SqliteStore {
     for (const unavailability of unavailabilities) {
       await this.putUnavailability(unavailability);
     }
+    for (const task of emailTasks) {
+      await this.putEmailTask(task);
+    }
   }
 
   async restoreFromSqliteFile(sourcePath: string): Promise<void> {
@@ -1005,6 +1056,7 @@ export class SqliteStore {
           configs: source.prepare('SELECT * FROM configs').all(),
           schedules: source.prepare('SELECT * FROM schedules').all(),
           unavailabilities: source.prepare('SELECT * FROM unavailabilities').all(),
+          emailTasks: source.prepare('SELECT * FROM email_tasks').all(),
           users: source.prepare('SELECT * FROM users').all(),
           refreshTokens: source.prepare('SELECT * FROM refresh_tokens').all(),
         },

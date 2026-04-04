@@ -17,7 +17,7 @@ import {
 } from './idb';
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
-import { personsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
+import { personsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, schedulesSignal, unavailabilitiesSignal, emailTasksSignal } from '@/store';
 import { databaseMode } from '@/lib/runtime';
 
 const DB_CONFIG = databaseMode;
@@ -83,15 +83,16 @@ export function useDatabase() {
 export async function dumpDatabase(): Promise<DatabaseDump> {
   const dbInstance = db.value;
   if (!dbInstance) throw new Error('Database is not initialized');
-  const [persons, keywords, keywordVectors, configs, schedules, unavailabilities] = await Promise.all([
+  const [persons, keywords, keywordVectors, configs, schedules, unavailabilities, emailTasks] = await Promise.all([
     listAllPaginated(dbInstance.persons),
     listAllPaginated(dbInstance.keywords),
     listAllPaginated(dbInstance.keywordVectors),
     listAllPaginated(dbInstance.configs),
     listAllPaginated(dbInstance.schedules),
     listAllPaginated(dbInstance.unavailabilities),
+    listAllPaginated(dbInstance.emailTasks),
   ]);
-  return { persons, keywords, keywordVectors, configs, schedules, unavailabilities };
+  return { persons, keywords, keywordVectors, configs, schedules, unavailabilities, emailTasks };
 }
 
 export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
@@ -104,13 +105,14 @@ export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
 }
 
 export async function loadDatabaseSignals(db: LabbyDB) {
-  const [persons, keywords, keywordVectors, configs, schedules, unavailabilities] = await Promise.all([
+  const [persons, keywords, keywordVectors, configs, schedules, unavailabilities, emailTasks] = await Promise.all([
     listAllPaginated(db.persons),
     listAllPaginated(db.keywords),
     listAllPaginated(db.keywordVectors),
     listAllPaginated(db.configs),
     listAllPaginated(db.schedules),
     listAllPaginated(db.unavailabilities),
+    listAllPaginated(db.emailTasks),
   ]);
 
   personsSignal.value = persons ?? [];
@@ -119,6 +121,7 @@ export async function loadDatabaseSignals(db: LabbyDB) {
   configsSignal.value = configs ?? [];
   schedulesSignal.value = schedules ?? [];
   unavailabilitiesSignal.value = unavailabilities ?? [];
+  emailTasksSignal.value = emailTasks ?? [];
 }
 
 export async function loadPersonsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
@@ -203,4 +206,12 @@ export async function listSchedulesPage(db: LabbyDB, offset: number, limit: numb
 
 export async function listUnavailabilitiesPage(db: LabbyDB, offset: number, limit: number) {
   return db.unavailabilities.list({ offset, limit });
+}
+
+export async function loadAllEmailTasks(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
+  emailTasksSignal.value = await listAllPaginated(db.emailTasks, pageSize);
+}
+
+export async function listEmailTasksPage(db: LabbyDB, offset: number, limit: number) {
+  return db.emailTasks.list({ offset, limit });
 }

@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
@@ -87,6 +88,19 @@ function sampleVector(keywordId = 'k1'): KeywordVector {
   };
 }
 
+function sampleEmailTask(id = 'et1', configId = 'c1'): EmailTask {
+  return {
+    id,
+    configId,
+    daysOfWeek: [1, 3, 5],
+    emails: ['foo@example.com', 'bar@example.com'],
+    recentTimes: 0,
+    templateText: 'Hello {{ user.name }}',
+    sentCounts: {},
+    metadata: {},
+  };
+}
+
 function sampleUser(id = 'user-1'): StoredUser {
   return {
     id,
@@ -122,6 +136,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     const plan = samplePlan();
     const unavailability = sampleUnavailability();
     const vector = sampleVector();
+    const emailTask = sampleEmailTask();
     const user = sampleUser();
     const token = sampleRefreshToken(user.id);
 
@@ -131,6 +146,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     await store.putSchedule(plan);
     await store.putUnavailability(unavailability);
     await store.putKeywordVector(vector);
+    await store.putEmailTask(emailTask);
     await store.createUser(user);
     await store.saveRefreshToken(token);
 
@@ -141,6 +157,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     assert.equal((await store.getUnavailability(unavailability.id))?.id, unavailability.id);
     assert.equal((await store.getKeywordVector(vector.keywordId))?.keywordId, vector.keywordId);
     assert.equal((await store.getKeywordVectors([vector.keywordId])).length, 1);
+    assert.equal((await store.getEmailTask(emailTask.id))?.id, emailTask.id);
     assert.equal((await store.findUserByIdentity('ALICE'))?.id, user.id);
     assert.equal((await store.getRefreshToken(token.tokenId))?.tokenId, token.tokenId);
   } finally {

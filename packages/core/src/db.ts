@@ -1,4 +1,5 @@
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
@@ -69,6 +70,14 @@ export interface PersonUnavailabilityStore {
   clear(): Promise<void>;
 }
 
+export interface EmailTaskStore {
+  get(id: string): Promise<EmailTask | undefined>;
+  list(query: ListQuery): Promise<PaginatedResult<EmailTask>>;
+  put(value: EmailTask): Promise<void>;
+  delete(id: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface LabbyDB {
   persons: PersonStore;
   keywords: KeywordStore;
@@ -76,6 +85,7 @@ export interface LabbyDB {
   configs: ScheduleConfigStore;
   schedules: SchedulePlanStore;
   unavailabilities: PersonUnavailabilityStore;
+  emailTasks: EmailTaskStore;
 }
 
 export interface DatabaseDump {
@@ -85,4 +95,5 @@ export interface DatabaseDump {
   configs: ScheduleConfig[];
   schedules: SchedulePlan[];
   unavailabilities: PersonUnavailability[];
+  emailTasks: EmailTask[];
 }

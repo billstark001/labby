@@ -4,9 +4,9 @@ import { JSParserOptions, JSExpressionParser } from "./parser.js"
 
 export interface EvalOptions extends JSParserOptions, JSEvalOptions {}
 
-export { JSExpressionParser, JSParserOptions, JSParseError } from "./parser.js"
-export { JSEvaluator, JSEvalOptions, JSEvalError } from "./evaluator.js"
-export { JSLexer, JSToken, JSTokenKind, JSLexError } from "./lexer.js"
+export { JSExpressionParser, type JSParserOptions, JSParseError } from "./parser.js"
+export { JSEvaluator, type JSEvalOptions, JSEvalError } from "./evaluator.js"
+export { JSLexer, type JSToken, type JSTokenKind, JSLexError } from "./lexer.js"
 
 export type {
   JSExprNode,

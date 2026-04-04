@@ -15,14 +15,15 @@ import {
 import { fallbackEntityId, displayName } from '@/i18n';
 import {
   loadAllConfigs,
+  loadAllEmailTasks,
   loadAllPersons,
   loadAllSchedules,
   loadAllSimilarities,
   loadAllUnavailabilities,
   useDatabase,
 } from '../db/index';
-import { solveFull, solveIncremental } from '@labby/core';
-import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation } from '@labby/core';
+import { computeScheduleMetrics, explainScheduleMetrics, solveFull, solveIncremental } from '@labby/core';
+import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation, MetricExplanation, ScheduleMetrics } from '@labby/core';
 import * as s from '../styles/components.css';
 import {
   Button,
@@ -214,6 +215,36 @@ interface ManualEditDialogProps {
   onClose: () => void;
 }
 
+interface MetricsDialogState {
+  title: string;
+  metrics: ScheduleMetrics;
+  explanations: MetricExplanation[];
+}
+
+function defaultIncrementalDate(): string {
+  const nextWeek = new Date();
+  nextWeek.setUTCDate(nextWeek.getUTCDate() + 7);
+  return nextWeek.toISOString().slice(0, 10);
+}
+
+function normalizeSolveResponse(result: unknown): {
+  plan: SchedulePlan;
+  metrics?: ScheduleMetrics;
+  explanations?: MetricExplanation[];
+  warnings?: string[];
+} {
+  if (result && typeof result === 'object' && 'plan' in (result as Record<string, unknown>)) {
+    const wrapped = result as {
+      plan: SchedulePlan;
+      metrics?: ScheduleMetrics;
+      explanations?: MetricExplanation[];
+      warnings?: string[];
+    };
+    return wrapped;
+  }
+  return { plan: result as SchedulePlan };
+}
+
 function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }: ManualEditDialogProps) {
   const { t } = i18n;
   const persons = personsSignal.value.filter(p => !p.disabled);
@@ -333,6 +364,10 @@ export function SchedulePage() {
     questIndex?: number;
   } | null>(null);
   const [manualEditMode, setManualEditMode] = useState(false);
+  const [metricsDialog, setMetricsDialog] = useState<MetricsDialogState | null>(null);
+  const [mutationIndex, setMutationIndex] = useState(1);
+  const [mutationAction, setMutationAction] = useState<'insert' | 'delete'>('insert');
+  const [mutationStrategy, setMutationStrategy] = useState<'shift' | 'in-place'>('shift');
 
   const activePersonCount = persons.filter(p => !p.disabled).length;
   const selectedConfig = configs.find(c => c.id === selectedConfigId);
@@ -350,6 +385,7 @@ export function SchedulePage() {
         loadAllSchedules(db),
         loadAllSimilarities(db),
         loadAllUnavailabilities(db),
+        loadAllEmailTasks(db),
       ]);
       if (cancelled) return;
       if (!currentScheduleSignal.value && schedulesSignal.value.length > 0) {
@@ -363,6 +399,66 @@ export function SchedulePage() {
     };
   }, [db]);
 
+  useEffect(() => {
+    if (!changeDate) {
+      setChangeDate(defaultIncrementalDate());
+    }
+  }, [changeDate]);
+
+  function openMetricsDialog(title: string, metrics: ScheduleMetrics, explanations: MetricExplanation[]) {
+    setMetricsDialog({ title, metrics, explanations });
+  }
+
+  function localMetricsForPlan(plan: SchedulePlan): { metrics: ScheduleMetrics; explanations: MetricExplanation[] } | null {
+    const config = configs.find(c => c.id === plan.configId);
+    if (!config) return null;
+    const metrics = computeScheduleMetrics(plan, {
+      persons,
+      similarities: similarityMapSignal.value,
+      config,
+      unavailabilities,
+    });
+    return { metrics, explanations: explainScheduleMetrics(metrics) };
+  }
+
+  async function showMetricsForPlan(plan: SchedulePlan): Promise<void> {
+    if (isServerDeployment) {
+      const data = await apiClient.request<{ metrics: ScheduleMetrics; explanations: MetricExplanation[] }>('/solver/metrics', {
+        method: 'POST',
+        body: JSON.stringify({ scheduleId: plan.id }),
+      });
+      openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, data.metrics, data.explanations);
+      return;
+    }
+    const local = localMetricsForPlan(plan);
+    if (local) {
+      openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, local.metrics, local.explanations);
+    }
+  }
+
+  async function showMetricsForSession(plan: SchedulePlan, sessionDate: string): Promise<void> {
+    if (isServerDeployment) {
+      const data = await apiClient.request<{ metrics: ScheduleMetrics; explanations: MetricExplanation[] }>('/solver/metrics', {
+        method: 'POST',
+        body: JSON.stringify({ scheduleId: plan.id, sessionDate }),
+      });
+      openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, data.metrics, data.explanations);
+      return;
+    }
+
+    const config = configs.find(c => c.id === plan.configId);
+    if (!config) return;
+    const sessionIndex = plan.sessions.findIndex((session) => session.date === sessionDate);
+    if (sessionIndex < 0) return;
+    const metrics = computeScheduleMetrics({ ...plan, sessions: [plan.sessions[sessionIndex]] }, {
+      persons,
+      similarities: similarityMapSignal.value,
+      config,
+      unavailabilities,
+    }, plan.sessions.slice(0, sessionIndex));
+    openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, metrics, explainScheduleMetrics(metrics));
+  }
+
   async function handleSaveConfig(c: ScheduleConfig) {
     await db.configs.put(c);
     await loadAllConfigs(db);
@@ -374,12 +470,17 @@ export function SchedulePage() {
   async function handleGenerate() {
     const config = configs.find(c => c.id === selectedConfigId);
     if (!config || activePersonCount === 0) return;
+    const suggested = defaultIncrementalDate();
+    if (config.startDate < suggested) {
+      const proceed = window.confirm(t('rescheduleDateEarlyWarning'));
+      if (!proceed) return;
+    }
     isComputingSignal.value = true;
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const plan = isServerDeployment
-        ? await apiClient.request<SchedulePlan>('/solver/run', {
+      const result = isServerDeployment
+        ? await apiClient.request<unknown>('/solver/run', {
           method: 'POST',
           body: JSON.stringify({
             configId: config.id,
@@ -392,9 +493,17 @@ export function SchedulePage() {
           config,
           unavailabilities,
         });
+      const normalized = normalizeSolveResponse(result);
+      const plan = normalized.plan;
       await db.schedules.put(plan);
       await loadAllSchedules(db);
       currentScheduleSignal.value = plan;
+      if (normalized.metrics && normalized.explanations) {
+        openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
+      } else {
+        const local = localMetricsForPlan(plan);
+        if (local) openMetricsDialog(t('metricsAfterComputeTitle'), local.metrics, local.explanations);
+      }
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
     } catch (err) {
@@ -409,12 +518,17 @@ export function SchedulePage() {
     if (!current || !changeDate) return;
     const config = configs.find(c => c.id === current.configId);
     if (!config) return;
+    const suggested = defaultIncrementalDate();
+    if (changeDate < suggested) {
+      const proceed = window.confirm(t('rescheduleDateEarlyWarning'));
+      if (!proceed) return;
+    }
     isComputingSignal.value = true;
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const plan = isServerDeployment
-        ? await apiClient.request<SchedulePlan>('/solver/run-incremental', {
+      const result = isServerDeployment
+        ? await apiClient.request<unknown>('/solver/run-incremental', {
           method: 'POST',
           body: JSON.stringify({
             configId: config.id,
@@ -431,9 +545,20 @@ export function SchedulePage() {
           changeDate,
           unavailabilities,
         });
+      const normalized = normalizeSolveResponse(result);
+      const plan = normalized.plan;
       await db.schedules.put(plan);
       await loadAllSchedules(db);
       currentScheduleSignal.value = plan;
+      if (normalized.warnings?.length) {
+        window.alert(normalized.warnings.join('\n'));
+      }
+      if (normalized.metrics && normalized.explanations) {
+        openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
+      } else {
+        const local = localMetricsForPlan(plan);
+        if (local) openMetricsDialog(t('metricsAfterComputeTitle'), local.metrics, local.explanations);
+      }
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
     } catch (err) {
@@ -505,6 +630,59 @@ export function SchedulePage() {
   async function handleDeleteUnavail(id: string) {
     await db.unavailabilities.delete(id);
     await loadAllUnavailabilities(db);
+  }
+
+  async function handleApplyTemporaryMutation() {
+    if (!current || current.sessions.length === 0) return;
+    const idx = Math.max(0, Math.min(current.sessions.length - 1, mutationIndex - 1));
+    const sessions = current.sessions.map((session) => ({
+      date: session.date,
+      presentations: session.presentations.map((presentation) => ({
+        presenterId: presentation.presenterId,
+        questionerIds: [...presentation.questionerIds],
+      })),
+    }));
+
+    if (mutationAction === 'insert') {
+      const source = sessions[idx] ?? sessions[sessions.length - 1];
+      const cloned: Session = {
+        date: source?.date ?? new Date().toISOString().slice(0, 10),
+        presentations: source?.presentations.map((presentation) => ({
+          presenterId: presentation.presenterId,
+          questionerIds: [...presentation.questionerIds],
+        })) ?? [],
+      };
+      if (mutationStrategy === 'shift') {
+        sessions.splice(idx, 0, cloned);
+      } else {
+        sessions[idx] = cloned;
+      }
+    } else if (mutationAction === 'delete') {
+      if (mutationStrategy === 'shift') {
+        sessions.splice(idx, 1);
+      } else {
+        sessions[idx] = {
+          ...sessions[idx],
+          presentations: [],
+        };
+      }
+    }
+
+    const mutated: SchedulePlan = {
+      ...current,
+      id: nanoid(),
+      createdAt: Date.now(),
+      sessions,
+      notes: `${current.notes ?? ''}\n[temporary-${mutationAction}-${mutationStrategy}] index=${mutationIndex}`.trim(),
+    };
+
+    await db.schedules.put(mutated);
+    await loadAllSchedules(db);
+    currentScheduleSignal.value = mutated;
+    const local = localMetricsForPlan(mutated);
+    if (local) {
+      openMetricsDialog(t('metricsAfterMutationTitle'), local.metrics, local.explanations);
+    }
   }
 
   return (
@@ -652,8 +830,8 @@ export function SchedulePage() {
         )}
         {current && (
           <>
-            <Button variant="ghost" onClick={() => setChangeDate(new Date().toISOString().slice(0, 10))} title={t('today')}>
-              {t('today')}
+            <Button variant="ghost" onClick={() => setChangeDate(defaultIncrementalDate())} title={t('today')}>
+              {t('defaultPlusOneWeek')}
             </Button>
             <input
               class={`${s.input} ${s.autoWidthInput}`}
@@ -683,6 +861,34 @@ export function SchedulePage() {
           <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>{t('exportHtml')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>{t('exportCsv')}</Button>
           <Button variant="secondary" onClick={handleExportIcs}>{t('exportIcs')}</Button>
+        </div>
+      )}
+
+      {/* Temporary insert/delete session */}
+      {current && (
+        <div class={`${s.card} ${s.mb24}`}>
+          <strong>{t('temporarySessionMutation')}</strong>
+          <div class={s.flexGapSm}>
+            <input
+              class={`${s.input} ${s.autoWidthInput}`}
+              type="number"
+              min={1}
+              max={Math.max(1, current.sessions.length)}
+              value={mutationIndex}
+              onInput={(e) => setMutationIndex(Number.parseInt((e.target as HTMLInputElement).value || '1', 10))}
+            />
+            <select class={s.input} value={mutationAction} onChange={(e) => setMutationAction((e.target as HTMLSelectElement).value as 'insert' | 'delete')}>
+              <option value="insert">{t('mutationInsert')}</option>
+              <option value="delete">{t('mutationDelete')}</option>
+            </select>
+            <select class={s.input} value={mutationStrategy} onChange={(e) => setMutationStrategy((e.target as HTMLSelectElement).value as 'shift' | 'in-place')}>
+              <option value="shift">{t('mutationStrategyShift')}</option>
+              <option value="in-place">{t('mutationStrategyInPlace')}</option>
+            </select>
+            <Button variant="secondary" onClick={() => void handleApplyTemporaryMutation()}>
+              {t('applyMutation')}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -727,6 +933,9 @@ export function SchedulePage() {
                     <MenuItem onSelect={() => setEditingNotes(p)}>
                       {t('editNotes')}
                     </MenuItem>
+                    <MenuItem onSelect={() => void showMetricsForPlan(p)}>
+                      {t('viewMetrics')}
+                    </MenuItem>
                     <MenuSeparator />
                     <MenuItem onSelect={() => handleDeleteHistory(p)} danger>
                       {t('delete')}
@@ -755,6 +964,19 @@ export function SchedulePage() {
         />
       )}
 
+      {metricsDialog && (
+        <Dialog open={true} onClose={() => setMetricsDialog(null)} title={metricsDialog.title}>
+          <div class={s.formGroup}>
+            {metricsDialog.explanations.map((item) => (
+              <div key={item.key} class={`${s.text14} ${s.mb8}`}>
+                <strong>{item.label}</strong>: {item.value.toFixed(3)}
+                <div class={s.textMuted}>{item.summary}</div>
+              </div>
+            ))}
+          </div>
+        </Dialog>
+      )}
+
       {/* Schedule tables */}
       {!current ? (
         <div class={s.cardNoScheduke}>{t('noSchedule')}</div>
@@ -766,6 +988,9 @@ export function SchedulePage() {
                 <Calendar size={16} />
                 {sess.date}
               </span>
+              <Button variant="ghost" onClick={() => void showMetricsForSession(current, sess.date)}>
+                {t('viewMetrics')}
+              </Button>
             </h3>
             <ResponsiveDataView
               items={sess.presentations}

@@ -55,8 +55,11 @@ if (mailer) {
     .filter(Boolean);
 
   const { ScheduleNotifier } = await import("./cron/notifier.js");
+  const { EmailTaskNotifier } = await import("./cron/email-task-notifier.js");
   const notifier = new ScheduleNotifier({ scheduler, mailer, store, recipients });
+  const emailTaskNotifier = new EmailTaskNotifier({ scheduler, mailer, store });
   await notifier.syncJobs();
+  await emailTaskNotifier.syncJobs();
   console.info(`[cron] Email notifications enabled. Registered ${scheduler.registeredJobs.length} job(s).`);
 } else {
   console.info("[cron] SMTP not configured; email notifications disabled.");

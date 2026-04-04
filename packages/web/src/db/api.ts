@@ -1,4 +1,6 @@
 import type {
+  EmailTask,
+  EmailTaskStore,
   Keyword,
   KeywordStore,
   KeywordVector,
@@ -64,6 +66,7 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   const configs = createEntityStore<ScheduleConfig>(client, '/db/configs') satisfies ScheduleConfigStore;
   const schedules = createEntityStore<SchedulePlan>(client, '/db/schedules') satisfies SchedulePlanStore;
   const unavailabilities = createEntityStore<PersonUnavailability>(client, '/db/unavailabilities') satisfies PersonUnavailabilityStore;
+  const emailTasks = createEntityStore<EmailTask>(client, '/db/email-tasks') satisfies EmailTaskStore;
 
   const keywordVectors: KeywordVectorStore = {
     get: async (keywordId: string) => {
@@ -118,6 +121,7 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     configs,
     schedules,
     unavailabilities,
+    emailTasks,
   };
 }
 

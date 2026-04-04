@@ -628,3 +628,148 @@ noConfigYet:
   en: No configuration yet. Create one to get started.
   zh-CN: 尚无排班规则，请先创建。
   ja-JP: 設定がまだありません。作成してください。
+
+navEmailTasks:
+  en: Email Tasks
+  zh-CN: 邮件任务
+  ja-JP: メールタスク
+
+emailFrontendOnlyWarningTitle:
+  en: 'Frontend-only mode: auto-send unavailable'
+  zh-CN: 仅前端模式：无法自动发送
+  ja-JP: 'フロントエンドのみ: 自動送信不可'
+
+emailFrontendOnlyWarningBody:
+  en: Tasks can be edited and previewed locally, but automatic sending requires server deployment.
+  zh-CN: 可在本地编辑并预览任务，但自动发送需要服务端部署。
+  ja-JP: ローカルで編集・プレビューは可能ですが、自動送信にはサーバーデプロイが必要です。
+
+openNextEmailPreview:
+  en: Open Next Email Preview
+  zh-CN: 打开下一封邮件预览
+  ja-JP: 次回メールプレビューを開く
+
+copyNextEmailManually:
+  en: Copy Next Email Manually
+  zh-CN: 手动复制下一封邮件
+  ja-JP: 次のメールを手動コピー
+
+emailTaskEditorTitle:
+  en: Email Task Editor
+  zh-CN: 邮件任务编辑器
+  ja-JP: メールタスクエディタ
+
+emailTaskConfig:
+  en: Config ID
+  zh-CN: 配置 ID
+  ja-JP: 設定 ID
+
+emailTaskDays:
+  en: Days of Week (0-6, comma-separated)
+  zh-CN: 星期（0-6，逗号分隔）
+  ja-JP: 曜日（0-6、カンマ区切り）
+
+emailTaskEmails:
+  en: Emails (comma-separated)
+  zh-CN: 邮箱（逗号分隔）
+  ja-JP: メール（カンマ区切り）
+
+emailTaskRecentTimes:
+  en: recentTimes (0 = unlimited per recipient)
+  zh-CN: recentTimes（0=每个收件人无限）
+  ja-JP: recentTimes（0=受信者ごと無制限）
+
+emailTemplatePreset:
+  en: Template Preset
+  zh-CN: 模板预设
+  ja-JP: テンプレートプリセット
+
+emailTemplateFormat:
+  en: Template Format
+  zh-CN: 模板格式
+  ja-JP: テンプレート形式
+
+emailTemplateEditor:
+  en: Template Editor
+  zh-CN: 模板编辑器
+  ja-JP: テンプレートエディタ
+
+templateSyntaxHint:
+  en: 'Use {{ expr }} placeholders. Two or more braces are supported if opening and closing lengths match.'
+  zh-CN: '使用 {{ expr }} 占位符；支持两个及以上花括号，只要左右长度匹配。'
+  ja-JP: '{{ expr }} プレースホルダーを使用します。開始と終了の括弧長が一致すれば2個以上も対応します。'
+
+emailTemplatePreview:
+  en: Live Preview
+  zh-CN: 即时预览
+  ja-JP: ライブプレビュー
+
+emailTaskList:
+  en: Email Task List
+  zh-CN: 邮件任务列表
+  ja-JP: メールタスクリスト
+
+noEmailTasksYet:
+  en: No email tasks yet.
+  zh-CN: 还没有邮件任务。
+  ja-JP: メールタスクはまだありません。
+
+select:
+  en: Select
+  zh-CN: 选择
+  ja-JP: 選択
+
+rescheduleDateEarlyWarning:
+  en: The selected date is earlier than the default (+7 days). The operation will continue and keep history.
+  zh-CN: 选定日期早于默认日期（+7天）。操作会继续执行并保留历史。
+  ja-JP: 選択日が既定値（+7日）より前です。履歴を保持したまま続行します。
+
+metricsAfterComputeTitle:
+  en: Scheduling Metrics
+  zh-CN: 排班指标
+  ja-JP: スケジューリング指標
+
+metricsAfterMutationTitle:
+  en: Mutation Metrics
+  zh-CN: 变更后指标
+  ja-JP: 変更後指標
+
+defaultPlusOneWeek:
+  en: Default (+7d)
+  zh-CN: 默认（+7天）
+  ja-JP: 既定（+7日）
+
+temporarySessionMutation:
+  en: Temporary Insert/Delete Session
+  zh-CN: 临时插入/删除组会
+  ja-JP: 一時的な回の挿入/削除
+
+mutationInsert:
+  en: Insert
+  zh-CN: 插入
+  ja-JP: 挿入
+
+mutationDelete:
+  en: Delete
+  zh-CN: 删除
+  ja-JP: 削除
+
+mutationStrategyShift:
+  en: Shift
+  zh-CN: 顺延
+  ja-JP: 後ろにシフト
+
+mutationStrategyInPlace:
+  en: In-place Replan
+  zh-CN: 就地重排
+  ja-JP: その場で再配置
+
+applyMutation:
+  en: Apply
+  zh-CN: 执行
+  ja-JP: 適用
+
+viewMetrics:
+  en: View Metrics
+  zh-CN: 查看指标
+  ja-JP: 指標を見る
