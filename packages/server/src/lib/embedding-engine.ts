@@ -48,7 +48,7 @@ function parseDirtyBuffer(buffer: Buffer | Uint8Array): DirtyNode[] {
 async function loadNapiEngine(capacity: number): Promise<NativeEngineLike> {
   const req = createRequire(import.meta.url);
   const napiPath = process.env.LABBY_CORE_NAPI_PATH
-    ?? path.resolve(process.cwd(), 'packages/core/native/dist/node/labby_core.node');
+    ?? path.resolve(process.cwd(), '../core/native/dist/node/labby_core.node');
   const mod = req(napiPath) as { JsEmbeddingEngine?: new (value: number) => NativeEngineLike };
   if (!mod.JsEmbeddingEngine) {
     throw new Error(`Invalid napi module exports: ${napiPath}`);
@@ -58,7 +58,7 @@ async function loadNapiEngine(capacity: number): Promise<NativeEngineLike> {
 
 async function loadWasmEngine(capacity: number): Promise<NativeEngineLike> {
   const wasmEntryPath = process.env.LABBY_CORE_WASM_NODE_PATH
-    ?? path.resolve(process.cwd(), 'packages/core/native/dist/wasm-node/labby_core.js');
+    ?? path.resolve(process.cwd(), '../core/native/dist/wasm-node/labby_core.js');
   const mod = await import(pathToFileURL(wasmEntryPath).href) as {
     default?: (input?: string | URL | Request) => Promise<unknown>;
     WasmEmbeddingEngine?: new (value: number) => NativeEngineLike;

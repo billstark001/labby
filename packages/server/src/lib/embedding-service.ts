@@ -110,11 +110,11 @@ export class EmbeddingService {
 
     const a = this.keywordIndex.get(leftId);
     const b = this.keywordIndex.get(rightId);
-    if (a === undefined || b === undefined || !this.engine) {
+    if (a === undefined || b === undefined) {
       throw new Error('pair ids not found in embedding engine');
     }
 
-    const loss = this.engine.updatePair(a, b, targetDistance, learningRate);
+    const loss = this.engine!.updatePair(a, b, targetDistance, learningRate);
     const updatedVectors = this.collectDirtyVectors();
     for (const vector of updatedVectors) {
       this.pendingWrites.set(vector.keywordId, vector);
@@ -145,11 +145,11 @@ export class EmbeddingService {
     }
 
     const ordered = query.orderedIds
-      .map((keywordId: string) => ({
+      .map((keywordId) => ({
         keywordId,
         index: this.keywordIndex.get(keywordId),
       }))
-      .filter((item: { keywordId: string; index: number | undefined }): item is { keywordId: string; index: number } => item.index !== undefined);
+      .filter((item): item is { keywordId: string; index: number } => item.index !== undefined);
 
     if (ordered.length < 2) {
       return { loss: 0, updatedVectors: [] };
