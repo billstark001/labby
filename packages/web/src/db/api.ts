@@ -12,6 +12,8 @@ import type {
   PersonUnavailabilityStore,
   ScheduleConfig,
   ScheduleConfigStore,
+  ScheduleConstraint,
+  ScheduleConstraintStore,
   SchedulePlan,
   SchedulePlanStore,
   ListQuery,
@@ -64,6 +66,7 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   const persons = createEntityStore<Person>(client, '/db/persons') satisfies PersonStore;
   const keywords = createEntityStore<Keyword>(client, '/db/keywords') satisfies KeywordStore;
   const configs = createEntityStore<ScheduleConfig>(client, '/db/configs') satisfies ScheduleConfigStore;
+  const constraints = createEntityStore<ScheduleConstraint>(client, '/db/constraints') satisfies ScheduleConstraintStore;
   const schedules = createEntityStore<SchedulePlan>(client, '/db/schedules') satisfies SchedulePlanStore;
   const unavailabilities = createEntityStore<PersonUnavailability>(client, '/db/unavailabilities') satisfies PersonUnavailabilityStore;
   const emailTasks = createEntityStore<EmailTask>(client, '/db/email-tasks') satisfies EmailTaskStore;
@@ -119,6 +122,7 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     keywords,
     keywordVectors,
     configs,
+    constraints,
     schedules,
     unavailabilities,
     emailTasks,

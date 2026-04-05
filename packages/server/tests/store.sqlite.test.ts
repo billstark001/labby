@@ -211,7 +211,7 @@ test('SqliteStore binary backup and restore from sqlite file works', async () =>
   }
 });
 
-test('SqliteStore keeps modifiedAt sorting and config constraints hydration', async () => {
+test('SqliteStore keeps modifiedAt sorting and standalone constraints persistence', async () => {
   const dbPath = createTempDbPath('labby-store-order-constraints');
   const store = new SqliteStore({ dialect: 'sqlite', path: dbPath });
 
@@ -228,26 +228,29 @@ test('SqliteStore keeps modifiedAt sorting and config constraints hydration', as
     assert.equal(persons[1]?.id, 'p-old');
 
     const config = sampleConfig('cfg-constraints');
-    config.constraints = [
-      {
-        type: 'no-overlap',
-        personIds: ['p-old', 'p-new'],
-        weight: 2,
-      },
-      {
-        type: 'frequency-multiplier',
-        personIds: ['p-new'],
-        baseline: 1,
-        multiplier: 2,
-        roleScope: 'presenter',
-        weight: 1,
-      },
-    ];
     await store.putConfig(config);
 
-    const loaded = await store.getConfig(config.id);
-    assert.equal(loaded?.constraints?.length, 2);
-    const types = new Set((loaded?.constraints ?? []).map((item) => item.type));
+    await store.putConstraint({
+      id: 'constraint-1',
+      configId: config.id,
+      type: 'no-overlap',
+      personIds: ['p-old', 'p-new'],
+      weight: 2,
+    });
+    await store.putConstraint({
+      id: 'constraint-2',
+      configId: config.id,
+      type: 'frequency-multiplier',
+      personIds: ['p-new'],
+      baseline: 1,
+      multiplier: 2,
+      roleScope: 'presenter',
+      weight: 1,
+    });
+
+    const loaded = await store.listConstraintsByConfig(config.id);
+    assert.equal(loaded.length, 2);
+    const types = new Set(loaded.map((item) => item.type));
     assert.equal(types.has('no-overlap'), true);
     assert.equal(types.has('frequency-multiplier'), true);
   } finally {

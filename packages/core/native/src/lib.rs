@@ -13,7 +13,7 @@ mod engine;
 mod hnsw;
 
 pub use autoencoder::{AutoencoderProjector, PROJ_DIM};
-pub use engine::{DirtyNode, EmbeddingEngine, LATENT_DIM};
+pub use engine::{DirtyNode, EmbeddingEngine, LATENT_DIM, UpdateIterationOptions};
 
 #[allow(dead_code)]
 fn encode_dirty_with_projection(nodes: &[DirtyNode], projector: &AutoencoderProjector) -> Vec<u8> {
@@ -42,7 +42,43 @@ mod node_ffi {
     use napi_derive::napi;
     use std::sync::Mutex;
 
-    use crate::{AutoencoderProjector, EmbeddingEngine, encode_dirty_with_projection};
+    use crate::{
+        AutoencoderProjector,
+        EmbeddingEngine,
+        UpdateIterationOptions,
+        encode_dirty_with_projection,
+    };
+
+    #[napi(object)]
+    pub struct JsUpdateIterationOptions {
+        pub learning_rate: Option<f64>,
+        pub min_iters: Option<u32>,
+        pub max_iters: Option<u32>,
+        pub stability_window: Option<u32>,
+        pub stability_tolerance: Option<f64>,
+    }
+
+    fn resolve_update_options(options: Option<JsUpdateIterationOptions>) -> UpdateIterationOptions {
+        let mut resolved = UpdateIterationOptions::default();
+        if let Some(opts) = options {
+            if let Some(v) = opts.learning_rate {
+                resolved.learning_rate = v as f32;
+            }
+            if let Some(v) = opts.min_iters {
+                resolved.min_iters = v;
+            }
+            if let Some(v) = opts.max_iters {
+                resolved.max_iters = v;
+            }
+            if let Some(v) = opts.stability_window {
+                resolved.stability_window = v as usize;
+            }
+            if let Some(v) = opts.stability_tolerance {
+                resolved.stability_tolerance = v as f32;
+            }
+        }
+        resolved
+    }
 
     struct Runtime {
         engine: EmbeddingEngine,
@@ -138,11 +174,13 @@ mod node_ffi {
         pub fn update_triplet(
             &self,
             id_a: u32, id_b: u32, id_c: u32,
-            margin: f64, learning_rate: f64,
+            margin: f64,
+            options: Option<JsUpdateIterationOptions>,
         ) -> Result<f64> {
+            let options = resolve_update_options(options);
             let loss = self.inner.lock().unwrap()
                 .engine
-                .update_triplet(id_a, id_b, id_c, margin as f32, learning_rate as f32);
+                .update_triplet(id_a, id_b, id_c, margin as f32, options);
             Ok(loss as f64)
         }
 
@@ -155,12 +193,13 @@ mod node_ffi {
             &self,
             triplets: Uint32Array,
             margin: f64,
-            learning_rate: f64,
+            options: Option<JsUpdateIterationOptions>,
         ) -> Result<Buffer> {
             let ids = triplets.as_ref();
             let mut inner = self.inner.lock().unwrap();
+            let options = resolve_update_options(options);
             inner.engine
-                .update_triplets_batch_flat(ids, margin as f32, learning_rate as f32)
+                .update_triplets_batch_flat(ids, margin as f32, options)
                 .map_err(Error::from_reason)?;
             Ok(Buffer::from(inner.flush_with_projection()))
         }
@@ -170,11 +209,13 @@ mod node_ffi {
         pub fn update_pair(
             &self,
             id_a: u32, id_b: u32,
-            target_distance: f64, learning_rate: f64,
+            target_distance: f64,
+            options: Option<JsUpdateIterationOptions>,
         ) -> Result<f64> {
+            let options = resolve_update_options(options);
             let loss = self.inner.lock().unwrap()
                 .engine
-                .update_pair(id_a, id_b, target_distance as f32, learning_rate as f32);
+                .update_pair(id_a, id_b, target_distance as f32, options);
             Ok(loss as f64)
         }
 
@@ -187,12 +228,13 @@ mod node_ffi {
             &self,
             pairs: Uint32Array,
             target_distance: f64,
-            learning_rate: f64,
+            options: Option<JsUpdateIterationOptions>,
         ) -> Result<Buffer> {
             let ids = pairs.as_ref();
             let mut inner = self.inner.lock().unwrap();
+            let options = resolve_update_options(options);
             inner.engine
-                .update_pairs_batch_flat(ids, target_distance as f32, learning_rate as f32)
+                .update_pairs_batch_flat(ids, target_distance as f32, options)
                 .map_err(Error::from_reason)?;
             Ok(Buffer::from(inner.flush_with_projection()))
         }
@@ -278,8 +320,76 @@ mod node_ffi {
 // ═══════════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "wasm")]
 mod wasm_ffi {
+    use js_sys::{Object, Reflect};
     use wasm_bindgen::prelude::*;
-    use crate::{AutoencoderProjector, EmbeddingEngine, encode_dirty_with_projection};
+    use crate::{
+        AutoencoderProjector,
+        EmbeddingEngine,
+        UpdateIterationOptions,
+        encode_dirty_with_projection,
+    };
+
+    fn set_option_from_f64(
+        object: &Object,
+        key: &str,
+        out: &mut f32,
+    ) {
+        if let Ok(value) = Reflect::get(object, &JsValue::from_str(key)) {
+            if let Some(num) = value.as_f64() {
+                *out = num as f32;
+            }
+        }
+    }
+
+    fn set_option_from_u32(
+        object: &Object,
+        key: &str,
+        out: &mut u32,
+    ) {
+        if let Ok(value) = Reflect::get(object, &JsValue::from_str(key)) {
+            if let Some(num) = value.as_f64() {
+                if num.is_finite() && num >= 0.0 {
+                    *out = num as u32;
+                }
+            }
+        }
+    }
+
+    fn resolve_update_options(options: Option<JsValue>) -> UpdateIterationOptions {
+        let mut resolved = UpdateIterationOptions::default();
+        let Some(value) = options else {
+            return resolved;
+        };
+        if value.is_null() || value.is_undefined() || !value.is_object() {
+            return resolved;
+        }
+
+        let object: Object = value.into();
+        set_option_from_f64(&object, "learningRate", &mut resolved.learning_rate);
+        set_option_from_f64(&object, "learning_rate", &mut resolved.learning_rate);
+        set_option_from_u32(&object, "minIters", &mut resolved.min_iters);
+        set_option_from_u32(&object, "min_iters", &mut resolved.min_iters);
+        set_option_from_u32(&object, "maxIters", &mut resolved.max_iters);
+        set_option_from_u32(&object, "max_iters", &mut resolved.max_iters);
+
+        let mut stability_window_u32 = resolved.stability_window as u32;
+        set_option_from_u32(&object, "stabilityWindow", &mut stability_window_u32);
+        set_option_from_u32(&object, "stability_window", &mut stability_window_u32);
+        resolved.stability_window = stability_window_u32 as usize;
+
+        set_option_from_f64(
+            &object,
+            "stabilityTolerance",
+            &mut resolved.stability_tolerance,
+        );
+        set_option_from_f64(
+            &object,
+            "stability_tolerance",
+            &mut resolved.stability_tolerance,
+        );
+
+        resolved
+    }
 
     /// The WASM-exported class.  Single-threaded WASM needs no Mutex.
     #[wasm_bindgen]
@@ -344,9 +454,11 @@ mod wasm_ffi {
         pub fn update_triplet(
             &mut self,
             id_a: u32, id_b: u32, id_c: u32,
-            margin: f32, learning_rate: f32,
+            margin: f32,
+            options: Option<JsValue>,
         ) -> f32 {
-            self.inner.update_triplet(id_a, id_b, id_c, margin, learning_rate)
+            self.inner
+                .update_triplet(id_a, id_b, id_c, margin, resolve_update_options(options))
         }
 
         /// Batch triplet updates + one flush.
@@ -356,11 +468,11 @@ mod wasm_ffi {
             &mut self,
             triplets: &[u32],
             margin: f32,
-            learning_rate: f32,
+            options: Option<JsValue>,
         ) -> Vec<u8> {
             if self
                 .inner
-                .update_triplets_batch_flat(triplets, margin, learning_rate)
+                .update_triplets_batch_flat(triplets, margin, resolve_update_options(options))
                 .is_err()
             {
                 return Vec::new();
@@ -373,9 +485,11 @@ mod wasm_ffi {
         pub fn update_pair(
             &mut self,
             id_a: u32, id_b: u32,
-            target_distance: f32, learning_rate: f32,
+            target_distance: f32,
+            options: Option<JsValue>,
         ) -> f32 {
-            self.inner.update_pair(id_a, id_b, target_distance, learning_rate)
+            self.inner
+                .update_pair(id_a, id_b, target_distance, resolve_update_options(options))
         }
 
         /// Batch pair updates + one flush.
@@ -385,11 +499,11 @@ mod wasm_ffi {
             &mut self,
             pairs: &[u32],
             target_distance: f32,
-            learning_rate: f32,
+            options: Option<JsValue>,
         ) -> Vec<u8> {
             if self
                 .inner
-                .update_pairs_batch_flat(pairs, target_distance, learning_rate)
+                .update_pairs_batch_flat(pairs, target_distance, resolve_update_options(options))
                 .is_err()
             {
                 return Vec::new();

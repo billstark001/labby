@@ -1,4 +1,9 @@
-import type { KeywordVector, SupervisionQuery, TripletQuery } from '@labby/core';
+import type {
+  IterativeUpdateOptions,
+  KeywordVector,
+  SupervisionQuery,
+  TripletQuery,
+} from '@labby/core';
 import initWasm, { WasmEmbeddingEngine } from '../../../core/native/dist/wasm-web/labby_core.js';
 import wasmBinaryUrl from '../../../core/native/dist/wasm-web/labby_core_bg.wasm?url';
 import { apiClient } from '@/lib/api';
@@ -10,12 +15,49 @@ const FRONTEND_ONLY_MAX_NODES = 1_000;
 type WasmEngineLike = {
   hydrate(data: Float32Array, nNodes: number): void;
   recommend_triplet(excludedPairs: Uint32Array): Uint32Array | number[];
-  update_triplets_batch_flush(triplets: Uint32Array, margin: number, learningRate: number): Uint8Array;
-  update_pairs_batch_flush(pairs: Uint32Array, targetDistance: number, learningRate: number): Uint8Array;
-  update_triplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
-  update_pair(idA: number, idB: number, targetDistance: number, learningRate: number): number;
+  update_triplets_batch_flush(
+    triplets: Uint32Array,
+    margin: number,
+    options?: IterativeUpdateOptions,
+  ): Uint8Array;
+  update_pairs_batch_flush(
+    pairs: Uint32Array,
+    targetDistance: number,
+    options?: IterativeUpdateOptions,
+  ): Uint8Array;
+  update_triplet(
+    idA: number,
+    idB: number,
+    idC: number,
+    margin: number,
+    options?: IterativeUpdateOptions,
+  ): number;
+  update_pair(
+    idA: number,
+    idB: number,
+    targetDistance: number,
+    options?: IterativeUpdateOptions,
+  ): number;
   flush_dirty_nodes(): Uint8Array;
 };
+
+const DEFAULT_ITERATIVE_UPDATE_OPTIONS: Required<IterativeUpdateOptions> = {
+  learningRate: 0.05,
+  minIters: 2,
+  maxIters: 16,
+  stabilityWindow: 3,
+  stabilityTolerance: 1e-3,
+};
+
+function resolveIterativeUpdateOptions(options?: IterativeUpdateOptions): IterativeUpdateOptions {
+  return {
+    learningRate: options?.learningRate ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.learningRate,
+    minIters: options?.minIters ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.minIters,
+    maxIters: options?.maxIters ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.maxIters,
+    stabilityWindow: options?.stabilityWindow ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.stabilityWindow,
+    stabilityTolerance: options?.stabilityTolerance ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.stabilityTolerance,
+  };
+}
 
 let enginePromise: Promise<WasmEngineLike> | null = null;
 let hydratedIndexById = new Map<string, number>();
@@ -162,7 +204,7 @@ export async function applyTripletWithWasm(
   vectors: KeywordVector[],
   query: TripletQuery,
   margin = 0.2,
-  learningRate = 0.05,
+  options?: IterativeUpdateOptions,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
   if (isServerDeployment) {
     return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-similarity', {
@@ -172,7 +214,7 @@ export async function applyTripletWithWasm(
         positiveId: query.positiveId,
         negativeId: query.negativeId,
         margin,
-        learningRate,
+        updateOptions: resolveIterativeUpdateOptions(options),
       }),
     });
   }
@@ -193,7 +235,13 @@ export async function applyTripletWithWasm(
     throw new Error('triplet keyword ids not found');
   }
 
-  const loss = engine.update_triplet(a, b, c, margin, learningRate);
+  const loss = engine.update_triplet(
+    a,
+    b,
+    c,
+    margin,
+    resolveIterativeUpdateOptions(options),
+  );
 
   const dirtyBytes = engine.flush_dirty_nodes();
 
@@ -221,7 +269,7 @@ export async function applyPairUpdate(
   leftId: string,
   rightId: string,
   targetDistance: number,
-  learningRate = 0.05,
+  options?: IterativeUpdateOptions,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
   if (isServerDeployment) {
     return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-pair', {
@@ -230,7 +278,7 @@ export async function applyPairUpdate(
         leftId,
         rightId,
         targetDistance,
-        learningRate,
+        updateOptions: resolveIterativeUpdateOptions(options),
       }),
     });
   }
@@ -249,7 +297,12 @@ export async function applyPairUpdate(
     throw new Error('pair keyword ids not found');
   }
 
-  const loss = engine.update_pair(a, b, targetDistance, learningRate);
+  const loss = engine.update_pair(
+    a,
+    b,
+    targetDistance,
+    resolveIterativeUpdateOptions(options),
+  );
 
   const dirtyBytes = engine.flush_dirty_nodes();
   const dirty = parseDirtyBuffer(dirtyBytes);
@@ -281,7 +334,7 @@ export async function applySupervision(
       query.leftId,
       query.rightId,
       query.targetDistance,
-      query.learningRate ?? 0.05,
+      query.updateOptions,
     );
   }
 
@@ -325,7 +378,7 @@ export async function applySupervision(
   const dirtyBytes = engine.update_triplets_batch_flush(
     Uint32Array.from(triplets),
     query.margin ?? 0.2,
-    query.learningRate ?? 0.05,
+    resolveIterativeUpdateOptions(query.updateOptions),
   );
   const dirty = parseDirtyBuffer(dirtyBytes);
   const now = Date.now();

@@ -62,7 +62,6 @@ export interface ScheduleConfig {
   notifyTimezone?: string;
   /** Arbitrary extension metadata. */
   metadata?: Record<string, unknown>;
-  constraints?: ScheduleConstraint[];
   modifiedAt?: number;
 }
 
@@ -194,13 +193,22 @@ export interface TripletQuery {
   negativeId: string; // keyword B ("… than to B")
 }
 
+/** Iterative optimizer options for embedding updates. */
+export interface IterativeUpdateOptions {
+  learningRate?: number;
+  minIters?: number;
+  maxIters?: number;
+  stabilityWindow?: number;
+  stabilityTolerance?: number;
+}
+
 /** Pair distance supervision query (2 points). */
 export interface PairSupervisionQuery {
   kind: 'pair';
   leftId: string;
   rightId: string;
   targetDistance: number;
-  learningRate?: number;
+  updateOptions?: IterativeUpdateOptions;
 }
 
 /**
@@ -215,7 +223,7 @@ export interface RankedSupervisionQuery {
   anchorId: string;
   orderedIds: string[];
   margin?: number;
-  learningRate?: number;
+  updateOptions?: IterativeUpdateOptions;
 }
 
 /** Unified supervision query for similarity training. */
@@ -231,6 +239,9 @@ export type SupervisionQuery = PairSupervisionQuery | RankedSupervisionQuery;
  * or too unfamiliar with the research topic).
  */
 export interface NoOverlapConstraint {
+  id: string;
+  /** Optional config scope. Omit or set empty string to apply to all configs. */
+  configId?: string;
   type: 'no-overlap';
   /** Constraint applies to any person whose ID is in this set. */
   personIds: string[];
@@ -239,6 +250,7 @@ export interface NoOverlapConstraint {
    * Defaults to 5.0.
    */
   weight?: number;
+  modifiedAt?: number;
 }
 
 /**
@@ -247,6 +259,9 @@ export interface NoOverlapConstraint {
  * Useful when a group benefits from cross-exposure or shared research topics.
  */
 export interface AffinityBoostConstraint {
+  id: string;
+  /** Optional config scope. Omit or set empty string to apply to all configs. */
+  configId?: string;
   type: 'affinity-boost';
   /** Members of the group whose co-occurrence should be boosted. */
   personIds: string[];
@@ -256,6 +271,7 @@ export interface AffinityBoostConstraint {
    * Defaults to 2.0.
    */
   boost?: number;
+  modifiedAt?: number;
 }
 
 /**
@@ -263,12 +279,16 @@ export interface AffinityBoostConstraint {
  * k > 1 encourages more appearances, k < 1 discourages them.
  */
 export interface FrequencyMultiplierConstraint {
+  id: string;
+  /** Optional config scope. Omit or set empty string to apply to all configs. */
+  configId?: string;
   type: 'frequency-multiplier';
   personIds: string[];
   baseline: number;
   multiplier: number;
   roleScope?: 'presenter' | 'questioner' | 'both';
   weight?: number;
+  modifiedAt?: number;
 }
 
 /** Union of all supported schedule constraints. */

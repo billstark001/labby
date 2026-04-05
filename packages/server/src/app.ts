@@ -12,6 +12,7 @@ import type {
   Person,
   PersonUnavailability,
   ScheduleConfig,
+  ScheduleConstraint,
   SchedulePlan,
 } from "@labby/core";
 import {
@@ -385,6 +386,21 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return c.body(null, 204);
   });
 
+  app.get("/api/v1/db/constraints", async (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(await store.listConstraints(), offset, limit));
+  });
+  app.get("/api/v1/db/constraints/:id", async (c) => ok(c, (await store.getConstraint(c.req.param("id"))) ?? null));
+  app.put("/api/v1/db/constraints/:id", async (c) => {
+    const constraint = await c.req.json<ScheduleConstraint>();
+    await store.putConstraint({ ...constraint, id: c.req.param("id") });
+    return ok(c, await store.getConstraint(c.req.param("id")), 201);
+  });
+  app.delete("/api/v1/db/constraints/:id", async (c) => {
+    await store.deleteConstraint(c.req.param("id"));
+    return c.body(null, 204);
+  });
+
   app.get("/api/v1/db/schedules", async (c) => {
     const { offset, limit } = parsePagination(c.req.query());
     return ok(c, toPage(await store.listSchedules(), offset, limit));
@@ -462,6 +478,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       : allPersons;
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
+    const constraints = await store.listConstraintsByConfig(config.id);
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
@@ -470,14 +487,14 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       similarities: similarityLookup,
       config,
       unavailabilities,
-      constraints: config.constraints,
+      constraints,
     });
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
-      constraints: config.constraints,
+      constraints,
     });
     return ok(c, {
       plan,
@@ -500,6 +517,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       : allPersons;
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
+    const constraints = await store.listConstraintsByConfig(config.id);
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
@@ -516,14 +534,14 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       unavailabilities,
       previousPlan,
       changeDate: body.changeDate,
-      constraints: config.constraints,
+      constraints,
     });
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
-      constraints: config.constraints,
+      constraints,
     });
     return ok(c, {
       plan,
@@ -545,6 +563,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const persons = await store.listPersons();
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
+    const constraints = await store.listConstraintsByConfig(config.id);
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
     if (!body.sessionDate) {
@@ -553,7 +572,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         similarities: similarityLookup,
         config,
         unavailabilities,
-        constraints: config.constraints,
+        constraints,
       });
       return ok(c, { metrics, explanations: explainScheduleMetrics(metrics) });
     }
@@ -574,7 +593,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       similarities: similarityLookup,
       config,
       unavailabilities,
-      constraints: config.constraints,
+      constraints,
     }, historical);
 
     return ok(c, {
@@ -614,14 +633,26 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     positiveId: z.string().min(1),
     negativeId: z.string().min(1),
     margin: z.number().positive().optional(),
-    learningRate: z.number().optional(),
+    updateOptions: z.object({
+      learningRate: z.number().optional(),
+      minIters: z.number().int().positive().optional(),
+      maxIters: z.number().int().positive().optional(),
+      stabilityWindow: z.number().int().positive().optional(),
+      stabilityTolerance: z.number().nonnegative().optional(),
+    }).optional(),
   });
 
   const pairUpdateSchema = z.object({
     leftId: z.string().min(1),
     rightId: z.string().min(1),
     targetDistance: z.number().nonnegative(),
-    learningRate: z.number().optional(),
+    updateOptions: z.object({
+      learningRate: z.number().optional(),
+      minIters: z.number().int().positive().optional(),
+      maxIters: z.number().int().positive().optional(),
+      stabilityWindow: z.number().int().positive().optional(),
+      stabilityTolerance: z.number().nonnegative().optional(),
+    }).optional(),
   });
 
   const tripletRecommendSchema = z.object({
@@ -634,14 +665,26 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       leftId: z.string().min(1),
       rightId: z.string().min(1),
       targetDistance: z.number().nonnegative(),
-      learningRate: z.number().optional(),
+      updateOptions: z.object({
+        learningRate: z.number().optional(),
+        minIters: z.number().int().positive().optional(),
+        maxIters: z.number().int().positive().optional(),
+        stabilityWindow: z.number().int().positive().optional(),
+        stabilityTolerance: z.number().nonnegative().optional(),
+      }).optional(),
     }),
     z.object({
       kind: z.literal('ranked'),
       anchorId: z.string().min(1),
       orderedIds: z.array(z.string().min(1)).min(2),
       margin: z.number().positive().optional(),
-      learningRate: z.number().optional(),
+      updateOptions: z.object({
+        learningRate: z.number().optional(),
+        minIters: z.number().int().positive().optional(),
+        maxIters: z.number().int().positive().optional(),
+        stabilityWindow: z.number().int().positive().optional(),
+        stabilityTolerance: z.number().nonnegative().optional(),
+      }).optional(),
     }),
   ]);
 
@@ -673,7 +716,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         body.positiveId,
         body.negativeId,
         body.margin ?? 0.2,
-        body.learningRate ?? 0.05,
+        body.updateOptions,
       );
       loss = result.loss;
       updatedVectors = result.updatedVectors;
@@ -696,7 +739,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         body.leftId,
         body.rightId,
         body.targetDistance,
-        body.learningRate ?? 0.05,
+        body.updateOptions,
       );
       loss = result.loss;
       updatedVectors = result.updatedVectors;

@@ -5,6 +5,7 @@ import { Calendar, X, Pencil } from 'lucide-preact';
 import {
   personsSignal,
   configsSignal,
+  constraintsSignal,
   schedulesSignal,
   currentScheduleSignal,
   similarityMapSignal,
@@ -15,6 +16,7 @@ import {
 import { fallbackEntityId, displayName } from '@/i18n';
 import {
   loadAllConfigs,
+  loadAllConstraints,
   loadAllEmailTasks,
   loadAllPersons,
   loadAllSchedules,
@@ -430,6 +432,7 @@ export function SchedulePage() {
       await Promise.all([
         loadAllPersons(db),
         loadAllConfigs(db),
+        loadAllConstraints(db),
         loadAllSchedules(db),
         loadAllSimilarities(db),
         loadAllUnavailabilities(db),
@@ -460,11 +463,13 @@ export function SchedulePage() {
   function localMetricsForPlan(plan: SchedulePlan): { metrics: ScheduleMetrics; explanations: MetricExplanation[] } | null {
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return null;
+    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityMapSignal.value,
       config,
       unavailabilities,
+      constraints,
     });
     return { metrics, explanations: explainScheduleMetrics(metrics) };
   }
@@ -496,6 +501,7 @@ export function SchedulePage() {
 
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return;
+    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
     const sessionIndex = plan.sessions.findIndex((session) => session.date === sessionDate);
     if (sessionIndex < 0) return;
     const metrics = computeScheduleMetrics({ ...plan, sessions: [plan.sessions[sessionIndex]] }, {
@@ -503,6 +509,7 @@ export function SchedulePage() {
       similarities: similarityMapSignal.value,
       config,
       unavailabilities,
+      constraints,
     }, plan.sessions.slice(0, sessionIndex));
     openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, metrics, explainScheduleMetrics(metrics));
   }
@@ -523,6 +530,7 @@ export function SchedulePage() {
       const proceed = window.confirm(t('rescheduleDateEarlyWarning'));
       if (!proceed) return;
     }
+    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
     isComputingSignal.value = true;
     const tid = toast.loading(t('computing'));
     try {
@@ -540,6 +548,7 @@ export function SchedulePage() {
           similarities: similarityMapSignal.value,
           config,
           unavailabilities,
+          constraints,
         });
       const normalized = normalizeSolveResponse(result);
       const plan = normalized.plan;
@@ -566,6 +575,7 @@ export function SchedulePage() {
     if (!current || !changeDate) return;
     const config = configs.find(c => c.id === current.configId);
     if (!config) return;
+    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
     const suggested = defaultIncrementalDate();
     if (changeDate < suggested) {
       const proceed = window.confirm(t('rescheduleDateEarlyWarning'));
@@ -592,6 +602,7 @@ export function SchedulePage() {
           previousPlan: current,
           changeDate,
           unavailabilities,
+          constraints,
         });
       const normalized = normalizeSolveResponse(result);
       const plan = normalized.plan;

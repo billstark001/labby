@@ -324,23 +324,26 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
       daysOfWeek: [1, 3, 5],
       presentersPerSession: 2,
       questionersPerPresenter: 1,
-      constraints: [
-        {
-          type: 'frequency-multiplier',
-          personIds: ['p1', 'p2'],
-          baseline: 2,
-          multiplier: 1.5,
-          roleScope: 'both',
-          weight: 1,
-        },
-      ],
     });
+
+    const constraints = [
+      {
+        id: 'constraint-frequency-test',
+        configId: config.id,
+        type: 'frequency-multiplier' as const,
+        personIds: ['p1', 'p2'],
+        baseline: 2,
+        multiplier: 1.5,
+        roleScope: 'both' as const,
+        weight: 1,
+      },
+    ];
 
     const plan = withSeed(42, () => solveFull({
       persons,
       similarities: makeSimilarities(),
       config,
-      constraints: config.constraints,
+      constraints,
     }));
 
     expect(plan.sessions.length).toBeGreaterThan(0);

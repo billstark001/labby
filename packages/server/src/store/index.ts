@@ -731,24 +731,12 @@ export class SqliteStore {
 
   async getConfig(id: string): Promise<ScheduleConfig | undefined> {
     await this.ensureReady();
-    const config = await this.getPayload<ScheduleConfig>(sql`SELECT payload FROM configs WHERE id = ${id}`);
-    if (!config) return undefined;
-    const constraints = await this.listConstraintsByConfig(id);
-    if (constraints.length === 0) {
-      return config;
-    }
-    return { ...config, constraints };
+    return this.getPayload<ScheduleConfig>(sql`SELECT payload FROM configs WHERE id = ${id}`);
   }
 
   async listConfigs(): Promise<ScheduleConfig[]> {
     await this.ensureReady();
-    const configs = await this.listPayloads<ScheduleConfig>(sql`SELECT payload FROM configs ORDER BY updated_at DESC, id DESC`);
-    const hydrated = await Promise.all(configs.map(async (config) => {
-      const constraints = await this.listConstraintsByConfig(config.id);
-      if (constraints.length === 0) return config;
-      return { ...config, constraints };
-    }));
-    return hydrated;
+    return this.listPayloads<ScheduleConfig>(sql`SELECT payload FROM configs ORDER BY updated_at DESC, id DESC`);
   }
 
   async putConfig(config: ScheduleConfig): Promise<void> {
@@ -760,7 +748,6 @@ export class SqliteStore {
         updated_at = excluded.updated_at,
         payload = excluded.payload
     `);
-    await this.putConstraintsForConfig(updated.id, updated.constraints ?? []);
   }
 
   async deleteConfig(id: string): Promise<void> {
@@ -771,30 +758,91 @@ export class SqliteStore {
 
   async clearConfigs(): Promise<void> {
     await this.ensureReady();
-    await this.executeCommand(sql`DELETE FROM constraints`);
     await this.executeCommand(sql`DELETE FROM configs`);
+  }
+
+  async getConstraint(id: string): Promise<ScheduleConstraint | undefined> {
+    await this.ensureReady();
+    const rows = await this.queryRows(sql`
+      SELECT id, config_id, payload
+      FROM constraints
+      WHERE id = ${id}
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row) return undefined;
+    const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+    const configId = String(row.config_id ?? payload.configId ?? '');
+    return {
+      ...payload,
+      id: String(payload.id ?? row.id),
+      configId,
+    };
+  }
+
+  async listConstraints(): Promise<ScheduleConstraint[]> {
+    await this.ensureReady();
+    const rows = await this.queryRows(sql`
+      SELECT id, config_id, payload
+      FROM constraints
+      ORDER BY updated_at DESC, id DESC
+    `);
+    return rows.map((row) => {
+      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const configId = String(row.config_id ?? payload.configId ?? '');
+      return {
+        ...payload,
+        id: String(payload.id ?? row.id),
+        configId,
+      };
+    });
+  }
+
+  async putConstraint(constraint: ScheduleConstraint): Promise<void> {
+    await this.ensureReady();
+    const updated = {
+      ...constraint,
+      configId: constraint.configId ?? '',
+      modifiedAt: constraint.modifiedAt ?? nowMs(),
+    };
+    await this.executeCommand(sql`
+      INSERT INTO constraints (id, config_id, type, payload, created_at, updated_at)
+      VALUES (${updated.id}, ${updated.configId}, ${updated.type}, ${JSON.stringify(updated)}, ${updated.modifiedAt ?? 0}, ${updated.modifiedAt ?? 0})
+      ON CONFLICT(id) DO UPDATE SET
+        config_id = excluded.config_id,
+        type = excluded.type,
+        payload = excluded.payload,
+        updated_at = excluded.updated_at
+    `);
+  }
+
+  async deleteConstraint(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM constraints WHERE id = ${id}`);
+  }
+
+  async clearConstraints(): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM constraints`);
   }
 
   async listConstraintsByConfig(configId: string): Promise<ScheduleConstraint[]> {
     await this.ensureReady();
-    return this.listPayloads<ScheduleConstraint>(sql`
-      SELECT payload FROM constraints
-      WHERE config_id = ${configId}
+    const rows = await this.queryRows(sql`
+      SELECT id, config_id, payload
+      FROM constraints
+      WHERE config_id = ${configId} OR config_id = ''
       ORDER BY updated_at DESC, id DESC
     `);
-  }
-
-  private async putConstraintsForConfig(configId: string, constraints: ScheduleConstraint[]): Promise<void> {
-    await this.ensureReady();
-    await this.executeCommand(sql`DELETE FROM constraints WHERE config_id = ${configId}`);
-    const now = nowMs();
-    for (let index = 0; index < constraints.length; index++) {
-      const item = constraints[index];
-      await this.executeCommand(sql`
-        INSERT INTO constraints (id, config_id, type, payload, created_at, updated_at)
-        VALUES (${`${configId}:${index}`}, ${configId}, ${item.type}, ${JSON.stringify(item)}, ${now}, ${now})
-      `);
-    }
+    return rows.map((row) => {
+      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const rowConfigId = String(row.config_id ?? payload.configId ?? '');
+      return {
+        ...payload,
+        id: String(payload.id ?? row.id),
+        configId: rowConfigId,
+      };
+    });
   }
 
   async getEmailTask(id: string): Promise<EmailTask | undefined> {
@@ -1094,6 +1142,7 @@ export class SqliteStore {
       keywords?: unknown;
       keywordVectors?: unknown;
       configs?: unknown;
+      constraints?: unknown;
       schedules?: unknown;
       unavailabilities?: unknown;
       emailTasks?: unknown;
@@ -1104,6 +1153,7 @@ export class SqliteStore {
       !Array.isArray(dumpObject.keywords),
       !Array.isArray(dumpObject.keywordVectors),
       !Array.isArray(dumpObject.configs),
+      !Array.isArray(dumpObject.constraints),
       !Array.isArray(dumpObject.schedules),
       !Array.isArray(dumpObject.unavailabilities),
       !Array.isArray(dumpObject.emailTasks),
@@ -1115,9 +1165,10 @@ export class SqliteStore {
         keywords: missings[1],
         keywordVectors: missings[2],
         configs: missings[3],
-        schedules: missings[4],
-        unavailabilities: missings[5],
-        emailTasks: missings[6],
+        constraints: missings[4],
+        schedules: missings[5],
+        unavailabilities: missings[6],
+        emailTasks: missings[7],
       });
     }
 
@@ -1125,6 +1176,7 @@ export class SqliteStore {
     const keywords = dumpObject.keywords as Keyword[] ?? [];
     const keywordVectors = dumpObject.keywordVectors as KeywordVector[] ?? [];
     const configs = dumpObject.configs as ScheduleConfig[] ?? [];
+    const constraints = dumpObject.constraints as ScheduleConstraint[] ?? [];
     const schedules = dumpObject.schedules as SchedulePlan[] ?? [];
     const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[] ?? [];
     const emailTasks = dumpObject.emailTasks as EmailTask[] ?? [];
@@ -1142,6 +1194,9 @@ export class SqliteStore {
     }
     for (const config of configs) {
       await this.putConfig(config);
+    }
+    for (const constraint of constraints) {
+      await this.putConstraint(constraint);
     }
     for (const schedule of schedules) {
       await this.putSchedule(schedule);

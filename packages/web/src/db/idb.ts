@@ -18,6 +18,8 @@ import type {
   PersonUnavailabilityStore,
   ScheduleConfig,
   ScheduleConfigStore,
+  ScheduleConstraint,
+  ScheduleConstraintStore,
   SchedulePlan,
   SchedulePlanStore,
   ListQuery,
@@ -25,7 +27,7 @@ import type {
 } from '@labby/core';
 
 const DB_NAME = 'labby';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 interface KeywordVectorRecord {
   keywordId: string;
@@ -96,6 +98,12 @@ export async function createDB(): Promise<IDBPDatabase> {
         if (!db.objectStoreNames.contains('email_tasks')) {
           const store = db.createObjectStore('email_tasks', { keyPath: 'id' });
           store.createIndex('configId', 'configId');
+        }
+      }
+      if (oldVersion < 5) {
+        if (!db.objectStoreNames.contains('schedule_constraints')) {
+          const store = db.createObjectStore('schedule_constraints', { keyPath: 'id' });
+          store.createIndex('configId', 'configId', { unique: false });
         }
       }
     },
@@ -218,6 +226,14 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
     clear: () => idb.clear('configs'),
   };
 
+  const constraintsStore: ScheduleConstraintStore = {
+    get: (id: string) => idb.get('schedule_constraints', id),
+    list: (query: ListQuery) => listStoreSorted<ScheduleConstraint>(idb, 'schedule_constraints', query, (item) => item.modifiedAt ?? 0),
+    put: (value: ScheduleConstraint) => idb.put('schedule_constraints', value).then(() => void 0),
+    delete: (id: string) => idb.delete('schedule_constraints', id),
+    clear: () => idb.clear('schedule_constraints'),
+  };
+
   const schedulesStore: SchedulePlanStore = {
     get: (id: string) => idb.get('schedules', id),
     list: (query: ListQuery) => listStoreSorted<SchedulePlan>(idb, 'schedules', query, (item) => item.modifiedAt ?? item.createdAt ?? 0),
@@ -247,6 +263,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
     keywords: keywordsStore,
     keywordVectors: keywordVectorsStore,
     configs: configsStore,
+    constraints: constraintsStore,
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
     emailTasks: emailTasksStore,
@@ -258,7 +275,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
 
 export async function restoreIDBDatabase(dbInst: IDBPDatabase, dump: DatabaseDump): Promise<void> {
-  const storeNames = ['persons', 'keywords', 'keyword_vectors', 'configs', 'schedules', 'unavailabilities', 'email_tasks'] as const;
+  const storeNames = ['persons', 'keywords', 'keyword_vectors', 'configs', 'schedule_constraints', 'schedules', 'unavailabilities', 'email_tasks'] as const;
   const tx = dbInst.transaction(storeNames, 'readwrite');
   await Promise.all(storeNames.map(n => tx.objectStore(n).clear()));
   await Promise.all([
@@ -266,6 +283,7 @@ export async function restoreIDBDatabase(dbInst: IDBPDatabase, dump: DatabaseDum
     ...dump.keywords.map(k => tx.objectStore('keywords').put(k)),
     ...(dump.keywordVectors?.map(v => tx.objectStore('keyword_vectors').put(toKeywordVectorRecord(v))) ?? []),
     ...dump.configs.map(c => tx.objectStore('configs').put(c)),
+    ...(dump.constraints?.map(c => tx.objectStore('schedule_constraints').put(c)) ?? []),
     ...dump.schedules.map(s => tx.objectStore('schedules').put(s)),
     ...dump.unavailabilities.map(u => tx.objectStore('unavailabilities').put(u)),
     ...dump.emailTasks.map(e => tx.objectStore('email_tasks').put(e)),

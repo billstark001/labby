@@ -13,7 +13,7 @@ use nalgebra::{DMatrix, DVector};
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::distance::{l2_dist_sq, l2_dist};
 use crate::hnsw::HNSWIndex;
@@ -39,9 +39,10 @@ const RECOMMEND_KNN: usize = 24;
 const RECOMMEND_POSITIVE_CAP: usize = 10;
 const RECOMMEND_MARGIN_TARGET: f32 = 0.2;
 const RECOMMEND_NEAR_MARGIN: f32 = 0.28;
-const ANCHOR_PRESERVE_K: usize = 16;
-const ANCHOR_PRESERVE_WEIGHT: f32 = 0.2;
+const ANCHOR_PRESERVE_K: usize = 0;
+const ANCHOR_PRESERVE_WEIGHT: f32 = 0.9;
 const ANCHOR_PRESERVE_EPS: f32 = 1e-6;
+const TANGENTIAL_PROJECTION_MAX_CONSTRAINTS: usize = 40;
 const RIGID_COMP_MIN_TOUCHED: usize = 2;
 const ANCHOR_SPIKE_RATIO: f32 = 1.7;
 const ANCHOR_SPIKE_BOOST: f32 = 2.0;
@@ -49,6 +50,10 @@ const RIGID_ITERATIONS_DEFAULT: u32 = 1;
 const RIGID_STEP_DEFAULT: f32 = 1.0;
 const RIGID_AUTO_NEAR_PER_TOUCHED: usize = 2;
 const RIGID_AUTO_FAR_COUNT: usize = 4;
+const UPDATE_MIN_ITERS_DEFAULT: u32 = 1;
+const UPDATE_MAX_ITERS_DEFAULT: u32 = 6;
+const UPDATE_STABILITY_WINDOW_DEFAULT: usize = 3;
+const UPDATE_STABILITY_TOLERANCE_DEFAULT: f32 = 1e-3;
 
 // ── Output types ─────────────────────────────────────────────────────────────
 
@@ -58,9 +63,91 @@ pub struct DirtyNode {
     pub coords_64d: [f32; LATENT_DIM],
 }
 
-struct AnchorSnapshot {
-    node_id: u32,
-    anchors: Vec<(u32, f32)>,
+#[derive(Clone, Copy)]
+pub struct UpdateIterationOptions {
+    pub learning_rate: f32,
+    pub min_iters: u32,
+    pub max_iters: u32,
+    pub stability_window: usize,
+    pub stability_tolerance: f32,
+}
+
+impl Default for UpdateIterationOptions {
+    fn default() -> Self {
+        Self {
+            learning_rate: 0.05,
+            min_iters: UPDATE_MIN_ITERS_DEFAULT,
+            max_iters: UPDATE_MAX_ITERS_DEFAULT,
+            stability_window: UPDATE_STABILITY_WINDOW_DEFAULT,
+            stability_tolerance: UPDATE_STABILITY_TOLERANCE_DEFAULT,
+        }
+    }
+}
+
+impl UpdateIterationOptions {
+    pub fn single_step(learning_rate: f32) -> Self {
+        let mut opts = Self {
+            learning_rate,
+            min_iters: 1,
+            max_iters: 1,
+            stability_window: 1,
+            stability_tolerance: 0.0,
+        };
+        opts.normalize_in_place();
+        opts
+    }
+
+    fn normalize_in_place(&mut self) {
+        if !self.learning_rate.is_finite() || self.learning_rate <= 0.0 {
+            self.learning_rate = Self::default().learning_rate;
+        }
+        self.min_iters = self.min_iters.max(1);
+        self.max_iters = self.max_iters.max(self.min_iters);
+        self.stability_window = self.stability_window.max(1);
+        if !self.stability_tolerance.is_finite() {
+            self.stability_tolerance = Self::default().stability_tolerance;
+        }
+        self.stability_tolerance = self.stability_tolerance.max(0.0);
+    }
+
+    fn normalized(mut self) -> Self {
+        self.normalize_in_place();
+        self
+    }
+}
+
+struct LossStabilityTracker {
+    window: usize,
+    tolerance: f32,
+    recent: VecDeque<f32>,
+}
+
+impl LossStabilityTracker {
+    fn new(window: usize, tolerance: f32) -> Self {
+        Self {
+            window,
+            tolerance,
+            recent: VecDeque::with_capacity(window.max(1)),
+        }
+    }
+
+    fn observe(&mut self, loss: f32) -> bool {
+        self.recent.push_back(loss);
+        if self.recent.len() > self.window {
+            self.recent.pop_front();
+        }
+        if self.recent.len() < self.window {
+            return false;
+        }
+
+        let mut min_loss = f32::INFINITY;
+        let mut max_loss = f32::NEG_INFINITY;
+        for &value in &self.recent {
+            min_loss = min_loss.min(value);
+            max_loss = max_loss.max(value);
+        }
+        (max_loss - min_loss) <= self.tolerance
+    }
 }
 
 #[derive(Clone)]
@@ -151,8 +238,8 @@ impl EmbeddingEngine {
         spike_ratio: f32,
         spike_boost: f32,
     ) {
-        self.tuning.anchor_preserve_k = k.max(1);
-        self.tuning.anchor_preserve_weight = weight.max(0.0);
+        self.tuning.anchor_preserve_k = k;
+        self.tuning.anchor_preserve_weight = weight.clamp(0.0, 1.0);
         self.tuning.anchor_spike_ratio = spike_ratio.max(1.0);
         self.tuning.anchor_spike_boost = spike_boost.max(1.0);
     }
@@ -382,19 +469,18 @@ impl EmbeddingEngine {
         id_b: u32,
         id_c: u32,
         margin: f32,
-        lr: f32,
+        options: UpdateIterationOptions,
     ) -> f32 {
         let touched_ids = [id_a, id_b, id_c];
-        let (old_positions, sample_ids) = self.capture_rigid_context(&touched_ids);
-        let loss = self.update_triplet_step(id_a, id_b, id_c, margin, lr);
-        if loss <= 0.0 { return 0.0; }
-
-        let touched = HashSet::from([id_a, id_b, id_c]);
-        let local_drift = self.measure_touched_delta(&old_positions, &touched);
-        self.apply_global_rigid_compensation(&old_positions, &touched, &sample_ids, local_drift);
-        self.finalize_touched_nodes(&touched, local_drift);
-
-        loss
+        self.run_stabilized_update(&touched_ids, options, |engine, lr, touched| {
+            let loss = engine.update_triplet_step(id_a, id_b, id_c, margin, lr);
+            if loss > 0.0 {
+                touched.insert(id_a);
+                touched.insert(id_b);
+                touched.insert(id_c);
+            }
+            loss
+        })
     }
 
     /// Batch triplet updates with one deduplicated ANN/projection refresh.
@@ -404,13 +490,12 @@ impl EmbeddingEngine {
         &mut self,
         triplets: &[u32],
         margin: f32,
-        lr: f32,
+        options: UpdateIterationOptions,
     ) -> Result<(), &'static str> {
         if triplets.len() % 3 != 0 {
             return Err("triplets length must be multiple of 3");
         }
 
-        let mut touched = HashSet::new();
         let mut touched_candidates = HashSet::new();
         for chunk in triplets.chunks_exact(3) {
             touched_candidates.insert(chunk[0]);
@@ -419,20 +504,20 @@ impl EmbeddingEngine {
         }
 
         let touched_vec: Vec<u32> = touched_candidates.iter().copied().collect();
-        let (old_positions, sample_ids) = self.capture_rigid_context(&touched_vec);
-
-        for chunk in triplets.chunks_exact(3) {
-            let loss = self.update_triplet_step(chunk[0], chunk[1], chunk[2], margin, lr);
-            if loss <= 0.0 {
-                continue;
+        self.run_stabilized_update(&touched_vec, options, |engine, lr, touched| {
+            let mut batch_loss = 0.0f32;
+            for chunk in triplets.chunks_exact(3) {
+                let loss = engine.update_triplet_step(chunk[0], chunk[1], chunk[2], margin, lr);
+                if loss <= 0.0 {
+                    continue;
+                }
+                batch_loss += loss;
+                touched.insert(chunk[0]);
+                touched.insert(chunk[1]);
+                touched.insert(chunk[2]);
             }
-            touched.insert(chunk[0]);
-            touched.insert(chunk[1]);
-            touched.insert(chunk[2]);
-        }
-        let local_drift = self.measure_touched_delta(&old_positions, &touched);
-        self.apply_global_rigid_compensation(&old_positions, &touched, &sample_ids, local_drift);
-        self.finalize_touched_nodes(&touched, local_drift);
+            batch_loss
+        });
         Ok(())
     }
 
@@ -445,11 +530,6 @@ impl EmbeddingEngine {
         lr: f32,
     ) -> f32 {
         let (ia, ib, ic) = (id_a as usize, id_b as usize, id_c as usize);
-        let touched_ids = [id_a, id_b, id_c];
-        let anchor_snapshots = self.capture_anchor_targets(&touched_ids);
-        let step_scale = self.stability_step_scale(&anchor_snapshots);
-        let task_lr = lr * step_scale;
-        let preserve_lr = lr * (1.0 + (1.0 - step_scale) * 1.2);
 
         let d_ab_sq = l2_dist_sq(self.coords.row(ia), self.coords.row(ib));
         let d_ac_sq = l2_dist_sq(self.coords.row(ia), self.coords.row(ic));
@@ -486,10 +566,40 @@ impl EmbeddingEngine {
             (ga, gb, gc)
         };
 
-        self.apply_grad(ia, &grad_a, task_lr);
-        self.apply_grad(ib, &grad_b, task_lr);
-        self.apply_grad(ic, &grad_c, task_lr);
-        self.apply_anchor_preservation(&anchor_snapshots, preserve_lr);
+        let w = self.tuning.anchor_preserve_weight.clamp(0.0, 1.0);
+        if w > 0.0 {
+            // A: loss involves AB and AC, so exclude A/B/C from preserve set.
+            let mut excl_a = HashSet::new();
+            excl_a.insert(id_a);
+            excl_a.insert(id_b);
+            excl_a.insert(id_c);
+
+            // B: loss only involves AB, keep BC relation by excluding A/B.
+            let mut excl_b = HashSet::new();
+            excl_b.insert(id_a);
+            excl_b.insert(id_b);
+
+            // C: loss only involves AC, keep CB relation by excluding A/C.
+            let mut excl_c = HashSet::new();
+            excl_c.insert(id_a);
+            excl_c.insert(id_c);
+
+            let preserve_a = self.collect_preserve_ids_for_tangential(id_a, &excl_a);
+            let preserve_b = self.collect_preserve_ids_for_tangential(id_b, &excl_b);
+            let preserve_c = self.collect_preserve_ids_for_tangential(id_c, &excl_c);
+
+            let g_a_proj = self.compute_tangential_gradient(ia, &grad_a, &preserve_a);
+            let g_b_proj = self.compute_tangential_gradient(ib, &grad_b, &preserve_b);
+            let g_c_proj = self.compute_tangential_gradient(ic, &grad_c, &preserve_c);
+
+            self.apply_grad(ia, &blend_gradient(&grad_a, &g_a_proj, w), lr);
+            self.apply_grad(ib, &blend_gradient(&grad_b, &g_b_proj, w), lr);
+            self.apply_grad(ic, &blend_gradient(&grad_c, &g_c_proj, w), lr);
+        } else {
+            self.apply_grad(ia, &grad_a, lr);
+            self.apply_grad(ib, &grad_b, lr);
+            self.apply_grad(ic, &grad_c, lr);
+        }
 
         loss
     }
@@ -508,19 +618,17 @@ impl EmbeddingEngine {
         id_a: u32,
         id_b: u32,
         target_distance: f32,
-        lr: f32,
+        options: UpdateIterationOptions,
     ) -> f32 {
         let touched_ids = [id_a, id_b];
-        let (old_positions, sample_ids) = self.capture_rigid_context(&touched_ids);
-        let loss = self.update_pair_step(id_a, id_b, target_distance, lr);
-        if loss <= 0.0 { return 0.0; }
-
-        let touched = HashSet::from([id_a, id_b]);
-        let local_drift = self.measure_touched_delta(&old_positions, &touched);
-        self.apply_global_rigid_compensation(&old_positions, &touched, &sample_ids, local_drift);
-        self.finalize_touched_nodes(&touched, local_drift);
-
-        loss
+        self.run_stabilized_update(&touched_ids, options, |engine, lr, touched| {
+            let loss = engine.update_pair_step(id_a, id_b, target_distance, lr);
+            if loss > 0.0 {
+                touched.insert(id_a);
+                touched.insert(id_b);
+            }
+            loss
+        })
     }
 
     /// Batch pair updates with one deduplicated ANN/projection refresh.
@@ -530,13 +638,12 @@ impl EmbeddingEngine {
         &mut self,
         pairs: &[u32],
         target_distance: f32,
-        lr: f32,
+        options: UpdateIterationOptions,
     ) -> Result<(), &'static str> {
         if pairs.len() % 2 != 0 {
             return Err("pairs length must be multiple of 2");
         }
 
-        let mut touched = HashSet::new();
         let mut touched_candidates = HashSet::new();
         for chunk in pairs.chunks_exact(2) {
             touched_candidates.insert(chunk[0]);
@@ -544,19 +651,19 @@ impl EmbeddingEngine {
         }
 
         let touched_vec: Vec<u32> = touched_candidates.iter().copied().collect();
-        let (old_positions, sample_ids) = self.capture_rigid_context(&touched_vec);
-
-        for chunk in pairs.chunks_exact(2) {
-            let loss = self.update_pair_step(chunk[0], chunk[1], target_distance, lr);
-            if loss <= 0.0 {
-                continue;
+        self.run_stabilized_update(&touched_vec, options, |engine, lr, touched| {
+            let mut batch_loss = 0.0f32;
+            for chunk in pairs.chunks_exact(2) {
+                let loss = engine.update_pair_step(chunk[0], chunk[1], target_distance, lr);
+                if loss <= 0.0 {
+                    continue;
+                }
+                batch_loss += loss;
+                touched.insert(chunk[0]);
+                touched.insert(chunk[1]);
             }
-            touched.insert(chunk[0]);
-            touched.insert(chunk[1]);
-        }
-        let local_drift = self.measure_touched_delta(&old_positions, &touched);
-        self.apply_global_rigid_compensation(&old_positions, &touched, &sample_ids, local_drift);
-        self.finalize_touched_nodes(&touched, local_drift);
+            batch_loss
+        });
         Ok(())
     }
 
@@ -568,11 +675,6 @@ impl EmbeddingEngine {
         lr: f32,
     ) -> f32 {
         let (ia, ib) = (id_a as usize, id_b as usize);
-        let touched_ids = [id_a, id_b];
-        let anchor_snapshots = self.capture_anchor_targets(&touched_ids);
-        let step_scale = self.stability_step_scale(&anchor_snapshots);
-        let task_lr = lr * step_scale;
-        let preserve_lr = lr * (1.0 + (1.0 - step_scale) * 1.2);
 
         let d = l2_dist(self.coords.row(ia), self.coords.row(ib));
         if d < 1e-8 { return 0.0; }
@@ -589,11 +691,81 @@ impl EmbeddingEngine {
             (ga, gb)
         };
 
-        self.apply_grad(ia, &grad_a, task_lr);
-        self.apply_grad(ib, &grad_b, task_lr);
-        self.apply_anchor_preservation(&anchor_snapshots, preserve_lr);
+        let w = self.tuning.anchor_preserve_weight.clamp(0.0, 1.0);
+        if w > 0.0 {
+            let mut exclude = HashSet::new();
+            exclude.insert(id_a);
+            exclude.insert(id_b);
+
+            let preserve = self.collect_preserve_ids_for_tangential(id_a, &exclude);
+            let g_a_proj = self.compute_tangential_gradient(ia, &grad_a, &preserve);
+            let g_b_proj = self.compute_tangential_gradient(ib, &grad_b, &preserve);
+
+            self.apply_grad(ia, &blend_gradient(&grad_a, &g_a_proj, w), lr);
+            self.apply_grad(ib, &blend_gradient(&grad_b, &g_b_proj, w), lr);
+        } else {
+            self.apply_grad(ia, &grad_a, lr);
+            self.apply_grad(ib, &grad_b, lr);
+        }
 
         loss
+    }
+
+    fn run_stabilized_update<F>(
+        &mut self,
+        touched_candidates: &[u32],
+        options: UpdateIterationOptions,
+        mut step: F,
+    ) -> f32
+    where
+        F: FnMut(&mut Self, f32, &mut HashSet<u32>) -> f32,
+    {
+        let options = options.normalized();
+        let (old_positions, sample_ids) = self.capture_rigid_context(touched_candidates);
+        let mut touched = HashSet::new();
+
+        let loss = self.run_iterative_step(options, |engine, lr| {
+            step(engine, lr, &mut touched)
+        });
+
+        if touched.is_empty() {
+            return 0.0;
+        }
+
+        let local_drift = self.measure_touched_delta(&old_positions, &touched);
+        self.apply_global_rigid_compensation(&old_positions, &touched, &sample_ids, local_drift);
+        self.finalize_touched_nodes(&touched, local_drift);
+
+        loss.max(0.0)
+    }
+
+    fn run_iterative_step<F>(&mut self, options: UpdateIterationOptions, mut step: F) -> f32
+    where
+        F: FnMut(&mut Self, f32) -> f32,
+    {
+        let mut tracker = LossStabilityTracker::new(options.stability_window, options.stability_tolerance);
+        let mut last_loss = 0.0f32;
+
+        for iter_idx in 0..options.max_iters {
+            let loss = step(self, options.learning_rate);
+            last_loss = loss;
+
+            let iter_count = iter_idx + 1;
+            let reached_min_iters = iter_count >= options.min_iters;
+
+            if loss <= 0.0 {
+                if reached_min_iters {
+                    break;
+                }
+                continue;
+            }
+
+            if reached_min_iters && tracker.observe(loss) {
+                break;
+            }
+        }
+
+        last_loss
     }
 
     // ── k-NN query (public) ───────────────────────────────────────────────────
@@ -1012,104 +1184,108 @@ impl EmbeddingEngine {
         selected
     }
 
-    fn capture_anchor_targets(&self, touched_ids: &[u32]) -> Vec<AnchorSnapshot> {
-        let touched_set: HashSet<u32> = touched_ids.iter().copied().collect();
-        let mut snapshots = Vec::with_capacity(touched_ids.len());
+    /// Returns preserve-node ids for tangential projection.
+    ///
+    /// If available nodes are fewer than the selected cap, return all available
+    /// nodes; otherwise, use nearest neighbors for bounded projection cost.
+    fn collect_preserve_ids_for_tangential(
+        &self,
+        query_node: u32,
+        exclude_set: &HashSet<u32>,
+    ) -> Vec<u32> {
+        let max_k = if self.tuning.anchor_preserve_k > 0
+            && self.tuning.anchor_preserve_k < TANGENTIAL_PROJECTION_MAX_CONSTRAINTS
+        {
+            self.tuning.anchor_preserve_k
+        } else {
+            TANGENTIAL_PROJECTION_MAX_CONSTRAINTS
+        };
 
-        for &id in touched_ids {
-            let idx = id as usize;
-            if idx >= self.capacity || !self.active[idx] {
+        let self_excluded = exclude_set.contains(&query_node);
+        let available = self
+            .n_active
+            .saturating_sub(exclude_set.len() + if self_excluded { 0 } else { 1 });
+
+        if available <= max_k {
+            let mut ids = Vec::with_capacity(available);
+            for idx in 0..self.capacity {
+                if self.active[idx] {
+                    let id = idx as u32;
+                    if id != query_node && !exclude_set.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+            return ids;
+        }
+
+        let qidx = query_node as usize;
+        if qidx >= self.capacity || !self.active[qidx] {
+            return Vec::new();
+        }
+        let query_row: Vec<f32> = self.coords.row(qidx).to_vec();
+        let candidates = self.ann.knn_search(
+            &query_row,
+            max_k + exclude_set.len() + 4,
+            KNN_EF,
+            &self.coords,
+        );
+
+        let mut ids = Vec::with_capacity(max_k);
+        for (n_id, _) in candidates {
+            if n_id == query_node || exclude_set.contains(&n_id) {
                 continue;
             }
-
-            let query_row: Vec<f32> = self.coords.row(idx).to_vec();
-            let raw = self
-                .ann
-                .knn_search(
-                    &query_row,
-                    self.tuning.anchor_preserve_k + touched_ids.len() + 2,
-                    KNN_EF,
-                    &self.coords,
-                );
-
-            let mut anchors = Vec::with_capacity(self.tuning.anchor_preserve_k);
-            for (a_id, dist_sq) in raw {
-                if a_id == id || touched_set.contains(&a_id) {
-                    continue;
-                }
-                let a_idx = a_id as usize;
-                if a_idx >= self.capacity || !self.active[a_idx] {
-                    continue;
-                }
-                anchors.push((a_id, dist_sq.sqrt()));
-                if anchors.len() >= self.tuning.anchor_preserve_k {
+            let n_idx = n_id as usize;
+            if n_idx < self.capacity && self.active[n_idx] {
+                ids.push(n_id);
+                if ids.len() >= max_k {
                     break;
                 }
             }
-
-            if !anchors.is_empty() {
-                snapshots.push(AnchorSnapshot { node_id: id, anchors });
-            }
         }
-
-        snapshots
+        ids
     }
 
-    fn apply_anchor_preservation(&mut self, snapshots: &[AnchorSnapshot], lr: f32) {
-        if snapshots.is_empty() || self.tuning.anchor_preserve_weight <= 0.0 {
-            return;
+    /// Projects `grad` into the tangential subspace at node `idx` so that the
+    /// first-order distance change to `preserve_ids` is zero.
+    fn compute_tangential_gradient(
+        &self,
+        idx: usize,
+        grad: &[f32],
+        preserve_ids: &[u32],
+    ) -> Vec<f32> {
+        let mut g = grad.to_vec();
+        if preserve_ids.is_empty() {
+            return g;
         }
 
-        for snapshot in snapshots {
-            let idx = snapshot.node_id as usize;
-            if idx >= self.capacity || !self.active[idx] {
+        let xi = self.coords.row(idx);
+        for &pid in preserve_ids {
+            let pidx = pid as usize;
+            if pidx >= self.capacity || !self.active[pidx] || pidx == idx {
                 continue;
             }
 
-            let m = snapshot.anchors.len() as f32;
-            if m <= 0.0 {
+            let xp = self.coords.row(pidx);
+            let mut diff = [0.0f32; LATENT_DIM];
+            let mut len_sq = 0.0f32;
+            for d in 0..LATENT_DIM {
+                diff[d] = xi[d] - xp[d];
+                len_sq += diff[d] * diff[d];
+            }
+            if len_sq < ANCHOR_PRESERVE_EPS * ANCHOR_PRESERVE_EPS {
                 continue;
             }
-            let base_weight = self.tuning.anchor_preserve_weight / m;
-            let mut grad = [0.0f32; LATENT_DIM];
 
-            for &(anchor_id, target_dist) in &snapshot.anchors {
-                let a_idx = anchor_id as usize;
-                if a_idx >= self.capacity || !self.active[a_idx] {
-                    continue;
-                }
-
-                let xi = self.coords.row(idx);
-                let xa = self.coords.row(a_idx);
-                let d = l2_dist(xi, xa);
-                if d <= ANCHOR_PRESERVE_EPS {
-                    continue;
-                }
-                let mut weight = base_weight;
-                if target_dist > ANCHOR_PRESERVE_EPS
-                    && d > target_dist * self.tuning.anchor_spike_ratio
-                {
-                    weight *= self.tuning.anchor_spike_boost;
-                }
-
-                let scale = 2.0 * (d - target_dist) / d * weight;
-                for j in 0..LATENT_DIM {
-                    grad[j] += scale * (xi[j] - xa[j]);
-                }
+            let gdot: f32 = g.iter().zip(diff.iter()).map(|(gi, di)| gi * di).sum();
+            let scale = gdot / len_sq;
+            for d in 0..LATENT_DIM {
+                g[d] -= scale * diff[d];
             }
-
-            self.apply_grad(idx, &grad, lr);
         }
-    }
 
-    fn stability_step_scale(&self, snapshots: &[AnchorSnapshot]) -> f32 {
-        if snapshots.is_empty() {
-            return 1.0;
-        }
-        let anchor_total = snapshots.iter().map(|s| s.anchors.len()).sum::<usize>() as f32;
-        let pressure = (self.tuning.anchor_preserve_weight * (anchor_total / 16.0))
-            .clamp(0.0, 0.45);
-        (1.0 - pressure).clamp(0.55, 1.0)
+        g
     }
 
     fn measure_touched_delta(
@@ -1302,6 +1478,14 @@ fn similarity_from_distance(distance: f32) -> f32 {
     1.0 / (1.0 + distance)
 }
 
+#[inline]
+fn blend_gradient(orig: &[f32], projected: &[f32], weight: f32) -> Vec<f32> {
+    orig.iter()
+        .zip(projected.iter())
+        .map(|(o, p)| (1.0 - weight) * o + weight * p)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1409,7 +1593,7 @@ mod tests {
             (a[0] - b[0]).abs()
         };
 
-        let _ = engine.update_pair(id_a, id_b, 1.0, 0.1);
+        let _ = engine.update_pair(id_a, id_b, 1.0, UpdateIterationOptions::single_step(0.1));
         let dist_after_pull = {
             let a = engine.get_coords_64d(id_a);
             let b = engine.get_coords_64d(id_b);
@@ -1417,7 +1601,7 @@ mod tests {
         };
         assert!(dist_after_pull < dist_before, "pull should decrease pair distance");
 
-        let _ = engine.update_pair(id_a, id_b, 6.0, 0.1);
+        let _ = engine.update_pair(id_a, id_b, 6.0, UpdateIterationOptions::single_step(0.1));
         let dist_after_push = {
             let a = engine.get_coords_64d(id_a);
             let b = engine.get_coords_64d(id_b);
@@ -1438,7 +1622,7 @@ mod tests {
 
         let mut observed_positive_loss = false;
         for _ in 0..300 {
-            let loss = engine.update_triplet(id_a, id_b, id_c, 0.2, 0.05);
+            let loss = engine.update_triplet(id_a, id_b, id_c, 0.2, UpdateIterationOptions::single_step(0.05));
             if loss > 0.0 {
                 observed_positive_loss = true;
             }
@@ -1459,7 +1643,7 @@ mod tests {
         let id_b = engine.insert_node(&axis_vec(0, 2.0));
         let id_c = engine.insert_node(&axis_vec(0, 5.0));
 
-        let _ = engine.update_pair(id_a, id_b, 1.0, 0.1);
+        let _ = engine.update_pair(id_a, id_b, 1.0, UpdateIterationOptions::single_step(0.1));
 
         let mut dirty = engine.flush_dirty_nodes();
         dirty.sort_by_key(|n| n.id);
@@ -1487,7 +1671,7 @@ mod tests {
 
         let mut effective_updates = 0usize;
         while effective_updates < 24 {
-            let loss = engine.update_pair(ids[0], ids[1], 50.0, 0.02);
+            let loss = engine.update_pair(ids[0], ids[1], 50.0, UpdateIterationOptions::single_step(0.02));
             if loss > 0.0 {
                 effective_updates += 1;
             }
@@ -1544,7 +1728,7 @@ mod tests {
         baseline.set_rigid_compensation_params(1, 1.0);
         baseline.set_rigid_control_point_params(0, 0);
         baseline.set_rigid_control_points(&[], &[]);
-        let _ = baseline.update_pair(id_a, id_b, 6.0, 0.08);
+        let _ = baseline.update_pair(id_a, id_b, 6.0, UpdateIterationOptions::single_step(0.08));
         let baseline_after = capture_distances(&baseline, id_b, &near_ids);
         let baseline_spike = max_spike_ratio(&before, &baseline_after);
 
@@ -1552,7 +1736,7 @@ mod tests {
         tuned.set_rigid_compensation_params(3, 0.45);
         tuned.set_rigid_control_point_params(2, 2);
         tuned.set_rigid_control_points(&near_ids[..4], &far_ids[..4]);
-        let _ = tuned.update_pair(id_a, id_b, 6.0, 0.08);
+        let _ = tuned.update_pair(id_a, id_b, 6.0, UpdateIterationOptions::single_step(0.08));
         let tuned_after = capture_distances(&tuned, id_b, &near_ids);
         let tuned_spike = max_spike_ratio(&before, &tuned_after);
 
@@ -1561,6 +1745,41 @@ mod tests {
             "tuned config should reduce worst single-point spike: tuned={} baseline={}",
             tuned_spike,
             baseline_spike
+        );
+    }
+
+    #[test]
+    fn tangential_projection_significantly_reduces_external_distance_drift() {
+        let mut baseline = build_engine_from_fixture();
+        let mut projected = build_engine_from_fixture();
+
+        let id_a = 0u32;
+        let id_b = 1u32;
+        let observer_ids: Vec<u32> = (2u32..18u32).collect();
+
+        let before = capture_distances(&baseline, id_b, &observer_ids);
+
+        baseline.set_anchor_preservation_params(0, 0.0, 1.0, 1.0);
+        baseline.set_rigid_compensation_params(1, 1.0);
+        baseline.set_rigid_control_point_params(0, 0);
+        baseline.set_rigid_control_points(&[], &[]);
+        let _ = baseline.update_pair(id_a, id_b, 6.0, UpdateIterationOptions::single_step(0.08));
+        let baseline_after = capture_distances(&baseline, id_b, &observer_ids);
+        let baseline_mean = mean_abs_delta(&before, &baseline_after);
+
+        projected.set_anchor_preservation_params(0, 1.0, 1.0, 1.0);
+        projected.set_rigid_compensation_params(1, 1.0);
+        projected.set_rigid_control_point_params(0, 0);
+        projected.set_rigid_control_points(&[], &[]);
+        let _ = projected.update_pair(id_a, id_b, 6.0, UpdateIterationOptions::single_step(0.08));
+        let projected_after = capture_distances(&projected, id_b, &observer_ids);
+        let projected_mean = mean_abs_delta(&before, &projected_after);
+
+        assert!(
+            projected_mean < baseline_mean * 0.25,
+            "tangential projection should reduce external drift strongly: projected={} baseline={}",
+            projected_mean,
+            baseline_mean
         );
     }
 
@@ -1579,7 +1798,7 @@ mod tests {
         single_step.set_rigid_compensation_params(1, 1.0);
         single_step.set_rigid_control_point_params(1, 2);
         single_step.set_rigid_control_points(&reference_ids[..3], &reference_ids[10..13]);
-        let _ = single_step.update_pair(id_a, id_b, 6.5, 0.07);
+        let _ = single_step.update_pair(id_a, id_b, 6.5, UpdateIterationOptions::single_step(0.07));
         let after_single = capture_distances(&single_step, id_a, &reference_ids);
         let drift_single = mean_abs_delta(&before, &after_single);
         let max_single = max_abs_delta(&before, &after_single);
@@ -1588,7 +1807,7 @@ mod tests {
         multi_step.set_rigid_compensation_params(4, 0.5);
         multi_step.set_rigid_control_point_params(1, 2);
         multi_step.set_rigid_control_points(&reference_ids[..3], &reference_ids[10..13]);
-        let _ = multi_step.update_pair(id_a, id_b, 6.5, 0.07);
+        let _ = multi_step.update_pair(id_a, id_b, 6.5, UpdateIterationOptions::single_step(0.07));
         let after_multi = capture_distances(&multi_step, id_a, &reference_ids);
         let drift_multi = mean_abs_delta(&before, &after_multi);
         let max_multi = max_abs_delta(&before, &after_multi);

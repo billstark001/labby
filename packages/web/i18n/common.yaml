@@ -844,6 +844,21 @@ constraintType:
   zh-CN: 约束类型
   ja-JP: 制約タイプ
 
+constraintTypeNoOverlap:
+  en: Prevent Presenter-Questioner Overlap
+  zh-CN: 禁止主讲与提问重叠
+  ja-JP: 発表者と質問者の重複を禁止
+
+constraintTypeAffinityBoost:
+  en: Boost Affinity Pairing
+  zh-CN: 提升亲和配对
+  ja-JP: 親和性ペアリングを強化
+
+constraintTypeFrequencyMultiplier:
+  en: Adjust Appearance Frequency
+  zh-CN: 调整出现频率
+  ja-JP: 出現頻度を調整
+
 constraintPersons:
   en: Persons
   zh-CN: 约束人员
@@ -888,6 +903,26 @@ constraintRoleBoth:
   en: Presenter + Questioner
   zh-CN: 主讲 + 提问
   ja-JP: 発表者 + 質問者
+
+constraintAllConfigs:
+  en: All Configs
+  zh-CN: 全部配置
+  ja-JP: すべての設定
+
+constraintParams:
+  en: Parameters
+  zh-CN: 参数
+  ja-JP: パラメータ
+
+addConstraint:
+  en: Add Constraint
+  zh-CN: 新建约束
+  ja-JP: 制約を追加
+
+editConstraint:
+  en: Edit Constraint
+  zh-CN: 编辑约束
+  ja-JP: 制約を編集
 
 templateInjectionLanguage:
   en: Injection Language
