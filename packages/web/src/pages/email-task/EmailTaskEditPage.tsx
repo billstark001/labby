@@ -242,7 +242,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         // Allow navigation - mark clean so re-navigation doesn't re-prompt
         setIsDirty(false);
       } else {
-        history.pushState(null, '', e.oldURL);
+        window.history.pushState(null, '', e.oldURL);
       }
     };
 
