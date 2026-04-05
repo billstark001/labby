@@ -361,8 +361,245 @@ export function mutate(
 ): Session[] {
   if (!sessions.length) return sessions;
   const clone = deepCloneSessions(sessions);
+  if (!personIds.length) return clone;
 
-  // TODO
+  const guidance = buildConstraintGuidance(ctx);
+  const allSessions = [...historicalSessions, ...clone];
+
+  // ── Shared helpers ─────────────────────────────────────────────────────────
+
+  /** Similarity-based questioner weight, matching buildRandomSchedule logic. */
+  const simFactor = (pid: string, qid: string): number => {
+    const rawSim = personSimilarity(
+      ctx.personKeywords.get(pid) ?? [],
+      ctx.personKeywords.get(qid) ?? [],
+      ctx.similarities,
+    );
+    const diff = Math.abs(rawSim - ctx.r);
+    const scaled = (diff - 0.2) / 0.4;
+    return Math.min(Math.max(0, 1 - scaled), 1);
+  };
+
+  /** Pick `count` questioners for `presenterId` at `date` via weighted sampling. */
+  const pickQuestioners = (presenterId: string, date: string, count: number): string[] => {
+    const unavail = unavailMap.get(date) ?? new Set<string>();
+    const pool = personIds.filter(
+      id => id !== presenterId && !unavail.has(id) && !noOverlapForbidden(presenterId, id, guidance),
+    );
+    const picked: string[] = [];
+    const used = new Set<string>();
+    for (let j = 0; j < count; j++) {
+      const avail = pool.filter(id => !used.has(id));
+      if (!avail.length) break;
+      const weights = avail.map(id =>
+        Math.max(0.01, affinityPairWeight(presenterId, id, guidance) * simFactor(presenterId, id)),
+      );
+      const total = weights.reduce((s, w) => s + w, 0);
+      let r = Math.random() * total;
+      let chosen = avail.length - 1;
+      for (let k = 0; k < weights.length; k++) {
+        r -= weights[k];
+        if (r <= 0) { chosen = k; break; }
+      }
+      used.add(avail[chosen]);
+      picked.push(avail[chosen]);
+    }
+    return picked;
+  };
+
+  /** Raw (unscaled) per-person presenter appearance counts across allSessions. */
+  const rawPresenterCounts = (): Map<string, number> => {
+    const counts = new Map<string, number>(personIds.map(id => [id, 0]));
+    for (const s of allSessions) {
+      for (const p of s.presentations) {
+        counts.set(p.presenterId, (counts.get(p.presenterId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  };
+
+  /** Expected appearances per person derived from frequency-multiplier weights. */
+  const expectedCounts = (total: number): Map<string, number> => {
+    const freqWeights = personIds.map(id => frequencyRoleWeight(id, 'presenter', guidance));
+    const totalFreq = freqWeights.reduce((s, w) => s + w, 0);
+    return new Map(personIds.map((id, i) => [id, totalFreq > 0 ? total * freqWeights[i] / totalFreq : total / personIds.length]));
+  };
+
+  // ── Strategy selection ─────────────────────────────────────────────────────
+  const strategies = Object.entries(MUTATION_WEIGHTS) as [keyof typeof MUTATION_WEIGHTS, number][];
+  const totalWeight = strategies.reduce((s, [, w]) => s + w, 0);
+  let pick = Math.random() * totalWeight;
+  let strategy: keyof typeof MUTATION_WEIGHTS = strategies[0][0];
+  for (const [k, w] of strategies) {
+    pick -= w;
+    if (pick <= 0) { strategy = k; break; }
+  }
+
+  switch (strategy) {
+
+    // ── 1. Swap entire presentation slots between two random sessions ────────
+    // Improves presentation-gap uniformity and load balance simultaneously;
+    // rebuilds questioners for the relocated presenter.
+    case 'swapPresenters': {
+      const eligible = clone.filter(s => s.presentations.length > 0);
+      if (eligible.length < 2) break;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const ia = Math.floor(Math.random() * eligible.length);
+        let ib = Math.floor(Math.random() * (eligible.length - 1));
+        if (ib >= ia) ib++;
+        const sessA = eligible[ia];
+        const sessB = eligible[ib];
+        const pi = Math.floor(Math.random() * sessA.presentations.length);
+        const pj = Math.floor(Math.random() * sessB.presentations.length);
+        const idA = sessA.presentations[pi].presenterId;
+        const idB = sessB.presentations[pj].presenterId;
+        if (idA === idB) continue;
+        const unavailA = unavailMap.get(sessA.date) ?? new Set<string>();
+        const unavailB = unavailMap.get(sessB.date) ?? new Set<string>();
+        if (unavailA.has(idB) || unavailB.has(idA)) continue;
+        const inA = new Set(sessA.presentations.map(p => p.presenterId));
+        const inB = new Set(sessB.presentations.map(p => p.presenterId));
+        if (inB.has(idA) || inA.has(idB)) continue;
+        // Swap presenter ids; rebuild questioners for each moved presenter.
+        sessA.presentations[pi].presenterId = idB;
+        sessB.presentations[pj].presenterId = idA;
+        sessA.presentations[pi].questionerIds = pickQuestioners(
+          idB, sessA.date, sessA.presentations[pi].questionerIds.length || config.questionersPerPresenter,
+        );
+        sessB.presentations[pj].questionerIds = pickQuestioners(
+          idA, sessB.date, sessB.presentations[pj].questionerIds.length || config.questionersPerPresenter,
+        );
+        break;
+      }
+      break;
+    }
+
+    // ── 2. Reassign questioners for one presentation ─────────────────────────
+    // Targets the relevance and questioner-frequency penalties without
+    // disturbing the presenter assignment.
+    case 'reassignQuestioners': {
+      const eligible = clone.filter(s => s.presentations.length > 0);
+      if (!eligible.length) break;
+      const sess = eligible[Math.floor(Math.random() * eligible.length)];
+      const pres = sess.presentations[Math.floor(Math.random() * sess.presentations.length)];
+      const count = pres.questionerIds.length || config.questionersPerPresenter;
+      pres.questionerIds = pickQuestioners(pres.presenterId, sess.date, count);
+      break;
+    }
+
+    // ── 3. Replace presenter with most under-represented eligible person ─────
+    // Directly reduces presenterLoad variance by inserting an under-represented
+    // person and ejecting their slot (rebuilt questioners follow).
+    case 'replacePresenter': {
+      const eligible = clone.filter(s => s.presentations.length > 0);
+      if (!eligible.length) break;
+      const sess = eligible[Math.floor(Math.random() * eligible.length)];
+      const pIdx = Math.floor(Math.random() * sess.presentations.length);
+      const unavail = unavailMap.get(sess.date) ?? new Set<string>();
+      const inSession = new Set(sess.presentations.map(p => p.presenterId));
+      const counts = rawPresenterCounts();
+      const totalObs = personIds.reduce((s, id) => s + (counts.get(id) ?? 0), 0);
+      const expected = expectedCounts(totalObs);
+      const candidates = personIds.filter(id => !unavail.has(id) && !inSession.has(id));
+      if (!candidates.length) break;
+      // Sort ascending by (actual - expected): most under-represented at front.
+      candidates.sort((a, b) =>
+        ((counts.get(a) ?? 0) - (expected.get(a) ?? 0)) -
+        ((counts.get(b) ?? 0) - (expected.get(b) ?? 0)),
+      );
+      // Pick randomly from the most under-represented third.
+      const pool = candidates.slice(0, Math.max(1, Math.ceil(candidates.length * 0.33)));
+      const replacement = pool[Math.floor(Math.random() * pool.length)];
+      const pres = sess.presentations[pIdx];
+      pres.presenterId = replacement;
+      pres.questionerIds = pickQuestioners(
+        replacement, sess.date, pres.questionerIds.length || config.questionersPerPresenter,
+      );
+      break;
+    }
+
+    // ── 4. Targeted frequency-multiplier deviation fix ───────────────────────
+    // Finds the person deviating most from their frequency-multiplier target
+    // (over-represented) and swaps them with the most under-represented person
+    // in one presentation slot.
+    case 'frequencyTargeted': {
+      if (!allSessions.length) break;
+      const counts = rawPresenterCounts();
+      const totalObs = personIds.reduce((s, id) => s + (counts.get(id) ?? 0), 0);
+      const expected = expectedCounts(totalObs);
+      const deviations = personIds.map(id => ({
+        id,
+        dev: (counts.get(id) ?? 0) - (expected.get(id) ?? 0),
+      }));
+      deviations.sort((a, b) => a.dev - b.dev);
+      const underRep = deviations[0];   // most under-represented
+      const overRep = deviations[deviations.length - 1]; // most over-represented
+      // Skip if already balanced (deviation < 1 presentation).
+      if (overRep.dev < 1 || underRep.dev > -1) break;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const si = Math.floor(Math.random() * clone.length);
+        const sess = clone[si];
+        const unavail = unavailMap.get(sess.date) ?? new Set<string>();
+        if (unavail.has(underRep.id)) continue;
+        const overIdx = sess.presentations.findIndex(p => p.presenterId === overRep.id);
+        if (overIdx === -1) continue;
+        const inSession = new Set(sess.presentations.map(p => p.presenterId));
+        if (inSession.has(underRep.id)) continue;
+        const pres = sess.presentations[overIdx];
+        pres.presenterId = underRep.id;
+        pres.questionerIds = pickQuestioners(
+          underRep.id, sess.date, pres.questionerIds.length || config.questionersPerPresenter,
+        );
+        break;
+      }
+      break;
+    }
+
+    // ── 5. Fully rebuild one session's assignments ───────────────────────────
+    // Escapes deep local optima by regenerating all presenter + questioner
+    // assignments for a single session, weighted toward under-represented people.
+    case 'sessionRebuild': {
+      const eligible = clone.filter(s => s.presentations.length > 0);
+      if (!eligible.length) break;
+      const sess = eligible[Math.floor(Math.random() * eligible.length)];
+      const unavail = unavailMap.get(sess.date) ?? new Set<string>();
+      // Exclude this session's contributions from counts so the rebuild is fair.
+      const counts = rawPresenterCounts();
+      for (const p of sess.presentations) {
+        counts.set(p.presenterId, Math.max(0, (counts.get(p.presenterId) ?? 1) - 1));
+      }
+      const totalObs = personIds.reduce((s, id) => s + (counts.get(id) ?? 0), 0);
+      const n = sess.presentations.length;
+      const expected = expectedCounts(totalObs + n);
+      const candidates = personIds.filter(id => !unavail.has(id));
+      if (candidates.length < n) break;
+      const pickedPresenters = new Set<string>();
+      const newPresentations: Presentation[] = [];
+      for (let j = 0; j < n; j++) {
+        const pool = candidates.filter(id => !pickedPresenters.has(id));
+        if (!pool.length) break;
+        // Weight: how many more appearances the person "deserves" vs current count.
+        const weights = pool.map(id =>
+          Math.max(0.01, (expected.get(id) ?? 1) - (counts.get(id) ?? 0)),
+        );
+        const total = weights.reduce((s, w) => s + w, 0);
+        let r = Math.random() * total;
+        let chosen = pool.length - 1;
+        for (let k = 0; k < weights.length; k++) {
+          r -= weights[k];
+          if (r <= 0) { chosen = k; break; }
+        }
+        const presenterId = pool[chosen];
+        pickedPresenters.add(presenterId);
+        newPresentations.push({
+          presenterId,
+          questionerIds: pickQuestioners(presenterId, sess.date, config.questionersPerPresenter),
+        });
+      }
+      sess.presentations = newPresentations;
+      break;
+    }
+  }
 
   return clone;
 }
@@ -414,7 +651,7 @@ export const annealingSolver: ScheduleSolver = {
     const unavailMap = buildUnavailMap(unavailabilities, config.id);
   
     const initial = buildRandomSchedule(personIds, dates, config, ctx, [], unavailMap);
-    const optimized = initial; // simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap);
+    const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap);
   
     return {
       id: generateId(),
@@ -441,11 +678,10 @@ export const annealingSolver: ScheduleSolver = {
     const hammingRef = previousPlan.sessions.filter(s => s.date >= changeDate);
   
     const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
-    const optimized = initial;
-    // const optimized = simulatedAnnealing(
-    //   initial, ctx, frozenSessions, config,
-    //   hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap,
-    // );
+    const optimized = simulatedAnnealing(
+      initial, ctx, frozenSessions, config,
+      hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap,
+    );
   
     return {
       id: generateId(),

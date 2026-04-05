@@ -203,13 +203,17 @@ export function computeCostBreakdown(
     }
   });
 
-  // 1. Uniformity – variance of presentation gaps per person
+  // 1. Uniformity – relative-variance (CV²) of presentation gaps per person.
+  // Dividing by mean² normalises for frequency-multiplier constraints: a person
+  // scheduled twice as often has naturally half the gap, so their absolute
+  // variance is inherently ~4× smaller – using CV² makes all persons comparable.
   let uniformityPenalty = 0;
   for (const indices of presentationIndices.values()) {
     if (indices.length < 2) continue;
     const gaps = indices.slice(1).map((v, i) => v - indices[i]);
     const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-    uniformityPenalty += gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / gaps.length;
+    if (mean <= 0) continue;
+    uniformityPenalty += gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / (gaps.length * mean * mean);
   }
 
   // 2. Questioner frequency + hard invalidity
