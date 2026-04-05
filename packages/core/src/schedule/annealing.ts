@@ -313,7 +313,6 @@ export function buildRandomSchedule(
     );
     const diff = Math.abs(rawSimilarity - ctx.r);
     const scaledDiff = (diff - similarityFactorScaleBottom) / (similarityFactorScaleTop - similarityFactorScaleBottom);
-    console.log(diff, scaledDiff);
     return Math.min(Math.max(0, 1 - scaledDiff), 1);
   };
 

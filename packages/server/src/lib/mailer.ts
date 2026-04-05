@@ -104,8 +104,8 @@ export function createMailerFromEnv(): Mailer | null {
 
   if (provider === 'gmail' || (!process.env.SMTP_HOST?.trim() && gmailUser && gmailRefreshToken)) {
     const googleClient = googleOAuthJsonPath ? loadGoogleOAuthClientFromFile(googleOAuthJsonPath) : null;
-    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() ?? googleClient?.clientId;
-    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim() ?? googleClient?.clientSecret;
+    const clientId = googleClient?.clientId;
+    const clientSecret = googleClient?.clientSecret;
     const from = process.env.SMTP_FROM?.trim() ?? gmailUser;
 
     if (!gmailUser || !gmailRefreshToken || !clientId || !clientSecret || !from) {

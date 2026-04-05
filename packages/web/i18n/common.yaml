@@ -724,6 +724,16 @@ emailTaskRecentTimes:
   zh-CN: recentTimes（0=每个收件人无限）
   ja-JP: recentTimes（0=受信者ごと無制限）
 
+emailTaskServeScheduleIcs:
+  en: Public ICS Link
+  zh-CN: 公开 ICS 链接
+  ja-JP: 公開 ICS リンク
+
+emailTaskServeScheduleIcsHint:
+  en: Expose this task's latest schedule as a public ICS endpoint when server env allows it.
+  zh-CN: 当服务端环境允许时，将该任务最新排班公开为 ICS 端点。
+  ja-JP: サーバー環境で許可されている場合、このタスクの最新スケジュールを公開 ICS エンドポイントとして公開します。
+
 emailTemplatePreset:
   en: Template Preset
   zh-CN: 模板预设
@@ -823,6 +833,21 @@ noneSelected:
   en: None selected
   zh-CN: 未选择
   ja-JP: 未選択
+
+selectAll:
+  en: Select All
+  zh-CN: 全选
+  ja-JP: すべて選択
+
+clearSelection:
+  en: Clear Selection
+  zh-CN: 取消全选
+  ja-JP: 選択解除
+
+invertSelection:
+  en: Invert Selection
+  zh-CN: 反选
+  ja-JP: 反転選択
 
 mutationInsertDialogTitle:
   en: Insert Session

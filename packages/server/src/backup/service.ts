@@ -34,8 +34,6 @@ interface BackupConfig {
   filenamePrefix: string;
   emailRecipients: string[];
   googleOAuthJsonPath?: string;
-  googleOAuthClientId?: string;
-  googleOAuthClientSecret?: string;
   googleOAuthRefreshToken?: string;
   googleDriveFolderId?: string;
   onedriveClientId?: string;
@@ -113,8 +111,8 @@ async function uploadToGoogleDrive(config: BackupConfig, artifact: BackupArtifac
   const googleClient = config.googleOAuthJsonPath
     ? loadGoogleOAuthClientFromFile(config.googleOAuthJsonPath)
     : null;
-  const clientId = config.googleOAuthClientId ?? googleClient?.clientId;
-  const clientSecret = config.googleOAuthClientSecret ?? googleClient?.clientSecret;
+  const clientId = googleClient?.clientId;
+  const clientSecret = googleClient?.clientSecret;
   const refreshToken = config.googleOAuthRefreshToken;
 
   if (!clientId || !clientSecret || !refreshToken) {
@@ -241,8 +239,8 @@ export class BackupService {
       targets: {
         email: this.options.mailer !== null,
         'google-drive': Boolean(
-          (this.config.googleOAuthClientId ?? googleClient?.clientId)
-          && (this.config.googleOAuthClientSecret ?? googleClient?.clientSecret)
+          googleClient?.clientId
+          && googleClient?.clientSecret
           && this.config.googleOAuthRefreshToken,
         ),
         onedrive: Boolean(
@@ -354,8 +352,6 @@ export function createBackupServiceFromEnv(options: CreateBackupServiceOptions):
     filenamePrefix: process.env.BACKUP_FILENAME_PREFIX?.trim() || 'labby-backup',
     emailRecipients: splitCsv(process.env.BACKUP_EMAIL_RECIPIENTS || process.env.NOTIFY_RECIPIENTS),
     googleOAuthJsonPath: process.env.GOOGLE_OAUTH_JSON_PATH?.trim(),
-    googleOAuthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID?.trim(),
-    googleOAuthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim(),
     googleOAuthRefreshToken: process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim(),
     googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID?.trim(),
     onedriveClientId: process.env.ONEDRIVE_CLIENT_ID?.trim(),

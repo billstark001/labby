@@ -81,8 +81,9 @@ Optional settings:
 - `AUTH_ACCESS_TTL`, `AUTH_REFRESH_TTL`
 - `SMTP_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
 - `GMAIL_USER`, `GMAIL_REFRESH_TOKEN`
-- `GOOGLE_OAUTH_JSON_PATH`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`
+- `GOOGLE_OAUTH_JSON_PATH`, `GOOGLE_OAUTH_REFRESH_TOKEN`
 - `NOTIFY_RECIPIENTS`
+- `ENABLE_PUBLIC_EMAIL_TASK_ICS`, `PUBLIC_BASE_URL`
 - `BACKUP_CRON`, `BACKUP_TIMEZONE`, `BACKUP_FORMAT`, `BACKUP_TARGET`, `BACKUP_FILENAME_PREFIX`
 - `BACKUP_EMAIL_RECIPIENTS`, `GOOGLE_DRIVE_FOLDER_ID`
 - `ONEDRIVE_CLIENT_ID`, `ONEDRIVE_CLIENT_SECRET`, `ONEDRIVE_REFRESH_TOKEN`, `ONEDRIVE_TENANT_ID`, `ONEDRIVE_FOLDER`
@@ -112,6 +113,10 @@ When SMTP is configured, the server starts the cron subsystem on boot.
 - The server sends a short reminder email to `NOTIFY_RECIPIENTS`.
 
 If SMTP is not configured, the cron subsystem stays disabled.
+
+When `ENABLE_PUBLIC_EMAIL_TASK_ICS=true`, each email task can opt in via metadata (`serveScheduleIcs`) to expose its latest schedule at:
+
+- `GET /public/email-tasks/:taskId/schedule.ics`
 
 ## Backup Subsystem
 

@@ -121,6 +121,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [templateFormat, setTemplateFormat] = useState<TemplateFormat>('markdown');
   const [injectionLanguage, setInjectionLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
   const [dateGranularity, setDateGranularity] = useState<ScheduleDateGranularity>('date');
+  const [serveScheduleIcs, setServeScheduleIcs] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [showDaysDialog, setShowDaysDialog] = useState(false);
   const [showVarDialog, setShowVarDialog] = useState(false);
@@ -164,8 +165,9 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     sessionCount: 4,
     summary: 'This is a local preview. In frontend-only mode, emails are not auto-sent.',
     language: injectionLanguage,
+    scheduleIcsUrl: serveScheduleIcs ? 'https://example.com/public/email-tasks/task-preview/schedule.ics' : '',
     ...injectedScheduleVariables,
-  }), [configId, selectedTaskId, injectionLanguage, injectedScheduleVariables]);
+  }), [configId, selectedTaskId, injectionLanguage, serveScheduleIcs, injectedScheduleVariables]);
 
   const previewResult = useMemo(
     () => renderTemplateToHtml(templateText, previewContext, { format: templateFormat }),
@@ -182,6 +184,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setTemplateFormat(((task.metadata?.format as TemplateFormat | undefined) ?? 'markdown'));
     setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
     setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
+    setServeScheduleIcs((task.metadata?.serveScheduleIcs as boolean | undefined) ?? false);
   }
 
   function resetForm(nextConfigId?: string): void {
@@ -194,6 +197,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setTemplateFormat(DEFAULT_TEMPLATE_PRESETS[0]?.format ?? 'markdown');
     setInjectionLanguage(i18n.lang.value);
     setDateGranularity('date');
+    setServeScheduleIcs(false);
   }
 
   useEffect(() => {
@@ -231,6 +235,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         injectionLanguage,
         dateGranularity,
         dateLocale: injectionLanguage,
+        serveScheduleIcs,
       },
     };
     await db.emailTasks.put(task);
@@ -377,6 +382,18 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             <option value="month-day">{t('dateGranularityMonthDay')}</option>
             <option value="month-day-time">{t('dateGranularityMonthDayTime')}</option>
           </select>
+        </div>
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('emailTaskServeScheduleIcs')}</label>
+          <label class={s.flexGapSm}>
+            <input
+              type="checkbox"
+              checked={serveScheduleIcs}
+              onChange={(e) => setServeScheduleIcs((e.target as HTMLInputElement).checked)}
+            />
+            <span class={`${s.text12} ${s.textMuted}`}>{t('emailTaskServeScheduleIcsHint')}</span>
+          </label>
         </div>
 
         <div class={s.formGroup}>

@@ -108,7 +108,7 @@ Important settings:
 - `ROOT_USERNAME`, `ROOT_PASSWORD`, `ROOT_EMAIL`
 - `BOOTSTRAP_ADMIN_*` for first-run admin creation
 - `SMTP_*` and `NOTIFY_RECIPIENTS` for email reminders
-- `SMTP_PROVIDER=gmail`, `GMAIL_*`, and `GOOGLE_OAUTH_*` to use Gmail OAuth instead of raw SMTP credentials
+- `SMTP_PROVIDER=gmail`, `GMAIL_*`, `GOOGLE_OAUTH_JSON_PATH`, and `GOOGLE_OAUTH_REFRESH_TOKEN` to use Gmail OAuth instead of raw SMTP credentials
 - `BACKUP_*` to schedule whole-database backups
 - `GOOGLE_DRIVE_FOLDER_ID` for Google Drive uploads
 - `ONEDRIVE_*` for OneDrive uploads

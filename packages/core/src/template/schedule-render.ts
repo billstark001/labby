@@ -65,6 +65,12 @@ export interface BuildEmailTemplateScheduleVariablesOptions {
   displayName?: (person: Person) => string;
 }
 
+interface NextSessionSummary {
+  dateText: string;
+  timeText: string;
+  dateTimeText: string;
+}
+
 const DEFAULT_TABLE_LABELS: ScheduleTableLabels = {
   date: 'Date',
   presenter: 'Presenter',
@@ -125,6 +131,68 @@ function defaultDisplayName(person: Person, locale: string): string {
 
 function parseDate(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00`);
+}
+
+function parseClock(timeStr: string): { hour: number; minute: number } | null {
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+function formatTimeLabel(timeStr: string, locale: string): string {
+  const parsed = parseClock(timeStr);
+  if (!parsed) return timeStr;
+  const date = new Date(Date.UTC(2000, 0, 1, parsed.hour, parsed.minute));
+  return new Intl.DateTimeFormat(normalizeLocale(locale), {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function formatTimeRangeLabel(config: ScheduleConfig | undefined, locale: string): string {
+  const [start = '09:00', end = '10:00'] = config?.timeRange ?? [];
+  const startLabel = formatTimeLabel(start, locale);
+  const endLabel = formatTimeLabel(end, locale);
+  return `${startLabel} - ${endLabel}`;
+}
+
+function pickNextSession(plan: SchedulePlan, anchorDate?: string): SchedulePlan['sessions'][number] | null {
+  const sorted = [...plan.sessions].sort((left, right) => left.date.localeCompare(right.date));
+  if (sorted.length === 0) return null;
+  const anchor = anchorDate ?? new Date().toISOString().slice(0, 10);
+  return sorted.find((session) => session.date >= anchor) ?? sorted[sorted.length - 1] ?? null;
+}
+
+function buildNextSessionSummary(
+  plan: SchedulePlan,
+  options: BuildEmailTemplateScheduleVariablesOptions,
+): NextSessionSummary {
+  const locale = normalizeLocale(options.locale);
+  const next = pickNextSession(plan, options.anchorDate);
+  if (!next) {
+    return {
+      dateText: '',
+      timeText: '',
+      dateTimeText: '',
+    };
+  }
+
+  const dateText = formatDateLabel(next.date, {
+    locale,
+    granularity: options.granularity === 'month-day' || options.granularity === 'month-day-time' ? 'month-day' : 'date',
+    includeWeekday: options.includeWeekday ?? true,
+  }, options.config);
+  const timeText = formatTimeRangeLabel(options.config, locale);
+
+  return {
+    dateText,
+    timeText,
+    dateTimeText: `${dateText} ${timeText}`.trim(),
+  };
 }
 
 function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = {}, config?: ScheduleConfig): string {
@@ -359,6 +427,12 @@ function emptyVariables(): Record<string, unknown> {
     scheduleOnceTableHtml: EMPTY_BLOCKS.tableHtml,
     scheduleOnceTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
     scheduleOnceBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
+    scheduleNextSessionDateText: '',
+    scheduleNextSessionTimeText: '',
+    scheduleNextSessionDateTimeText: '',
+    nextSessionDateText: () => '',
+    nextSessionTimeText: () => '',
+    nextSessionDateTimeText: () => '',
     scheduleRowsJson: '[]',
   };
 }
@@ -418,6 +492,11 @@ export function buildEmailTemplateScheduleVariables(
     mode: 'once',
   }, labels);
 
+  const nextSession = buildNextSessionSummary(plan, options);
+  const getNextSessionDateText = () => nextSession.dateText;
+  const getNextSessionTimeText = () => nextSession.timeText;
+  const getNextSessionDateTimeText = () => nextSession.dateTimeText;
+
   return {
     scheduleSemesterTableHtml: semester.tableHtml,
     scheduleSemesterTableMarkdown: semester.tableMarkdown,
@@ -434,6 +513,12 @@ export function buildEmailTemplateScheduleVariables(
     scheduleOnceTableHtml: once.tableHtml,
     scheduleOnceTableMarkdown: once.tableMarkdown,
     scheduleOnceBulletedListMarkdown: once.listMarkdown,
+    scheduleNextSessionDateText: getNextSessionDateText(),
+    scheduleNextSessionTimeText: getNextSessionTimeText(),
+    scheduleNextSessionDateTimeText: getNextSessionDateTimeText(),
+    nextSessionDateText: getNextSessionDateText,
+    nextSessionTimeText: getNextSessionTimeText,
+    nextSessionDateTimeText: getNextSessionDateTimeText,
     scheduleRowsJson: JSON.stringify(semester.rows),
   };
 }
@@ -512,6 +597,15 @@ export const EMAIL_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
     },
   },
   {
+    name: 'scheduleIcsUrl',
+    type: 'string|undefined',
+    descriptions: {
+      en: 'Public ICS URL for this task when enabled on server and task metadata.',
+      'zh-CN': '当服务端和任务开关都启用时可用的公开 ICS 链接。',
+      'ja-JP': 'サーバー設定とタスク設定が有効な場合に使える公開 ICS URL。',
+    },
+  },
+  {
     name: 'scheduleSemesterTableHtml',
     type: 'string(html)',
     descriptions: {
@@ -581,6 +675,60 @@ export const EMAIL_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
       en: 'JSON array of rendered schedule rows.',
       'zh-CN': '已渲染排班行的 JSON 数组。',
       'ja-JP': 'レンダリング済み行の JSON 配列。',
+    },
+  },
+  {
+    name: 'scheduleNextSessionDateText',
+    type: 'string',
+    descriptions: {
+      en: 'Human-friendly date for the next scheduled session.',
+      'zh-CN': '下一次组会的人类友好日期文本。',
+      'ja-JP': '次回セッションの日付（人間向け表示）。',
+    },
+  },
+  {
+    name: 'scheduleNextSessionTimeText',
+    type: 'string',
+    descriptions: {
+      en: 'Human-friendly time range for the next scheduled session.',
+      'zh-CN': '下一次组会的人类友好时间范围文本。',
+      'ja-JP': '次回セッションの時間帯（人間向け表示）。',
+    },
+  },
+  {
+    name: 'scheduleNextSessionDateTimeText',
+    type: 'string',
+    descriptions: {
+      en: 'Combined human-friendly date and time for the next session.',
+      'zh-CN': '下一次组会的人类友好日期+时间文本。',
+      'ja-JP': '次回セッションの日時（人間向け表示）。',
+    },
+  },
+  {
+    name: 'nextSessionDateText',
+    type: '() => string',
+    descriptions: {
+      en: 'Function form of next session date text. Use as {{ nextSessionDateText() }}.',
+      'zh-CN': '函数形式的下一次组会日期。用法：{{ nextSessionDateText() }}。',
+      'ja-JP': '次回セッション日付の関数形式。使用例: {{ nextSessionDateText() }}。',
+    },
+  },
+  {
+    name: 'nextSessionTimeText',
+    type: '() => string',
+    descriptions: {
+      en: 'Function form of next session time text. Use as {{ nextSessionTimeText() }}.',
+      'zh-CN': '函数形式的下一次组会时间。用法：{{ nextSessionTimeText() }}。',
+      'ja-JP': '次回セッション時間の関数形式。使用例: {{ nextSessionTimeText() }}。',
+    },
+  },
+  {
+    name: 'nextSessionDateTimeText',
+    type: '() => string',
+    descriptions: {
+      en: 'Function form of next session date+time text. Use as {{ nextSessionDateTimeText() }}.',
+      'zh-CN': '函数形式的下一次组会日期+时间。用法：{{ nextSessionDateTimeText() }}。',
+      'ja-JP': '次回セッション日時の関数形式。使用例: {{ nextSessionDateTimeText() }}。',
     },
   },
 ];

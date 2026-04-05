@@ -10,6 +10,8 @@ export interface EmailTaskNotifierOptions {
   mailer: Mailer;
   store: SqliteStore;
   defaultHour?: number;
+  enablePublicEmailTaskIcs?: boolean;
+  publicBaseUrl?: string;
 }
 
 function uniqueSortedDays(days: number[]): number[] {
@@ -30,6 +32,16 @@ function latestScheduleSummary(sessions: number, createdAt: number | null): stri
 
 export class EmailTaskNotifier {
   constructor(private readonly options: EmailTaskNotifierOptions) {}
+
+  private buildTaskIcsUrl(task: EmailTask): string | undefined {
+    if (!this.options.enablePublicEmailTaskIcs) return undefined;
+    const shouldServeIcs = Boolean(task.metadata && (task.metadata as Record<string, unknown>).serveScheduleIcs === true);
+    if (!shouldServeIcs) return undefined;
+    const base = this.options.publicBaseUrl?.trim();
+    if (!base) return undefined;
+    const normalizedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+    return `${normalizedBase}/public/email-tasks/${encodeURIComponent(task.id)}/schedule.ics`;
+  }
 
   async syncJobs(): Promise<void> {
     const { scheduler, store } = this.options;
@@ -145,6 +157,7 @@ export class EmailTaskNotifier {
       granularity,
       anchorDate: new Date(runAt).toISOString().slice(0, 10),
     });
+    const scheduleIcsUrl = this.buildTaskIcsUrl(task);
 
     return {
       taskId: task.id,
@@ -155,6 +168,7 @@ export class EmailTaskNotifier {
       latestCreatedAt,
       summary: latestScheduleSummary(sessionCount, latestCreatedAt),
       language: (task.metadata?.injectionLanguage as string | undefined) ?? 'en',
+      scheduleIcsUrl,
       ...scheduleVariables,
     };
   }
