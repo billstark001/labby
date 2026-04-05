@@ -17,8 +17,6 @@ import type {
   Session,
   SolverInput,
   IncrementalSolverInput,
-  ScheduleConfig,
-  PersonUnavailability,
 } from '../types.js';
 import {
   buildCostContext,
@@ -26,9 +24,6 @@ import {
   toScheduleMetrics,
 } from './constraints.js';
 import {
-  buildRandomSchedule,
-  simulatedAnnealing,
-  ANNEALING_CONFIG,
   annealingSolver,
 } from './annealing.js';
 

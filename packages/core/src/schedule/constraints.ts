@@ -45,7 +45,7 @@ export const COST_WEIGHTS = {
 
 export interface CostContext {
   personKeywords: Map<string, string[]>;
-  similarities: Map<string, number> | SimilarityLookup;
+  similarities: SimilarityLookup;
   /** Target similarity radius r. */
   r: number;
   constraints?: ScheduleConstraint[];
@@ -288,9 +288,19 @@ export function toScheduleMetrics(breakdown: CostBreakdown): ScheduleMetrics {
 
 export function buildCostContext(input: SolverInput): CostContext {
   const active = input.persons.filter(p => !p.disabled);
+  const similarities: SimilarityLookup = input.similarities instanceof Map
+    ? {
+      getPairSimilarity(leftKeywordId: string, rightKeywordId: string): number | undefined {
+        const key = leftKeywordId < rightKeywordId
+          ? `${leftKeywordId}|${rightKeywordId}`
+          : `${rightKeywordId}|${leftKeywordId}`;
+        return (input.similarities as Map<string, number>).get(key) || 0;
+      },
+    }
+    : input.similarities;
   return {
     personKeywords: new Map(active.map(p => [p.id, p.keywordIds])),
-    similarities: input.similarities,
+    similarities,
     r: input.config.targetSimilarityRadius,
     constraints: input.constraints ?? [],
   };

@@ -5,6 +5,7 @@ import {
   keywordSimilarity,
   keywordVectorsToSimilarityMap,
   nextTripletQueryFromKeywordVectors,
+  SimilarityLookup,
   solveFull,
   solveIncremental,
   type Person,
@@ -83,8 +84,8 @@ function makePersons(): Person[] {
   ];
 }
 
-function makeSimilarities(): Map<string, number> {
-  return new Map([
+function makeSimilarities(): SimilarityLookup {
+  const m = new Map([
     ['k1|k2', 0.8],
     ['k1|k3', 0.4],
     ['k1|k4', 0.3],
@@ -92,6 +93,12 @@ function makeSimilarities(): Map<string, number> {
     ['k2|k4', 0.2],
     ['k3|k4', 0.7],
   ]);
+  return {
+    getPairSimilarity(left: string, right: string): number | undefined {
+      const key = [left, right].sort().join('|');
+      return m.get(key);
+    }
+  }
 }
 
 function assertSessionValidity(
@@ -386,6 +393,13 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
       ['k3|k4', 0.5],
     ]);
 
+    const similarityLookup: SimilarityLookup = {
+      getPairSimilarity(left: string, right: string): number | undefined {
+        const key = [left, right].sort().join('|');
+        return similarities.get(key);
+      }
+    };
+
     const constraints = [
       {
         id: 'constraint-no-overlap',
@@ -415,7 +429,7 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
 
     const plan = withSeed(2026, () => solveFull({
       persons,
-      similarities,
+      similarities: similarityLookup,
       config,
       constraints,
     }));
