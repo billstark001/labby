@@ -465,12 +465,19 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
-    const plan = solveFull({ persons, similarities: similarityLookup, config, unavailabilities });
+    const plan = solveFull({
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+      constraints: config.constraints,
+    });
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
+      constraints: config.constraints,
     });
     return ok(c, {
       plan,
@@ -509,12 +516,14 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       unavailabilities,
       previousPlan,
       changeDate: body.changeDate,
+      constraints: config.constraints,
     });
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
+      constraints: config.constraints,
     });
     return ok(c, {
       plan,
@@ -544,6 +553,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         similarities: similarityLookup,
         config,
         unavailabilities,
+        constraints: config.constraints,
       });
       return ok(c, { metrics, explanations: explainScheduleMetrics(metrics) });
     }
@@ -564,6 +574,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       similarities: similarityLookup,
       config,
       unavailabilities,
+      constraints: config.constraints,
     }, historical);
 
     return ok(c, {
@@ -580,11 +591,15 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     templateText: z.string(),
     context: z.record(z.string(), z.unknown()).default({}),
     format: z.enum(['markdown', 'html']).optional(),
+    language: z.enum(['en', 'zh-CN', 'ja-JP']).optional(),
   });
 
   app.post('/api/v1/templates/preview', async (c) => {
     const body = templatePreviewSchema.parse(await c.req.json());
-    const result = renderTemplate(body.templateText, body.context, {
+    const result = renderTemplate(body.templateText, {
+      ...body.context,
+      language: body.language ?? (body.context.language as string | undefined) ?? 'en',
+    }, {
       format: body.format,
     });
     return ok(c, result);

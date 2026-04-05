@@ -446,6 +446,23 @@ function computeCostBreakdown(
             }
           }
         }
+      } else if (constraint.type === 'frequency-multiplier') {
+        const roleScope = constraint.roleScope ?? 'presenter';
+        const baseline = Number.isFinite(constraint.baseline) ? Math.max(0, constraint.baseline) : 0;
+        const multiplier = Number.isFinite(constraint.multiplier) ? constraint.multiplier : 1;
+        const target = Math.max(0, baseline * multiplier);
+        const weight = constraint.weight ?? 1.0;
+
+        for (const personId of constraint.personIds) {
+          const presenterCount = presenterCounts.get(personId) ?? 0;
+          const questionerCount = questionerCounts.get(personId) ?? 0;
+          const actual = roleScope === 'both'
+            ? presenterCount + questionerCount
+            : roleScope === 'questioner'
+              ? questionerCount
+              : presenterCount;
+          constraintPenalty += Math.abs(actual - target) * weight;
+        }
       }
     }
   }
@@ -735,6 +752,22 @@ function deepCloneSessions(sessions: Session[]): Session[] {
   }));
 }
 
+function replaySessionMutationDates(baseDates: string[], plan: SchedulePlan): string[] {
+  const records = [...(plan.sessionMutations ?? [])].sort((left, right) => left.createdAt - right.createdAt);
+  const dates = [...baseDates];
+  for (const record of records) {
+    const idx = dates.findIndex((date) => date === record.date);
+    if (record.action === 'delete') {
+      if (idx >= 0) dates.splice(idx, 1);
+      continue;
+    }
+    if (!record.insertedDate || idx < 0) continue;
+    const insertAt = record.position === 'before' ? idx : idx + 1;
+    dates.splice(insertAt, 0, record.insertedDate);
+  }
+  return dates;
+}
+
 /** Count the number of (date, presenter) pairs that differ between two plans. */
 function hammingDistance(a: Session[], b: Session[]): number {
   const mapB = new Map<string, Set<string>>();
@@ -790,9 +823,9 @@ export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
   const { persons, similarities, config, previousPlan, changeDate, unavailabilities = [], constraints = [] } = input;
 
   const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
-  const mutableDates = previousPlan.sessions
-    .filter(s => s.date >= changeDate)
-    .map(s => s.date);
+  const baseDates = generateSessionDates(config);
+  const replayedDates = replaySessionMutationDates(baseDates, previousPlan);
+  const mutableDates = replayedDates.filter((date) => date >= changeDate);
 
   const activePeople = persons.filter(p => !p.disabled);
   const personIds = activePeople.map(p => p.id);

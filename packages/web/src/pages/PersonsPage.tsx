@@ -6,10 +6,11 @@ import {
   keywordsSignal,
   keywordMapSignal,
   schedulesSignal,
+  configsSignal,
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
-import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '../db/index';
+import { listPersonsPage, loadAllConfigs, loadAllKeywords, loadAllSchedules, useDatabase } from '../db/index';
 import * as s from '../styles/components.css';
 import {
   Button,
@@ -19,7 +20,7 @@ import {
   responsiveDataStyles as dataStyles,
 } from '../components/ui/index';
 import { Dialog, confirmDialog } from '../components/ui/Dialog';
-import type { Person, Keyword } from '@labby/core';
+import type { Person, Keyword, ScheduleConfig, ScheduleConstraint } from '@labby/core';
 import { i18n } from '@/i18n';
 
 const MAX_KEYWORDS = 10;
@@ -71,6 +72,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       keywordIds: selectedIds,
       disabled: initial?.disabled,
       notes: notes.trim() || undefined,
+      modifiedAt: Date.now(),
     }, newKeywords);
   }
 
@@ -102,6 +104,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       name: normalized,
       names: { en: normalized, zh: '', ja: '' },
       metadata: {},
+      modifiedAt: Date.now(),
     };
 
     setNewKeywords(prev => [...prev, keyword]);
@@ -196,11 +199,21 @@ export function PersonsPage() {
   const db = useDatabase();
   const { t } = i18n;
   const persons = personsSignal.value;
+  const configs = configsSignal.value;
   const schedules = schedulesSignal.value;
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
+  const [activeTab, setActiveTab] = useState<'persons' | 'constraints'>('persons');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalItems, setTotalItems] = useState(0);
+  const [selectedConfigId, setSelectedConfigId] = useState('');
+  const [constraintType, setConstraintType] = useState<'no-overlap' | 'affinity-boost' | 'frequency-multiplier'>('no-overlap');
+  const [selectedPersonIds, setSelectedPersonIds] = useState<string[]>([]);
+  const [weight, setWeight] = useState('1');
+  const [boost, setBoost] = useState('2');
+  const [baseline, setBaseline] = useState('1');
+  const [multiplier, setMultiplier] = useState('1');
+  const [roleScope, setRoleScope] = useState<'presenter' | 'questioner' | 'both'>('presenter');
 
   async function refreshPersonsPage(targetPage = page, targetPageSize = pageSize) {
     const safePage = Math.max(1, targetPage);
@@ -221,8 +234,15 @@ export function PersonsPage() {
 
   useEffect(() => {
     void loadAllKeywords(db);
+    void loadAllConfigs(db);
     void loadAllSchedules(db);
   }, [db]);
+
+  useEffect(() => {
+    if (!selectedConfigId && configs.length > 0) {
+      setSelectedConfigId(configs[0].id);
+    }
+  }, [configs, selectedConfigId]);
 
   useEffect(() => {
     void refreshPersonsPage(page, pageSize);
@@ -248,7 +268,7 @@ export function PersonsPage() {
   }
 
   async function handleDisableToggle(p: Person) {
-    const updated: Person = { ...p, disabled: !p.disabled };
+    const updated: Person = { ...p, disabled: !p.disabled, modifiedAt: Date.now() };
     await db.persons.put(updated);
     await refreshPersonsPage();
   }
@@ -264,11 +284,76 @@ export function PersonsPage() {
     });
   }
 
+  function toggleConstraintPerson(personId: string): void {
+    setSelectedPersonIds((prev) => prev.includes(personId)
+      ? prev.filter((id) => id !== personId)
+      : [...prev, personId]);
+  }
+
+  function buildConstraint(): ScheduleConstraint | null {
+    if (selectedPersonIds.length === 0) return null;
+    if (constraintType === 'no-overlap') {
+      return {
+        type: 'no-overlap',
+        personIds: selectedPersonIds,
+        weight: Number.parseFloat(weight) || 1,
+      };
+    }
+    if (constraintType === 'affinity-boost') {
+      return {
+        type: 'affinity-boost',
+        personIds: selectedPersonIds,
+        boost: Number.parseFloat(boost) || 2,
+      };
+    }
+    return {
+      type: 'frequency-multiplier',
+      personIds: selectedPersonIds,
+      baseline: Math.max(0, Number.parseFloat(baseline) || 0),
+      multiplier: Number.parseFloat(multiplier) || 1,
+      roleScope,
+      weight: Number.parseFloat(weight) || 1,
+    };
+  }
+
+  async function saveConstraintConfig(nextConfig: ScheduleConfig): Promise<void> {
+    await db.configs.put({ ...nextConfig, modifiedAt: Date.now() });
+    await loadAllConfigs(db);
+  }
+
+  async function addConstraint(): Promise<void> {
+    const config = configs.find((item) => item.id === selectedConfigId);
+    if (!config) return;
+    const constraint = buildConstraint();
+    if (!constraint) return;
+    const nextConstraints = [...(config.constraints ?? []), constraint];
+    await saveConstraintConfig({ ...config, constraints: nextConstraints });
+    setSelectedPersonIds([]);
+  }
+
+  async function deleteConstraint(index: number): Promise<void> {
+    const config = configs.find((item) => item.id === selectedConfigId);
+    if (!config) return;
+    const nextConstraints = [...(config.constraints ?? [])].filter((_, i) => i !== index);
+    await saveConstraintConfig({ ...config, constraints: nextConstraints });
+  }
+
+  const selectedConfig = configs.find((item) => item.id === selectedConfigId);
+  const constraints = selectedConfig?.constraints ?? [];
+
   return (
     <div>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navPersons')}</h2>
-        <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
+        <div class={s.flexGapSm}>
+          <Button variant={activeTab === 'persons' ? 'primary' : 'ghost'} onClick={() => setActiveTab('persons')}>
+            {t('navPersons')}
+          </Button>
+          <Button variant={activeTab === 'constraints' ? 'primary' : 'ghost'} onClick={() => setActiveTab('constraints')}>
+            {t('constraintsTab')}
+          </Button>
+          {activeTab === 'persons' && <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>}
+        </div>
       </div>
 
       {editing && (
@@ -286,6 +371,7 @@ export function PersonsPage() {
         </Dialog>
       )}
 
+      {activeTab === 'persons' && (
       <ResponsiveDataView
         items={persons}
         columns={[
@@ -371,17 +457,105 @@ export function PersonsPage() {
           </>
         )}
       />
+      )}
 
-      <Pagination
-        page={page}
-        pageSize={pageSize}
-        totalItems={totalItems}
-        onPageChange={setPage}
-        onPageSizeChange={nextPageSize => {
-          setPageSize(nextPageSize);
-          setPage(1);
-        }}
-      />
+      {activeTab === 'persons' && (
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          totalItems={totalItems}
+          onPageChange={setPage}
+          onPageSizeChange={nextPageSize => {
+            setPageSize(nextPageSize);
+            setPage(1);
+          }}
+        />
+      )}
+
+      {activeTab === 'constraints' && (
+        <div class={s.card}>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('constraintConfig')}</label>
+            <select class={s.input} value={selectedConfigId} onChange={(e) => setSelectedConfigId((e.target as HTMLSelectElement).value)}>
+              {configs.map((config) => (
+                <option key={config.id} value={config.id}>{config.id}</option>
+              ))}
+            </select>
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('constraintType')}</label>
+            <select class={s.input} value={constraintType} onChange={(e) => setConstraintType((e.target as HTMLSelectElement).value as 'no-overlap' | 'affinity-boost' | 'frequency-multiplier')}>
+              <option value="no-overlap">NoOverlapConstraint</option>
+              <option value="affinity-boost">AffinityBoostConstraint</option>
+              <option value="frequency-multiplier">FrequencyMultiplierConstraint</option>
+            </select>
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('constraintPersons')}</label>
+            <div class={s.tagList}>
+              {persons.map((person) => (
+                <button
+                  key={person.id}
+                  class={`${s.badgeSelectable} ${selectedPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
+                  onClick={() => toggleConstraintPerson(person.id)}
+                >
+                  {displayName(person)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {(constraintType === 'no-overlap' || constraintType === 'frequency-multiplier') && (
+            <div class={s.formGroup}>
+              <label class={s.label}>{t('constraintWeight')}</label>
+              <input class={s.input} value={weight} onInput={(e) => setWeight((e.target as HTMLInputElement).value)} />
+            </div>
+          )}
+          {constraintType === 'affinity-boost' && (
+            <div class={s.formGroup}>
+              <label class={s.label}>{t('constraintBoost')}</label>
+              <input class={s.input} value={boost} onInput={(e) => setBoost((e.target as HTMLInputElement).value)} />
+            </div>
+          )}
+          {constraintType === 'frequency-multiplier' && (
+            <>
+              <div class={s.formGroup}>
+                <label class={s.label}>{t('constraintBaseline')}</label>
+                <input class={s.input} value={baseline} onInput={(e) => setBaseline((e.target as HTMLInputElement).value)} />
+              </div>
+              <div class={s.formGroup}>
+                <label class={s.label}>{t('constraintMultiplier')}</label>
+                <input class={s.input} value={multiplier} onInput={(e) => setMultiplier((e.target as HTMLInputElement).value)} />
+              </div>
+              <div class={s.formGroup}>
+                <label class={s.label}>{t('constraintRoleScope')}</label>
+                <select class={s.input} value={roleScope} onChange={(e) => setRoleScope((e.target as HTMLSelectElement).value as 'presenter' | 'questioner' | 'both')}>
+                  <option value="presenter">{t('constraintRolePresenter')}</option>
+                  <option value="questioner">{t('constraintRoleQuestioner')}</option>
+                  <option value="both">{t('constraintRoleBoth')}</option>
+                </select>
+              </div>
+            </>
+          )}
+          <div class={s.flexGapSm}>
+            <Button variant="primary" onClick={() => void addConstraint()}>{t('save')}</Button>
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('constraintsTab')}</label>
+            {constraints.length === 0 ? (
+              <div class={`${s.text12} ${s.textMuted}`}>—</div>
+            ) : (
+              constraints.map((constraint, index) => (
+                <div key={`${constraint.type}-${index}`} class={s.historyItem}>
+                  <span class={s.badgeButton}>
+                    {constraint.type} · {constraint.personIds.length}
+                  </span>
+                  <Button variant="danger" onClick={() => void deleteConstraint(index)}>{t('delete')}</Button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -87,7 +87,9 @@ export class EmailTaskNotifier {
       }
 
       const context = this.buildTemplateContext(task, config, recipient, latest?.sessions.length ?? 0, latest?.createdAt ?? null, runAt);
-      const rendered = renderTemplate(task.templateText, context, { format: 'markdown' });
+      const rendered = renderTemplate(task.templateText, context, {
+        format: (task.metadata?.format as 'markdown' | 'html' | undefined) ?? 'markdown',
+      });
       if (rendered.errors.length > 0) {
         console.warn(`[email-task] template render errors for task ${task.id}:`, rendered.errors);
         continue;
@@ -125,6 +127,7 @@ export class EmailTaskNotifier {
       sessionCount,
       latestCreatedAt,
       summary: latestScheduleSummary(sessionCount, latestCreatedAt),
+      language: (task.metadata?.injectionLanguage as string | undefined) ?? 'en',
     };
   }
 }

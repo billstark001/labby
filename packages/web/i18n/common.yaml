@@ -769,7 +769,152 @@ applyMutation:
   zh-CN: 执行
   ja-JP: 適用
 
+selectWeekdays:
+  en: Select Weekdays
+  zh-CN: 选择星期
+  ja-JP: 曜日を選択
+
+noneSelected:
+  en: None selected
+  zh-CN: 未选择
+  ja-JP: 未選択
+
+mutationInsertDialogTitle:
+  en: Insert Session
+  zh-CN: 插入组会
+  ja-JP: 回を挿入
+
+mutationDeleteDialogTitle:
+  en: Delete Session
+  zh-CN: 删除组会
+  ja-JP: 回を削除
+
+mutationInsertedDate:
+  en: Inserted Date
+  zh-CN: 插入日期
+  ja-JP: 挿入日
+
+mutationInsertPosition:
+  en: Position
+  zh-CN: 插入位置
+  ja-JP: 位置
+
+mutationBefore:
+  en: Before this session
+  zh-CN: 在本次之前
+  ja-JP: この回の前
+
+mutationAfter:
+  en: After this session
+  zh-CN: 在本次之后
+  ja-JP: この回の後
+
+mutationAlreadyExistsForDate:
+  en: A mutation record already exists for this date.
+  zh-CN: 该日期已有插删记录。
+  ja-JP: この日付には既に変更記録があります。
+
+mutationTargetNotFound:
+  en: Target session date not found.
+  zh-CN: 未找到目标组会日期。
+  ja-JP: 対象の日付が見つかりません。
+
+mutationInsertedDateRequired:
+  en: Please select a date to insert.
+  zh-CN: 请选择要插入的日期。
+  ja-JP: 挿入する日付を選択してください。
+
 viewMetrics:
   en: View Metrics
   zh-CN: 查看指标
   ja-JP: 指標を見る
+
+constraintsTab:
+  en: Constraints
+  zh-CN: 约束
+  ja-JP: 制約
+
+constraintConfig:
+  en: Config
+  zh-CN: 关联配置
+  ja-JP: 設定
+
+constraintType:
+  en: Constraint Type
+  zh-CN: 约束类型
+  ja-JP: 制約タイプ
+
+constraintPersons:
+  en: Persons
+  zh-CN: 约束人员
+  ja-JP: 対象者
+
+constraintWeight:
+  en: Weight
+  zh-CN: 权重
+  ja-JP: 重み
+
+constraintBoost:
+  en: Boost
+  zh-CN: 增益
+  ja-JP: ブースト
+
+constraintBaseline:
+  en: Baseline Frequency
+  zh-CN: 基准频率
+  ja-JP: 基準頻度
+
+constraintMultiplier:
+  en: Frequency Multiplier (k)
+  zh-CN: 频率倍率 (k)
+  ja-JP: 頻度倍率 (k)
+
+constraintRoleScope:
+  en: Role Scope
+  zh-CN: 统计角色范围
+  ja-JP: 集計ロール範囲
+
+constraintRolePresenter:
+  en: Presenter only
+  zh-CN: 仅主讲
+  ja-JP: 発表者のみ
+
+constraintRoleQuestioner:
+  en: Questioner only
+  zh-CN: 仅提问
+  ja-JP: 質問者のみ
+
+constraintRoleBoth:
+  en: Presenter + Questioner
+  zh-CN: 主讲 + 提问
+  ja-JP: 発表者 + 質問者
+
+templateInjectionLanguage:
+  en: Injection Language
+  zh-CN: 注入语言
+  ja-JP: 注入言語
+
+insertScheduleTableTemplate:
+  en: Insert Schedule Table
+  zh-CN: 插入排班表格模板
+  ja-JP: スケジュール表を挿入
+
+templateVariableReference:
+  en: Variable Reference
+  zh-CN: 变量说明
+  ja-JP: 変数リファレンス
+
+templateVariableName:
+  en: Variable
+  zh-CN: 变量
+  ja-JP: 変数
+
+templateVariableType:
+  en: Type
+  zh-CN: 类型
+  ja-JP: 型
+
+templateVariableDescription:
+  en: Description
+  zh-CN: 说明
+  ja-JP: 説明

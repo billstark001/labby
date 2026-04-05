@@ -315,4 +315,44 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     const frozenNext = next.sessions.filter(s => s.date < changeDate);
     expect(frozenNext).toEqual(frozenPrev);
   });
+
+  test('frequency-multiplier constraint is accepted with configurable role scopes', () => {
+    const persons = makePersons();
+    const config = makeConfig({
+      startDate: '2026-04-01',
+      endDate: '2026-04-20',
+      daysOfWeek: [1, 3, 5],
+      presentersPerSession: 2,
+      questionersPerPresenter: 1,
+      constraints: [
+        {
+          type: 'frequency-multiplier',
+          personIds: ['p1', 'p2'],
+          baseline: 2,
+          multiplier: 1.5,
+          roleScope: 'both',
+          weight: 1,
+        },
+      ],
+    });
+
+    const plan = withSeed(42, () => solveFull({
+      persons,
+      similarities: makeSimilarities(),
+      config,
+      constraints: config.constraints,
+    }));
+
+    expect(plan.sessions.length).toBeGreaterThan(0);
+    const appearances = new Map<string, number>();
+    for (const session of plan.sessions) {
+      for (const presentation of session.presentations) {
+        appearances.set(presentation.presenterId, (appearances.get(presentation.presenterId) ?? 0) + 1);
+        for (const questionerId of presentation.questionerIds) {
+          appearances.set(questionerId, (appearances.get(questionerId) ?? 0) + 1);
+        }
+      }
+    }
+    expect((appearances.get('p1') ?? 0) + (appearances.get('p2') ?? 0)).toBeGreaterThan(0);
+  });
 });

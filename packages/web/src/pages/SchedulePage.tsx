@@ -60,7 +60,10 @@ interface ConfigFormProps {
 
 function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   const { t } = i18n;
-  const [daysStr, setDaysStr] = useState(initial ? initial.daysOfWeek.join(',') : '5');
+  const [selectedDays, setSelectedDays] = useState<number[]>(
+    initial?.daysOfWeek?.length ? [...initial.daysOfWeek].sort((a, b) => a - b) : [5],
+  );
+  const [showDayDialog, setShowDayDialog] = useState(false);
   const [startTime, setStartTime] = useState(initial?.timeRange[0] ?? '14:00');
   const [endTime, setEndTime] = useState(initial?.timeRange[1] ?? '16:00');
   const [presenters, setPresenters] = useState(initial?.presentersPerSession ?? 3);
@@ -71,9 +74,10 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
 
   function handleSave() {
     if (!startDate || !endDate) return;
+    if (selectedDays.length === 0) return;
     onSave({
       id: initial?.id ?? nanoid(),
-      daysOfWeek: daysStr.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)),
+      daysOfWeek: [...selectedDays].sort((a, b) => a - b),
       timeRange: [startTime, endTime],
       presentersPerSession: presenters,
       questionersPerPresenter: questioners,
@@ -83,12 +87,27 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
     });
   }
 
+  function toggleDay(day: number) {
+    setSelectedDays((prev) => {
+      if (prev.includes(day)) {
+        return prev.filter((item) => item !== day);
+      }
+      return [...prev, day].sort((a, b) => a - b);
+    });
+  }
+
+  const selectedDayLabels = selectedDays.map((day) => DAY_NAMES[day] ?? String(day)).join(', ');
+
   return (
     <div>
       <div class={s.formGroup}>
-        <label class={s.label}>{t('configDays')} (0=Sun…6=Sat, comma-separated)</label>
-        <input class={s.input} value={daysStr} onInput={e => setDaysStr((e.target as HTMLInputElement).value)} />
-        <div class={`${s.text12} ${s.textMuted}`}>{DAY_NAMES.map((d, i) => `${i}=${d}`).join(' ')}</div>
+        <label class={s.label}>{t('configDays')}</label>
+        <div class={s.flexGapSm}>
+          <Button variant="secondary" onClick={() => setShowDayDialog(true)}>
+            {t('selectWeekdays')}
+          </Button>
+          <span class={`${s.text12} ${s.textMuted}`}>{selectedDayLabels || t('noneSelected')}</span>
+        </div>
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configStart')}</label>
@@ -122,6 +141,30 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <Button variant="primary" onClick={handleSave}>{t('save')}</Button>
         <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
       </div>
+      {showDayDialog && (
+        <Dialog open={true} onClose={() => setShowDayDialog(false)} title={t('selectWeekdays')}>
+          <div class={s.formGroup}>
+            <div class={s.tagList}>
+              {DAY_NAMES.map((dayName, dayIndex) => (
+                <button
+                  key={dayIndex}
+                  class={`${s.badgeSelectable} ${selectedDays.includes(dayIndex) ? s.badgeSelectableActive : ''}`}
+                  onClick={() => toggleDay(dayIndex)}
+                >
+                  {dayName}
+                </button>
+              ))}
+            </div>
+            <div class={`${s.text12} ${s.textMuted}`}>
+              {selectedDayLabels || t('noneSelected')}
+            </div>
+          </div>
+          <div class={s.flexGapSm}>
+            <Button variant="primary" onClick={() => setShowDayDialog(false)}>{t('confirm')}</Button>
+            <Button variant="secondary" onClick={() => setShowDayDialog(false)}>{t('cancel')}</Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -221,6 +264,11 @@ interface MetricsDialogState {
   explanations: MetricExplanation[];
 }
 
+interface SessionMutationDialogState {
+  mode: 'insert' | 'delete';
+  sessionDate: string;
+}
+
 function defaultIncrementalDate(): string {
   const nextWeek = new Date();
   nextWeek.setUTCDate(nextWeek.getUTCDate() + 7);
@@ -286,7 +334,7 @@ function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }:
       });
       return { ...sess, presentations: newPresentations };
     });
-    const updated: SchedulePlan = { ...current, sessions: newSessions };
+    const updated: SchedulePlan = { ...current, sessions: newSessions, modifiedAt: Date.now() };
     db.schedules.put(updated).then(async () => {
       await loadAllSchedules(db);
       currentScheduleSignal.value = updated;
@@ -365,9 +413,9 @@ export function SchedulePage() {
   } | null>(null);
   const [manualEditMode, setManualEditMode] = useState(false);
   const [metricsDialog, setMetricsDialog] = useState<MetricsDialogState | null>(null);
-  const [mutationIndex, setMutationIndex] = useState(1);
-  const [mutationAction, setMutationAction] = useState<'insert' | 'delete'>('insert');
-  const [mutationStrategy, setMutationStrategy] = useState<'shift' | 'in-place'>('shift');
+  const [sessionMutationDialog, setSessionMutationDialog] = useState<SessionMutationDialogState | null>(null);
+  const [insertedSessionDate, setInsertedSessionDate] = useState('');
+  const [insertPosition, setInsertPosition] = useState<'before' | 'after'>('after');
 
   const activePersonCount = persons.filter(p => !p.disabled).length;
   const selectedConfig = configs.find(c => c.id === selectedConfigId);
@@ -460,7 +508,7 @@ export function SchedulePage() {
   }
 
   async function handleSaveConfig(c: ScheduleConfig) {
-    await db.configs.put(c);
+    await db.configs.put({ ...c, modifiedAt: Date.now() });
     await loadAllConfigs(db);
     setShowConfigForm(false);
     setEditingConfig(null);
@@ -495,9 +543,9 @@ export function SchedulePage() {
         });
       const normalized = normalizeSolveResponse(result);
       const plan = normalized.plan;
-      await db.schedules.put(plan);
+      await db.schedules.put({ ...plan, modifiedAt: Date.now() });
       await loadAllSchedules(db);
-      currentScheduleSignal.value = plan;
+      currentScheduleSignal.value = { ...plan, modifiedAt: Date.now() };
       if (normalized.metrics && normalized.explanations) {
         openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
       } else {
@@ -547,9 +595,9 @@ export function SchedulePage() {
         });
       const normalized = normalizeSolveResponse(result);
       const plan = normalized.plan;
-      await db.schedules.put(plan);
+      await db.schedules.put({ ...plan, modifiedAt: Date.now() });
       await loadAllSchedules(db);
-      currentScheduleSignal.value = plan;
+      currentScheduleSignal.value = { ...plan, modifiedAt: Date.now() };
       if (normalized.warnings?.length) {
         window.alert(normalized.warnings.join('\n'));
       }
@@ -613,7 +661,7 @@ export function SchedulePage() {
   }
 
   async function handleSaveHistoryNotes(plan: SchedulePlan, notes: string) {
-    const updated = { ...plan, notes };
+    const updated = { ...plan, notes, modifiedAt: Date.now() };
     await db.schedules.put(updated);
     await loadAllSchedules(db);
     if (currentScheduleSignal.value?.id === plan.id) {
@@ -632,57 +680,91 @@ export function SchedulePage() {
     await loadAllUnavailabilities(db);
   }
 
-  async function handleApplyTemporaryMutation() {
-    if (!current || current.sessions.length === 0) return;
-    const idx = Math.max(0, Math.min(current.sessions.length - 1, mutationIndex - 1));
-    const sessions = current.sessions.map((session) => ({
+  async function handleApplySessionMutation(): Promise<void> {
+    if (!current || !sessionMutationDialog) return;
+    const { mode, sessionDate } = sessionMutationDialog;
+    const baseSessions = current.sessions.map((session) => ({
       date: session.date,
       presentations: session.presentations.map((presentation) => ({
         presenterId: presentation.presenterId,
         questionerIds: [...presentation.questionerIds],
       })),
     }));
+    const existingMutations = current.sessionMutations ?? [];
+    if (existingMutations.some((record) => record.date === sessionDate)) {
+      toast.error(t('mutationAlreadyExistsForDate'));
+      return;
+    }
 
-    if (mutationAction === 'insert') {
-      const source = sessions[idx] ?? sessions[sessions.length - 1];
-      const cloned: Session = {
-        date: source?.date ?? new Date().toISOString().slice(0, 10),
-        presentations: source?.presentations.map((presentation) => ({
+    const targetIndex = baseSessions.findIndex((item) => item.date === sessionDate);
+    if (targetIndex < 0) {
+      toast.error(t('mutationTargetNotFound'));
+      return;
+    }
+
+    let nextSessions = baseSessions;
+    let mutationNote = '';
+    const createdAt = Date.now();
+    const nextMutations = [...existingMutations];
+
+    if (mode === 'delete') {
+      nextSessions = baseSessions.filter((item) => item.date !== sessionDate);
+      nextMutations.push({
+        date: sessionDate,
+        action: 'delete',
+        createdAt,
+      });
+      mutationNote = `[temporary-delete] date=${sessionDate}`;
+    } else {
+      if (!insertedSessionDate) {
+        toast.error(t('mutationInsertedDateRequired'));
+        return;
+      }
+      const template = baseSessions[targetIndex];
+      const insertedSession: Session = {
+        date: insertedSessionDate,
+        presentations: template.presentations.map((presentation) => ({
           presenterId: presentation.presenterId,
           questionerIds: [...presentation.questionerIds],
-        })) ?? [],
+        })),
       };
-      if (mutationStrategy === 'shift') {
-        sessions.splice(idx, 0, cloned);
-      } else {
-        sessions[idx] = cloned;
-      }
-    } else if (mutationAction === 'delete') {
-      if (mutationStrategy === 'shift') {
-        sessions.splice(idx, 1);
-      } else {
-        sessions[idx] = {
-          ...sessions[idx],
-          presentations: [],
-        };
-      }
+      const insertIndex = insertPosition === 'before' ? targetIndex : targetIndex + 1;
+      nextSessions = [...baseSessions.slice(0, insertIndex), insertedSession, ...baseSessions.slice(insertIndex)];
+      nextMutations.push({
+        date: sessionDate,
+        action: 'insert',
+        insertedDate: insertedSessionDate,
+        position: insertPosition,
+        createdAt,
+      });
+      mutationNote = `[temporary-insert-${insertPosition}] date=${sessionDate} inserted=${insertedSessionDate}`;
     }
 
     const mutated: SchedulePlan = {
       ...current,
       id: nanoid(),
-      createdAt: Date.now(),
-      sessions,
-      notes: `${current.notes ?? ''}\n[temporary-${mutationAction}-${mutationStrategy}] index=${mutationIndex}`.trim(),
+      createdAt,
+      modifiedAt: createdAt,
+      sessions: nextSessions,
+      sessionMutations: nextMutations,
+      notes: `${current.notes ?? ''}\n${mutationNote}`.trim(),
     };
 
     await db.schedules.put(mutated);
     await loadAllSchedules(db);
     currentScheduleSignal.value = mutated;
+    setSessionMutationDialog(null);
+    setInsertedSessionDate('');
     const local = localMetricsForPlan(mutated);
     if (local) {
       openMetricsDialog(t('metricsAfterMutationTitle'), local.metrics, local.explanations);
     }
+  }
+
+  function openSessionMutationDialog(mode: 'insert' | 'delete', sessionDate: string): void {
+    setSessionMutationDialog({ mode, sessionDate });
+    setInsertedSessionDate(sessionDate);
+    setInsertPosition('after');
   }
 
   return (
@@ -864,34 +946,6 @@ export function SchedulePage() {
         </div>
       )}
 
-      {/* Temporary insert/delete session */}
-      {current && (
-        <div class={`${s.card} ${s.mb24}`}>
-          <strong>{t('temporarySessionMutation')}</strong>
-          <div class={s.flexGapSm}>
-            <input
-              class={`${s.input} ${s.autoWidthInput}`}
-              type="number"
-              min={1}
-              max={Math.max(1, current.sessions.length)}
-              value={mutationIndex}
-              onInput={(e) => setMutationIndex(Number.parseInt((e.target as HTMLInputElement).value || '1', 10))}
-            />
-            <select class={s.input} value={mutationAction} onChange={(e) => setMutationAction((e.target as HTMLSelectElement).value as 'insert' | 'delete')}>
-              <option value="insert">{t('mutationInsert')}</option>
-              <option value="delete">{t('mutationDelete')}</option>
-            </select>
-            <select class={s.input} value={mutationStrategy} onChange={(e) => setMutationStrategy((e.target as HTMLSelectElement).value as 'shift' | 'in-place')}>
-              <option value="shift">{t('mutationStrategyShift')}</option>
-              <option value="in-place">{t('mutationStrategyInPlace')}</option>
-            </select>
-            <Button variant="secondary" onClick={() => void handleApplyTemporaryMutation()}>
-              {t('applyMutation')}
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* History */}
       {schedules.length > 0 && (
         <div class={s.mb24}>
@@ -977,20 +1031,83 @@ export function SchedulePage() {
         </Dialog>
       )}
 
+      {sessionMutationDialog && (
+        <Dialog
+          open={true}
+          onClose={() => setSessionMutationDialog(null)}
+          title={sessionMutationDialog.mode === 'insert' ? t('mutationInsertDialogTitle') : t('mutationDeleteDialogTitle')}
+        >
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('sessionDate')}</label>
+            <input class={s.input} value={sessionMutationDialog.sessionDate} disabled />
+          </div>
+          {sessionMutationDialog.mode === 'insert' && (
+            <>
+              <div class={s.formGroup}>
+                <label class={s.label}>{t('mutationInsertedDate')}</label>
+                <input
+                  class={s.input}
+                  type="date"
+                  value={insertedSessionDate}
+                  onInput={(e) => setInsertedSessionDate((e.target as HTMLInputElement).value)}
+                />
+              </div>
+              <div class={s.formGroup}>
+                <label class={s.label}>{t('mutationInsertPosition')}</label>
+                <select
+                  class={s.input}
+                  value={insertPosition}
+                  onChange={(e) => setInsertPosition((e.target as HTMLSelectElement).value as 'before' | 'after')}
+                >
+                  <option value="before">{t('mutationBefore')}</option>
+                  <option value="after">{t('mutationAfter')}</option>
+                </select>
+              </div>
+            </>
+          )}
+          <div class={s.flexGapSm}>
+            <Button variant="primary" onClick={() => void handleApplySessionMutation()}>{t('applyMutation')}</Button>
+            <Button variant="secondary" onClick={() => setSessionMutationDialog(null)}>{t('cancel')}</Button>
+          </div>
+        </Dialog>
+      )}
+
       {/* Schedule tables */}
       {!current ? (
         <div class={s.cardNoScheduke}>{t('noSchedule')}</div>
       ) : (
-        current.sessions.map(sess => (
+        current.sessions.map(sess => {
+          const hasMutationRecord = (current.sessionMutations ?? []).some((record) => record.date === sess.date);
+          return (
           <div key={sess.date} class={`${s.card} ${s.mb16}`}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>
               <span class={s.flexGapXs}>
                 <Calendar size={16} />
                 {sess.date}
               </span>
-              <Button variant="ghost" onClick={() => void showMetricsForSession(current, sess.date)}>
-                {t('viewMetrics')}
-              </Button>
+              <div class={s.flexGapXs}>
+                {manualEditMode && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      onClick={() => openSessionMutationDialog('insert', sess.date)}
+                      disabled={hasMutationRecord}
+                    >
+                      {t('mutationInsert')}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      onClick={() => openSessionMutationDialog('delete', sess.date)}
+                      disabled={hasMutationRecord}
+                    >
+                      {t('mutationDelete')}
+                    </Button>
+                  </>
+                )}
+                <Button variant="ghost" onClick={() => void showMetricsForSession(current, sess.date)}>
+                  {t('viewMetrics')}
+                </Button>
+              </div>
             </h3>
             <ResponsiveDataView
               items={sess.presentations}
@@ -1101,7 +1218,8 @@ export function SchedulePage() {
               }}
             />
           </div>
-        ))
+          );
+        })
       )}
     </div>
   );

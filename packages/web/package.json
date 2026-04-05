@@ -16,6 +16,10 @@
     "i18n:gen": "tsx scripts/i18n-gen.ts"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.9.1",
+    "@codemirror/lang-markdown": "^6.3.4",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.6",
     "@deck.gl/core": "^9.2.11",
     "@deck.gl/layers": "^9.2.11",
     "@labby/core": "workspace:*",

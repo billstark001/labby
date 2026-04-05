@@ -13,11 +13,13 @@ export interface BaseEntity {
 /** A seminar participant. */
 export interface Person extends BaseEntity {
   keywordIds: string[]; // associated keyword IDs (max 10)
+  modifiedAt?: number;
 }
 
 /** A research keyword / topic tag. */
 export interface Keyword extends BaseEntity {
   // metadata may cache D3 layout coordinates, e.g. { x: 0.4, y: 0.7 }
+  modifiedAt?: number;
 }
 
 /** Directed similarity edge between two keywords. */
@@ -60,6 +62,8 @@ export interface ScheduleConfig {
   notifyTimezone?: string;
   /** Arbitrary extension metadata. */
   metadata?: Record<string, unknown>;
+  constraints?: ScheduleConstraint[];
+  modifiedAt?: number;
 }
 
 /** User-configurable scheduled email task. */
@@ -78,6 +82,7 @@ export interface EmailTask {
   /** Last execution timestamp in epoch ms. */
   lastRunAt?: number;
   metadata?: Record<string, unknown>;
+  modifiedAt?: number;
 }
 
 export type TemplateFormat = 'markdown' | 'html';
@@ -116,19 +121,31 @@ export interface MetricExplanation {
 
 export interface ScheduleMutationInput {
   previousPlan: SchedulePlan;
-  /** Target session index in the previous plan. */
-  index: number;
+  /** Target session date in the previous plan. */
+  date: string;
   action: 'insert' | 'delete';
-  strategy: 'shift' | 'in-place';
+  insertedDate?: string;
+  position?: 'before' | 'after';
 }
 
 /** Immutable snapshot of a generated schedule. */
 export interface SchedulePlan {
   id: string;
   createdAt: number; // epoch ms – used for timeline history
+  modifiedAt?: number;
   configId: string;
   sessions: Session[];
   notes?: string; // user-written notes for this history entry
+  sessionMutations?: ScheduleSessionMutationRecord[];
+}
+
+/** Mutation event stored by date so it can be replayed across config date changes. */
+export interface ScheduleSessionMutationRecord {
+  date: string;
+  action: 'insert' | 'delete';
+  insertedDate?: string;
+  position?: 'before' | 'after';
+  createdAt: number;
 }
 
 /** A period when a person is unavailable (cannot present or question). */
@@ -241,5 +258,21 @@ export interface AffinityBoostConstraint {
   boost?: number;
 }
 
+/**
+ * Adjust expected appearance frequency for selected persons by multiplier k.
+ * k > 1 encourages more appearances, k < 1 discourages them.
+ */
+export interface FrequencyMultiplierConstraint {
+  type: 'frequency-multiplier';
+  personIds: string[];
+  baseline: number;
+  multiplier: number;
+  roleScope?: 'presenter' | 'questioner' | 'both';
+  weight?: number;
+}
+
 /** Union of all supported schedule constraints. */
-export type ScheduleConstraint = NoOverlapConstraint | AffinityBoostConstraint;
+export type ScheduleConstraint =
+  | NoOverlapConstraint
+  | AffinityBoostConstraint
+  | FrequencyMultiplierConstraint;

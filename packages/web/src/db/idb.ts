@@ -138,11 +138,35 @@ async function listStore<T>(idb: IDBPDatabase, storeName: string, query: ListQue
   return { items, total, offset, limit };
 }
 
+async function listStoreSorted<T>(
+  idb: IDBPDatabase,
+  storeName: string,
+  query: ListQuery,
+  sortBy: (item: T) => number,
+): Promise<PaginatedResult<T>> {
+  const { offset, limit } = normalizeListQuery(query);
+  const tx = idb.transaction(storeName, 'readonly');
+  const store = tx.objectStore(storeName);
+  const all = (await store.getAll()) as T[];
+  await tx.done;
+  const sorted = [...all].sort((left, right) => {
+    const diff = sortBy(right) - sortBy(left);
+    if (diff !== 0) return diff;
+    return 0;
+  });
+  return {
+    items: sorted.slice(offset, offset + limit),
+    total: sorted.length,
+    offset,
+    limit,
+  };
+}
+
 export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const personsStore: PersonStore = {
     get: (id: string) => idb.get('persons', id),
-    list: (query: ListQuery) => listStore<Person>(idb, 'persons', query),
+    list: (query: ListQuery) => listStoreSorted<Person>(idb, 'persons', query, (item) => item.modifiedAt ?? 0),
     put: (value: Person) => idb.put('persons', value).then(() => void 0),
     delete: (id: string) => idb.delete('persons', id),
     clear: () => idb.clear('persons'),
@@ -150,7 +174,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const keywordsStore: KeywordStore = {
     get: (id: string) => idb.get('keywords', id),
-    list: (query: ListQuery) => listStore<Keyword>(idb, 'keywords', query),
+    list: (query: ListQuery) => listStoreSorted<Keyword>(idb, 'keywords', query, (item) => item.modifiedAt ?? 0),
     put: (value: Keyword) => idb.put('keywords', value).then(() => void 0),
     delete: (id: string) => idb.delete('keywords', id),
     clear: () => idb.clear('keywords'),
@@ -169,7 +193,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
       return values.filter((value): value is KeywordVectorRecord => Boolean(value)).map(fromKeywordVectorRecord);
     },
     list: async (query: ListQuery) => {
-      const page = await listStore<KeywordVectorRecord>(idb, 'keyword_vectors', query);
+      const page = await listStoreSorted<KeywordVectorRecord>(idb, 'keyword_vectors', query, (item) => item.updatedAt ?? 0);
       return {
         ...page,
         items: page.items.map(fromKeywordVectorRecord),
@@ -188,7 +212,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const configsStore: ScheduleConfigStore = {
     get: (id: string) => idb.get('configs', id),
-    list: (query: ListQuery) => listStore<ScheduleConfig>(idb, 'configs', query),
+    list: (query: ListQuery) => listStoreSorted<ScheduleConfig>(idb, 'configs', query, (item) => item.modifiedAt ?? 0),
     put: (value: ScheduleConfig) => idb.put('configs', value).then(() => void 0),
     delete: (id: string) => idb.delete('configs', id),
     clear: () => idb.clear('configs'),
@@ -196,7 +220,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const schedulesStore: SchedulePlanStore = {
     get: (id: string) => idb.get('schedules', id),
-    list: (query: ListQuery) => listStore<SchedulePlan>(idb, 'schedules', query),
+    list: (query: ListQuery) => listStoreSorted<SchedulePlan>(idb, 'schedules', query, (item) => item.modifiedAt ?? item.createdAt ?? 0),
     put: (value: SchedulePlan) => idb.put('schedules', value).then(() => void 0),
     delete: (id: string) => idb.delete('schedules', id),
     clear: () => idb.clear('schedules'),
@@ -212,7 +236,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const emailTasksStore: EmailTaskStore = {
     get: (id: string) => idb.get('email_tasks', id),
-    list: (query: ListQuery) => listStore<EmailTask>(idb, 'email_tasks', query),
+    list: (query: ListQuery) => listStoreSorted<EmailTask>(idb, 'email_tasks', query, (item) => item.modifiedAt ?? 0),
     put: (value: EmailTask) => idb.put('email_tasks', value).then(() => void 0),
     delete: (id: string) => idb.delete('email_tasks', id),
     clear: () => idb.clear('email_tasks'),
