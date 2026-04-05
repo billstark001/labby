@@ -6,6 +6,10 @@ import { Button } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 
+const USER_ROLE_USER = 0;
+const USER_ROLE_ADMIN = 1;
+const USER_ROLE_ROOT = 2;
+
 interface SafeUser {
   id: string;
   username: string;
@@ -21,8 +25,8 @@ interface UsersTabProps {
 
 function roleLabel(role: number): string {
   const { t } = i18n;
-  if (role === 2) return t('userRoleRoot');
-  if (role === 1) return t('userRoleAdmin');
+  if (role === USER_ROLE_ROOT) return t('userRoleRoot');
+  if (role === USER_ROLE_ADMIN) return t('userRoleAdmin');
   return t('userRoleUser');
 }
 
@@ -36,7 +40,7 @@ function CreateUserForm({ onSave, onCancel }: CreateUserFormProps) {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(0);
+  const [role, setRole] = useState(USER_ROLE_USER);
 
   async function handleSubmit() {
     try {
@@ -68,8 +72,8 @@ function CreateUserForm({ onSave, onCancel }: CreateUserFormProps) {
       <div class={s.formGroup}>
         <label class={s.label}>{t('userRole')}</label>
         <select class={s.input} value={role} onChange={(e) => setRole(Number((e.target as HTMLSelectElement).value))}>
-          <option value={0}>{t('userRoleUser')}</option>
-          <option value={1}>{t('userRoleAdmin')}</option>
+          <option value={USER_ROLE_USER}>{t('userRoleUser')}</option>
+          <option value={USER_ROLE_ADMIN}>{t('userRoleAdmin')}</option>
         </select>
       </div>
       <div class={s.flexGapSm}>
@@ -113,8 +117,8 @@ function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
       <div class={s.formGroup}>
         <label class={s.label}>{t('userRole')}</label>
         <select class={s.input} value={role} onChange={(e) => setRole(Number((e.target as HTMLSelectElement).value))}>
-          <option value={0}>{t('userRoleUser')}</option>
-          <option value={1}>{t('userRoleAdmin')}</option>
+          <option value={USER_ROLE_USER}>{t('userRoleUser')}</option>
+          <option value={USER_ROLE_ADMIN}>{t('userRoleAdmin')}</option>
         </select>
       </div>
       <div class={s.formGroup}>
@@ -200,12 +204,12 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
               <td class={s.td}>{user.disabled ? '✓' : '—'}</td>
               <td class={s.td}>
                 <div class={s.flexGapSm}>
-                  {user.role < 2 && (
+                  {user.role < USER_ROLE_ROOT && (
                     <Button variant="ghost" onClick={() => setEditingUser(user)}>
                       {t('editUser')}
                     </Button>
                   )}
-                  {canManageUsers && user.role < 2 && (
+                  {canManageUsers && user.role < USER_ROLE_ROOT && (
                     <Button variant="danger" onClick={() => handleDelete(user)}>
                       {t('deleteUser')}
                     </Button>

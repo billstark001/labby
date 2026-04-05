@@ -1146,7 +1146,7 @@ editUser:
 
 deleteUser:
   en: Delete User
-  zh-CN: 削除ユーザー
+  zh-CN: 删除用户
   ja-JP: ユーザーを削除
 
 manageUser:
