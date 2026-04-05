@@ -47,8 +47,10 @@ import { toast } from '../components/ui/Toast';
 import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
 import { i18n } from '@/i18n';
+import { getScheduleConfigLabel, getScheduleConfigSummary, getScheduleConfigTitle } from '@/lib/scheduleConfigLabel';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const LAST_SELECTED_CONFIG_STORAGE_KEY = 'schedule.lastSelectedConfigId';
 
 // ---------------------------------------------------------------------------
 // Config form
@@ -62,6 +64,7 @@ interface ConfigFormProps {
 
 function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   const { t } = i18n;
+  const [title, setTitle] = useState(getScheduleConfigTitle(initial));
   const [selectedDays, setSelectedDays] = useState<number[]>(
     initial?.daysOfWeek?.length ? [...initial.daysOfWeek].sort((a, b) => a - b) : [5],
   );
@@ -77,6 +80,12 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   function handleSave() {
     if (!startDate || !endDate) return;
     if (selectedDays.length === 0) return;
+    const nextMetadata: Record<string, unknown> = { ...(initial?.metadata ?? {}) };
+    if (title.trim()) {
+      nextMetadata.title = title.trim();
+    } else {
+      delete nextMetadata.title;
+    }
     onSave({
       id: initial?.id ?? nanoid(),
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
@@ -86,6 +95,7 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
       targetSimilarityRadius: radius,
       startDate,
       endDate,
+      metadata: Object.keys(nextMetadata).length > 0 ? nextMetadata : undefined,
     });
   }
 
@@ -102,6 +112,15 @@ function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
 
   return (
     <div>
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('configLabel')}</label>
+        <input
+          class={s.input}
+          value={title}
+          onInput={e => setTitle((e.target as HTMLInputElement).value)}
+          placeholder={t('configLabelPlaceholder')}
+        />
+      </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configDays')}</label>
         <div class={s.flexGapSm}>
@@ -400,7 +419,7 @@ export function SchedulePage() {
 
   const [showConfigForm, setShowConfigForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ScheduleConfig | null>(null);
-  const [selectedConfigId, setSelectedConfigId] = useState<string>(configs[0]?.id ?? '');
+  const [selectedConfigId, setSelectedConfigId] = useState<string>('');
   const [changeDate, setChangeDate] = useState('');
   const [copiedTsv, setCopiedTsv] = useState(false);
   const [copiedHtml, setCopiedHtml] = useState(false);
@@ -418,9 +437,13 @@ export function SchedulePage() {
   const [sessionMutationDialog, setSessionMutationDialog] = useState<SessionMutationDialogState | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
   const [insertPosition, setInsertPosition] = useState<'before' | 'after'>('after');
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
   const activePersonCount = persons.filter(p => !p.disabled).length;
   const selectedConfig = configs.find(c => c.id === selectedConfigId);
+  const schedulesForSelectedConfig = selectedConfigId
+    ? schedules.filter((item) => item.configId === selectedConfigId)
+    : [];
   const personMap = personMapSignal.value;
 
   // Unavailabilities scoped to the selected config
@@ -439,9 +462,9 @@ export function SchedulePage() {
         loadAllEmailTasks(db),
       ]);
       if (cancelled) return;
-      if (!currentScheduleSignal.value && schedulesSignal.value.length > 0) {
-        const latest = schedulesSignal.value.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
-        currentScheduleSignal.value = latest;
+      const remembered = localStorage.getItem(LAST_SELECTED_CONFIG_STORAGE_KEY) ?? '';
+      if (remembered && configsSignal.value.some((item) => item.id === remembered)) {
+        setSelectedConfigId(remembered);
       }
     };
     void run();
@@ -449,6 +472,31 @@ export function SchedulePage() {
       cancelled = true;
     };
   }, [db]);
+
+  useEffect(() => {
+    if (selectedConfigId && !configs.some((item) => item.id === selectedConfigId)) {
+      setSelectedConfigId('');
+      localStorage.removeItem(LAST_SELECTED_CONFIG_STORAGE_KEY);
+    }
+  }, [configs, selectedConfigId]);
+
+  useEffect(() => {
+    if (!selectedConfigId) {
+      currentScheduleSignal.value = null;
+      setSelectedHistoryIds(new Set());
+      return;
+    }
+    localStorage.setItem(LAST_SELECTED_CONFIG_STORAGE_KEY, selectedConfigId);
+    const currentPlan = currentScheduleSignal.value;
+    if (!currentPlan || currentPlan.configId !== selectedConfigId) {
+      const latest = schedulesForSelectedConfig.reduce<SchedulePlan | null>((acc, item) => {
+        if (!acc || item.createdAt > acc.createdAt) return item;
+        return acc;
+      }, null);
+      currentScheduleSignal.value = latest;
+    }
+    setSelectedHistoryIds(new Set());
+  }, [selectedConfigId, schedulesForSelectedConfig]);
 
   useEffect(() => {
     if (!changeDate) {
@@ -671,6 +719,38 @@ export function SchedulePage() {
     });
   }
 
+  async function handleDeleteSelectedHistories(): Promise<void> {
+    if (selectedHistoryIds.size === 0) return;
+    const ids = [...selectedHistoryIds];
+    confirmDialog(t('confirmDelete'), t('deleteSelectedHistories', String(ids.length)), async () => {
+      await Promise.all(ids.map((id) => db.schedules.delete(id)));
+      await loadAllSchedules(db);
+      const nextCurrent = currentScheduleSignal.value;
+      if (nextCurrent && !schedulesSignal.value.some((item) => item.id === nextCurrent.id)) {
+        const nextLatest = schedulesSignal.value
+          .filter((item) => item.configId === selectedConfigId)
+          .reduce<SchedulePlan | null>((acc, item) => {
+            if (!acc || item.createdAt > acc.createdAt) return item;
+            return acc;
+          }, null);
+        currentScheduleSignal.value = nextLatest;
+      }
+      setSelectedHistoryIds(new Set());
+    });
+  }
+
+  function toggleHistorySelection(planId: string): void {
+    setSelectedHistoryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(planId)) {
+        next.delete(planId);
+      } else {
+        next.add(planId);
+      }
+      return next;
+    });
+  }
+
   async function handleSaveHistoryNotes(plan: SchedulePlan, notes: string) {
     const updated = { ...plan, notes, modifiedAt: Date.now() };
     await db.schedules.put(updated);
@@ -815,13 +895,18 @@ export function SchedulePage() {
             value={selectedConfigId}
             onChange={e => setSelectedConfigId((e.target as HTMLSelectElement).value)}
           >
+            <option value="">{t('selectConfigFirst')}</option>
             {configs.map(c => (
               <option key={c.id} value={c.id}>
-                {c.startDate} → {c.endDate} | {c.daysOfWeek.map(d => DAY_NAMES[d]).join(',')} |
-                {c.presentersPerSession}×{c.questionersPerPresenter}
+                {getScheduleConfigLabel(c)}
               </option>
             ))}
           </select>
+        )}
+        {selectedConfig && (
+          <div class={`${s.text12} ${s.textMuted} ${s.mt8}`}>
+            {getScheduleConfigSummary(selectedConfig)}
+          </div>
         )}
       </div>
 
@@ -913,7 +998,7 @@ export function SchedulePage() {
         <Button
           variant="primary"
           onClick={handleGenerate}
-          disabled={isComputing || configs.length === 0 || activePersonCount === 0}
+          disabled={isComputing || !selectedConfigId || configs.length === 0 || activePersonCount === 0}
           title={activePersonCount === 0 ? t('notEnoughPersons') : undefined}
         >
           {isComputing ? t('computing') : t('generateSchedule')}
@@ -958,16 +1043,32 @@ export function SchedulePage() {
       )}
 
       {/* History */}
-      {schedules.length > 0 && (
+      {selectedConfigId && schedulesForSelectedConfig.length > 0 && (
         <div class={s.mb24}>
-          <strong class={s.text14}>{t('historyTitle')}</strong>
+          <div class={`${s.flexBetween} ${s.mt8}`}>
+            <strong class={s.text14}>{t('historyTitle')}</strong>
+            <div class={s.flexGapSm}>
+              <Button
+                variant="danger"
+                disabled={selectedHistoryIds.size === 0}
+                onClick={() => void handleDeleteSelectedHistories()}
+              >
+                {t('deleteSelected')}
+              </Button>
+            </div>
+          </div>
           <div class={`${s.flexGapSm} ${s.flexWrap} ${s.mt8}`}>
-            {[...schedules]
+            {[...schedulesForSelectedConfig]
               .sort((a, b) => b.createdAt - a.createdAt)
               .map(p => (
                 <Menu key={p.id} mode="context">
                   <MenuTrigger>
                     <div class={s.historyItem}>
+                      <input
+                        type="checkbox"
+                        checked={selectedHistoryIds.has(p.id)}
+                        onChange={() => toggleHistorySelection(p.id)}
+                      />
                       <button
                         class={`${s.badgeButton} ${current?.id === p.id ? '' : s.badgeButtonDimmed}`}
                         onClick={() => (currentScheduleSignal.value = p)}
@@ -1084,7 +1185,7 @@ export function SchedulePage() {
       )}
 
       {/* Schedule tables */}
-      {!current ? (
+      {!selectedConfigId || !current || current.configId !== selectedConfigId ? (
         <div class={s.cardNoScheduke}>{t('noSchedule')}</div>
       ) : (
         current.sessions.map(sess => {

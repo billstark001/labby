@@ -6,16 +6,22 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import {
   DEFAULT_TEMPLATE_PRESETS,
-  renderTemplate,
+  EMAIL_TEMPLATE_VARIABLE_DOCS,
+  buildEmailTemplateScheduleVariables,
+  renderTemplateToHtml,
   type EmailTask,
+  type ScheduleDateGranularity,
   type TemplateFormat,
 } from '@labby/core';
-import { Button, Dialog } from '../components/ui';
-import { useDatabase, loadAllConfigs, loadAllEmailTasks } from '../db';
-import { configsSignal, emailTasksSignal } from '../store';
+
+import { Button, Dialog } from '@/components/ui';
+import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
-import * as s from '../styles/components.css';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
+import { navigate } from '@/lib/router';
+import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
+import { configsSignal, emailTasksSignal, personsSignal, schedulesSignal } from '@/store';
+import * as s from '@/styles/components.css';
 
 const DAY_OPTIONS = [
   { value: 0, label: 'Sun' },
@@ -26,81 +32,6 @@ const DAY_OPTIONS = [
   { value: 5, label: 'Fri' },
   { value: 6, label: 'Sat' },
 ];
-
-const TEMPLATE_VARIABLE_DOCS = [
-  {
-    name: 'recipient',
-    type: 'string',
-    descriptions: {
-      en: 'Recipient email address.',
-      'zh-CN': '收件人邮箱地址。',
-      'ja-JP': '受信者メールアドレス。',
-    },
-  },
-  {
-    name: 'configId',
-    type: 'string',
-    descriptions: {
-      en: 'Schedule config identifier.',
-      'zh-CN': '排班配置 ID。',
-      'ja-JP': 'スケジュール設定 ID。',
-    },
-  },
-  {
-    name: 'taskId',
-    type: 'string',
-    descriptions: {
-      en: 'Email task identifier (server run).',
-      'zh-CN': '邮件任务 ID（服务端执行时）。',
-      'ja-JP': 'メールタスク ID（サーバー実行時）。',
-    },
-  },
-  {
-    name: 'now',
-    type: 'string',
-    descriptions: {
-      en: 'Current timestamp (ISO).',
-      'zh-CN': '当前时间戳（ISO）。',
-      'ja-JP': '現在時刻（ISO）。',
-    },
-  },
-  {
-    name: 'sessionCount',
-    type: 'number',
-    descriptions: {
-      en: 'Number of sessions in current schedule.',
-      'zh-CN': '当前排班中的组会总数。',
-      'ja-JP': '現在のスケジュール内の回数。',
-    },
-  },
-  {
-    name: 'summary',
-    type: 'string',
-    descriptions: {
-      en: 'Summary sentence for this notification.',
-      'zh-CN': '本次通知的摘要文本。',
-      'ja-JP': '通知用のサマリ文章。',
-    },
-  },
-  {
-    name: 'latestCreatedAt',
-    type: 'number|null',
-    descriptions: {
-      en: 'Latest schedule creation timestamp when available.',
-      'zh-CN': '最近一次排班创建时间戳（若存在）。',
-      'ja-JP': '最新スケジュール作成時刻（存在する場合）。',
-    },
-  },
-  {
-    name: 'language',
-    type: 'string',
-    descriptions: {
-      en: 'Template language code for injected text.',
-      'zh-CN': '模板注入文本使用的语言代码。',
-      'ja-JP': '注入テキストに使う言語コード。',
-    },
-  },
-] as const;
 
 interface CodeMirrorEditorProps {
   value: string;
@@ -168,14 +99,20 @@ function parseEmails(input: string): string[] {
     .filter(Boolean);
 }
 
-export function EmailTasksPage() {
+interface EmailTaskEditPageProps {
+  taskId?: string;
+}
+
+export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const { t } = i18n;
   const db = useDatabase();
+  const capability = getEmailTaskCapability();
   const configs = configsSignal.value;
   const tasks = emailTasksSignal.value;
-  const capability = getEmailTaskCapability();
+  const persons = personsSignal.value;
+  const schedules = schedulesSignal.value;
 
-  const [selectedTaskId, setSelectedTaskId] = useState<string>('');
+  const [selectedTaskId, setSelectedTaskId] = useState<string>(taskId ?? '');
   const [configId, setConfigId] = useState('');
   const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]);
   const [emailsText, setEmailsText] = useState('');
@@ -183,53 +120,100 @@ export function EmailTasksPage() {
   const [templateText, setTemplateText] = useState('');
   const [templateFormat, setTemplateFormat] = useState<TemplateFormat>('markdown');
   const [injectionLanguage, setInjectionLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
+  const [dateGranularity, setDateGranularity] = useState<ScheduleDateGranularity>('date');
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [showDaysDialog, setShowDaysDialog] = useState(false);
   const [showVarDialog, setShowVarDialog] = useState(false);
   const [docLanguage, setDocLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
 
+  const initializedKeyRef = useRef('');
+
   useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      await Promise.all([loadAllConfigs(db), loadAllEmailTasks(db)]);
-      if (cancelled) return;
-      if (!configId && configsSignal.value[0]) {
-        setConfigId(configsSignal.value[0].id);
-      }
-      if (!templateText && DEFAULT_TEMPLATE_PRESETS[0]) {
-        setTemplateText(DEFAULT_TEMPLATE_PRESETS[0].content);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
+    void Promise.all([loadAllConfigs(db), loadAllEmailTasks(db), loadAllPersons(db), loadAllSchedules(db)]);
   }, [db]);
+
+  const selectedConfig = useMemo(
+    () => configs.find((item) => item.id === configId),
+    [configs, configId],
+  );
+
+  const latestScheduleForConfig = useMemo(
+    () => [...schedules]
+      .filter((item) => item.configId === configId)
+      .sort((left, right) => right.createdAt - left.createdAt)[0],
+    [schedules, configId],
+  );
+
+  const injectedScheduleVariables = useMemo(
+    () => buildEmailTemplateScheduleVariables({
+      plan: latestScheduleForConfig,
+      persons,
+      config: selectedConfig,
+      locale: injectionLanguage,
+      granularity: dateGranularity,
+      anchorDate: new Date().toISOString().slice(0, 10),
+    }),
+    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity],
+  );
 
   const previewContext = useMemo(() => ({
     recipient: 'preview@example.com',
     configId: configId || 'config-preview',
+    taskId: selectedTaskId || 'task-preview',
     now: new Date().toISOString(),
     sessionCount: 4,
     summary: 'This is a local preview. In frontend-only mode, emails are not auto-sent.',
     language: injectionLanguage,
-  }), [configId, injectionLanguage]);
+    ...injectedScheduleVariables,
+  }), [configId, selectedTaskId, injectionLanguage, injectedScheduleVariables]);
 
   const previewResult = useMemo(
-    () => renderTemplate(templateText, previewContext, { format: templateFormat }),
+    () => renderTemplateToHtml(templateText, previewContext, { format: templateFormat }),
     [templateText, previewContext, templateFormat],
   );
 
-  function resetForm(): void {
+  function applyTaskToForm(task: EmailTask): void {
+    setSelectedTaskId(task.id);
+    setConfigId(task.configId);
+    setSelectedDays(task.daysOfWeek);
+    setEmailsText(task.emails.join(', '));
+    setRecentTimes(task.recentTimes);
+    setTemplateText(task.templateText);
+    setTemplateFormat(((task.metadata?.format as TemplateFormat | undefined) ?? 'markdown'));
+    setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
+    setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
+  }
+
+  function resetForm(nextConfigId?: string): void {
     setSelectedTaskId('');
-    setConfigId(configs[0]?.id ?? '');
+    setConfigId(nextConfigId ?? configs[0]?.id ?? '');
     setSelectedDays([1, 3, 5]);
     setEmailsText('');
     setRecentTimes(0);
     setTemplateText(DEFAULT_TEMPLATE_PRESETS[0]?.content ?? '');
     setTemplateFormat(DEFAULT_TEMPLATE_PRESETS[0]?.format ?? 'markdown');
     setInjectionLanguage(i18n.lang.value);
+    setDateGranularity('date');
   }
+
+  useEffect(() => {
+    const targetKey = taskId ?? '__new__';
+    if (initializedKeyRef.current === targetKey) return;
+
+    if (taskId) {
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) {
+        applyTaskToForm(task);
+        initializedKeyRef.current = targetKey;
+      }
+      return;
+    }
+
+    if (configs.length > 0) {
+      resetForm(configs[0].id);
+      initializedKeyRef.current = targetKey;
+    }
+  }, [taskId, tasks, configs]);
 
   async function saveTask(): Promise<void> {
     if (!configId) return;
@@ -245,33 +229,25 @@ export function EmailTasksPage() {
       metadata: {
         format: templateFormat,
         injectionLanguage,
+        dateGranularity,
+        dateLocale: injectionLanguage,
       },
     };
     await db.emailTasks.put(task);
     await loadAllEmailTasks(db);
     setSelectedTaskId(nextId);
+    navigate(`/email-tasks/edit/${nextId}`);
   }
 
-  function editTask(task: EmailTask): void {
-    setSelectedTaskId(task.id);
-    setConfigId(task.configId);
-    setSelectedDays(task.daysOfWeek);
-    setEmailsText(task.emails.join(', '));
-    setRecentTimes(task.recentTimes);
-    setTemplateText(task.templateText);
-    setTemplateFormat(((task.metadata?.format as TemplateFormat | undefined) ?? 'markdown'));
-    setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
-  }
-
-  async function removeTask(id: string): Promise<void> {
-    await db.emailTasks.delete(id);
+  async function removeTask(): Promise<void> {
+    if (!selectedTaskId) return;
+    await db.emailTasks.delete(selectedTaskId);
     await loadAllEmailTasks(db);
-    if (selectedTaskId === id) resetForm();
+    navigate('/email-tasks');
   }
 
   async function copyNextEmail(): Promise<void> {
-    const rendered = renderTemplate(templateText, previewContext, { format: templateFormat });
-    await navigator.clipboard.writeText(rendered.output);
+    await navigator.clipboard.writeText(previewResult.html);
   }
 
   function toggleDay(day: number): void {
@@ -288,11 +264,23 @@ export function EmailTasksPage() {
     setTemplateText((prev) => `${prev}\n\n| Date | Presenter | Questioners |\n| --- | --- | --- |\n| {{ now }} | {{ recipient }} | {{ summary }} |`.trim());
   }
 
+  const taskNotFound = Boolean(taskId) && !tasks.some((item) => item.id === taskId);
+
   return (
     <div>
       <div class={s.toolbar}>
-        <h2 class={s.sectionTitle}>{t('navEmailTasks')}</h2>
+        <h2 class={s.sectionTitle}>{t('emailTaskEditorTitle')}</h2>
+        <div class={s.flexGapSm}>
+          <Button variant="ghost" onClick={() => navigate('/email-tasks')}>{t('backToList')}</Button>
+          {selectedTaskId && <Button variant="danger" onClick={() => void removeTask()}>{t('delete')}</Button>}
+        </div>
       </div>
+
+      {taskNotFound && (
+        <div class={`${s.card} ${s.mb16}`}>
+          <p class={`${s.text14} ${s.textDanger}`}>{t('emailTaskNotFound')}</p>
+        </div>
+      )}
 
       {!capability.canAutoSend && (
         <div class={`${s.card} ${s.mb16}`}>
@@ -309,13 +297,13 @@ export function EmailTasksPage() {
         </div>
       )}
 
-      <div class={`${s.card} ${s.mb16}`}>
-        <strong class={s.sectionTitle}>{t('emailTaskEditorTitle')}</strong>
+      <div class={s.card}>
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskConfig')}</label>
           <select class={s.input} value={configId} onChange={(e) => setConfigId((e.target as HTMLSelectElement).value)}>
+            <option value="">{t('selectConfigFirst')}</option>
             {configs.map((config) => (
-              <option key={config.id} value={config.id}>{config.id}</option>
+              <option key={config.id} value={config.id}>{getScheduleConfigLabel(config)}</option>
             ))}
           </select>
         </div>
@@ -382,6 +370,16 @@ export function EmailTasksPage() {
         </div>
 
         <div class={s.formGroup}>
+          <label class={s.label}>{t('dateDisplayGranularity')}</label>
+          <select class={s.input} value={dateGranularity} onChange={(e) => setDateGranularity((e.target as HTMLSelectElement).value as ScheduleDateGranularity)}>
+            <option value="date">{t('dateGranularityDate')}</option>
+            <option value="date-time">{t('dateGranularityDateTime')}</option>
+            <option value="month-day">{t('dateGranularityMonthDay')}</option>
+            <option value="month-day-time">{t('dateGranularityMonthDayTime')}</option>
+          </select>
+        </div>
+
+        <div class={s.formGroup}>
           <label class={s.label}>{t('emailTemplateEditor')}</label>
           <CodeMirrorEditor value={templateText} onChange={setTemplateText} />
           <div class={`${s.text12} ${s.textMuted}`}>{t('templateSyntaxHint')}</div>
@@ -396,9 +394,7 @@ export function EmailTasksPage() {
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTemplatePreview')}</label>
           <div class={s.card}>
-            {templateFormat === 'html'
-              ? <div dangerouslySetInnerHTML={{ __html: previewResult.output }} />
-              : <pre class={s.preWrap}>{previewResult.output}</pre>}
+            <div dangerouslySetInnerHTML={{ __html: previewResult.html }} />
           </div>
           {previewResult.errors.length > 0 && (
             <div class={s.textDanger}>
@@ -411,32 +407,17 @@ export function EmailTasksPage() {
 
         <div class={s.flexGapSm}>
           <Button variant="primary" onClick={() => void saveTask()}>{t('save')}</Button>
-          <Button variant="secondary" onClick={resetForm}>{t('cancel')}</Button>
-        </div>
-      </div>
-
-      <div class={s.card}>
-        <strong>{t('emailTaskList')}</strong>
-        <div class={s.mt8}>
-          {tasks.length === 0 && <p class={`${s.text14} ${s.textMuted}`}>{t('noEmailTasksYet')}</p>}
-          {tasks.map((task) => (
-            <div key={task.id} class={s.historyItem}>
-              <button class={s.badgeButton} onClick={() => editTask(task)}>
-                {task.id} · {task.configId} · {task.emails.length} emails
-              </button>
-              <div class={s.flexGapXs}>
-                <Button variant="ghost" onClick={() => editTask(task)}>{t('edit')}</Button>
-                <Button variant="danger" onClick={() => void removeTask(task.id)}>{t('delete')}</Button>
-              </div>
-            </div>
-          ))}
+          <Button variant="secondary" onClick={() => resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
+          <Button variant="ghost" onClick={() => navigate('/email-tasks')}>{t('backToList')}</Button>
         </div>
       </div>
 
       {showPreviewDialog && (
         <Dialog open={true} onClose={() => setShowPreviewDialog(false)} title={t('openNextEmailPreview')}>
           <div class={s.formGroup}>
-            <pre class={s.preWrap}>{previewResult.output}</pre>
+            <div class={s.card}>
+              <div dangerouslySetInnerHTML={{ __html: previewResult.html }} />
+            </div>
             <div class={s.flexGapSm}>
               <Button variant="secondary" onClick={() => void copyNextEmail()}>{t('copyNextEmailManually')}</Button>
               <Button variant="ghost" onClick={() => setShowPreviewDialog(false)}>{t('close')}</Button>
@@ -486,7 +467,7 @@ export function EmailTasksPage() {
               </tr>
             </thead>
             <tbody>
-              {TEMPLATE_VARIABLE_DOCS.map((item) => (
+              {EMAIL_TEMPLATE_VARIABLE_DOCS.map((item) => (
                 <tr key={item.name}>
                   <td class={s.td}>{item.name}</td>
                   <td class={s.td}>{item.type}</td>

@@ -1,5 +1,5 @@
 import type { EmailTask, ScheduleConfig } from '@labby/core';
-import { renderTemplate } from '@labby/core';
+import { buildEmailTemplateScheduleVariables, renderTemplateToHtml, type ScheduleDateGranularity } from '@labby/core';
 
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
@@ -72,6 +72,7 @@ export class EmailTaskNotifier {
   private async executeTask(task: EmailTask): Promise<void> {
     const config = await this.options.store.getConfig(task.configId);
     if (!config) return;
+    const persons = await this.options.store.listPersons();
 
     const latest = (await this.options.store.listSchedules())
       .filter((item) => item.configId === task.configId)
@@ -86,8 +87,17 @@ export class EmailTaskNotifier {
         continue;
       }
 
-      const context = this.buildTemplateContext(task, config, recipient, latest?.sessions.length ?? 0, latest?.createdAt ?? null, runAt);
-      const rendered = renderTemplate(task.templateText, context, {
+      const context = this.buildTemplateContext(
+        task,
+        config,
+        recipient,
+        latest?.sessions.length ?? 0,
+        latest?.createdAt ?? null,
+        runAt,
+        persons,
+        latest,
+      );
+      const rendered = renderTemplateToHtml(task.templateText, context, {
         format: (task.metadata?.format as 'markdown' | 'html' | undefined) ?? 'markdown',
       });
       if (rendered.errors.length > 0) {
@@ -99,6 +109,7 @@ export class EmailTaskNotifier {
         to: [recipient],
         subject: `[Labby] Scheduled Email ${task.id}`,
         text: rendered.output,
+        html: rendered.html,
       });
 
       sentCounts[recipient] = currentSent + 1;
@@ -118,7 +129,23 @@ export class EmailTaskNotifier {
     sessionCount: number,
     latestCreatedAt: number | null,
     runAt: number,
+    persons: Awaited<ReturnType<SqliteStore['listPersons']>>,
+    latestPlan: Awaited<ReturnType<SqliteStore['listSchedules']>>[number] | undefined,
   ): Record<string, unknown> {
+    const locale = (task.metadata?.dateLocale as string | undefined)
+      ?? (task.metadata?.injectionLanguage as string | undefined)
+      ?? 'en';
+    const granularity = (task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date';
+
+    const scheduleVariables = buildEmailTemplateScheduleVariables({
+      plan: latestPlan,
+      persons,
+      config,
+      locale,
+      granularity,
+      anchorDate: new Date(runAt).toISOString().slice(0, 10),
+    });
+
     return {
       taskId: task.id,
       configId: config.id,
@@ -128,6 +155,7 @@ export class EmailTaskNotifier {
       latestCreatedAt,
       summary: latestScheduleSummary(sessionCount, latestCreatedAt),
       language: (task.metadata?.injectionLanguage as string | undefined) ?? 'en',
+      ...scheduleVariables,
     };
   }
 }

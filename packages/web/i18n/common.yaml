@@ -283,6 +283,16 @@ configTitle:
   zh-CN: 排班规则
   ja-JP: 設定ルール
 
+configLabel:
+  en: Rule Title (optional)
+  zh-CN: 规则标题（可选）
+  ja-JP: ルール名（任意）
+
+configLabelPlaceholder:
+  en: Leave empty to use auto summary
+  zh-CN: 留空则使用自动摘要
+  ja-JP: 空欄の場合は自動サマリを使用
+
 configDays:
   en: Days of Week
   zh-CN: 星期
@@ -452,6 +462,21 @@ confirmDelete:
   en: Confirm delete?
   zh-CN: 确认删除？
   ja-JP: 削除しますか？
+
+deleteSelected:
+  en: Delete Selected
+  zh-CN: 批量删除
+  ja-JP: 選択分を削除
+
+deleteSelectedHistories:
+  en: Delete {0} selected history snapshots?
+  zh-CN: 删除已选择的 {0} 条历史版本？
+  ja-JP: 選択した履歴 {0} 件を削除しますか？
+
+selectConfigFirst:
+  en: Select a schedule rule first
+  zh-CN: 请先选择排班规则
+  ja-JP: 先にスケジュールルールを選択してください
 
 deleteReferencedWarning:
   en: 'Warning: this entity is referenced in existing data. Deleting it may cause inconsistencies. Consider disabling it instead.'
@@ -633,6 +658,26 @@ navEmailTasks:
   en: Email Tasks
   zh-CN: 邮件任务
   ja-JP: メールタスク
+
+newEmailTask:
+  en: New Email Task
+  zh-CN: 新建邮件任务
+  ja-JP: 新規メールタスク
+
+backToList:
+  en: Back to List
+  zh-CN: 返回列表
+  ja-JP: 一覧へ戻る
+
+emailTaskNotFound:
+  en: Email task not found. It may have been deleted.
+  zh-CN: 未找到邮件任务，可能已被删除。
+  ja-JP: メールタスクが見つかりません。削除された可能性があります。
+
+modifiedAt:
+  en: Modified At
+  zh-CN: 修改时间
+  ja-JP: 更新日時
 
 emailFrontendOnlyWarningTitle:
   en: 'Frontend-only mode: auto-send unavailable'
@@ -928,6 +973,31 @@ templateInjectionLanguage:
   en: Injection Language
   zh-CN: 注入语言
   ja-JP: 注入言語
+
+dateDisplayGranularity:
+  en: Date Display Granularity
+  zh-CN: 日期显示粒度
+  ja-JP: 日付表示粒度
+
+dateGranularityDate:
+  en: Date (with year)
+  zh-CN: 日期（含年份）
+  ja-JP: 日付（年あり）
+
+dateGranularityDateTime:
+  en: Date + Time
+  zh-CN: 日期 + 时间
+  ja-JP: 日付 + 時刻
+
+dateGranularityMonthDay:
+  en: Month / Day
+  zh-CN: 月/日
+  ja-JP: 月/日
+
+dateGranularityMonthDayTime:
+  en: Month / Day + Time
+  zh-CN: 月/日 + 时间
+  ja-JP: 月/日 + 時刻
 
 insertScheduleTableTemplate:
   en: Insert Schedule Table

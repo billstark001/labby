@@ -6,6 +6,7 @@ import { configsSignal, constraintsSignal, personsSignal } from '@/store';
 import { displayName, i18n } from '@/i18n';
 import { listConstraintsPage, loadAllConfigs, loadAllConstraints, loadAllPersons, useDatabase } from '@/db';
 import * as s from '@/styles/components.css';
+import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import {
   Button,
   Pagination,
@@ -108,7 +109,7 @@ function ConstraintForm({ initial, onSave, onCancel }: ConstraintFormProps) {
         <select class={s.input} value={configId} onChange={(e) => setConfigId((e.target as HTMLSelectElement).value)}>
           <option value="">{t('constraintAllConfigs')}</option>
           {configs.map((config) => (
-            <option key={config.id} value={config.id}>{config.id}</option>
+            <option key={config.id} value={config.id}>{getScheduleConfigLabel(config)}</option>
           ))}
         </select>
       </div>
@@ -225,7 +226,7 @@ export function ConstraintsTab() {
   function findConfigLabel(configId?: string): string {
     if (!configId) return t('constraintAllConfigs');
     const config = configs.find((item) => item.id === configId);
-    return config?.id ?? configId;
+    return config ? getScheduleConfigLabel(config) : configId;
   }
 
   function summarizePersons(personIds: string[]): string {

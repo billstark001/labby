@@ -1,4 +1,5 @@
 import { JSEvalError, JSLexError, JSParseError, evaluate } from '../expr/index.js';
+import { marked } from 'marked';
 import type {
   TemplateFormat,
   TemplateRenderError,
@@ -10,6 +11,10 @@ export interface RenderTemplateOptions {
   format?: TemplateFormat;
   /** When true, stop on first evaluation error. */
   strict?: boolean;
+}
+
+export interface RenderTemplateHtmlResult extends TemplateRenderResult {
+  html: string;
 }
 
 function classifyError(error: unknown): TemplateRenderError['kind'] {
@@ -71,5 +76,24 @@ export function renderTemplate(
   return {
     output: out.join(''),
     errors,
+  };
+}
+
+export function renderTemplateToHtml(
+  source: string,
+  context: Record<string, unknown>,
+  options: RenderTemplateOptions = {},
+): RenderTemplateHtmlResult {
+  const rendered = renderTemplate(source, context, options);
+  if (options.format === 'html') {
+    return {
+      ...rendered,
+      html: rendered.output,
+    };
+  }
+
+  return {
+    ...rendered,
+    html: marked.parse(rendered.output, { async: false }),
   };
 }
