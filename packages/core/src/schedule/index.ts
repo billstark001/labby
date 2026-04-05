@@ -73,7 +73,7 @@ function buildUnavailMap(
     const [sy, sm, sd] = u.startDate.split('-').map(Number);
     const [ey, em, ed] = u.endDate.split('-').map(Number);
     const start = Date.UTC(sy, sm - 1, sd);
-    const end   = Date.UTC(ey, em - 1, ed);
+    const end = Date.UTC(ey, em - 1, ed);
     for (let t = start; t <= end; t += 86_400_000) {
       const d = new Date(t);
       const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
@@ -105,15 +105,15 @@ function replaySessionMutationDates(baseDates: string[], plan: SchedulePlan): st
 
 function metricSummary(key: keyof ScheduleMetrics, value: number): string {
   switch (key) {
-    case 'totalCost':               return `Overall objective value: ${value.toFixed(3)} (lower is better).`;
-    case 'uniformityPenalty':       return `Presentation interval variance is ${value.toFixed(3)}.`;
-    case 'questionerPenalty':       return `Repeated questioner–presenter pairs contribute ${value.toFixed(3)}.`;
-    case 'relevancePenalty':        return `Similarity mismatch contributes ${value.toFixed(3)}.`;
-    case 'presenterLoadPenalty':    return `Presenter load imbalance variance is ${value.toFixed(3)}.`;
-    case 'questionerLoadPenalty':   return `Questioner load imbalance variance is ${value.toFixed(3)}.`;
-    case 'totalRolePenalty':        return `Overall role imbalance variance is ${value.toFixed(3)}.`;
+    case 'totalCost': return `Overall objective value: ${value.toFixed(3)} (lower is better).`;
+    case 'uniformityPenalty': return `Presentation interval variance is ${value.toFixed(3)}.`;
+    case 'questionerPenalty': return `Repeated questioner–presenter pairs contribute ${value.toFixed(3)}.`;
+    case 'relevancePenalty': return `Similarity mismatch contributes ${value.toFixed(3)}.`;
+    case 'presenterLoadPenalty': return `Presenter load imbalance variance is ${value.toFixed(3)}.`;
+    case 'questionerLoadPenalty': return `Questioner load imbalance variance is ${value.toFixed(3)}.`;
+    case 'totalRolePenalty': return `Overall role imbalance variance is ${value.toFixed(3)}.`;
     case 'invalidAssignmentPenalty': return `Hard assignment violations contribute ${value.toFixed(3)}.`;
-    default:                        return `Constraint effects contribute ${value.toFixed(3)}.`;
+    default: return `Constraint effects contribute ${value.toFixed(3)}.`;
   }
 }
 
@@ -177,8 +177,8 @@ export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
   const { config, previousPlan, changeDate, unavailabilities = [] } = input;
 
   const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
-  const replayedDates  = replaySessionMutationDates(generateSessionDates(config), previousPlan);
-  const mutableDates   = replayedDates.filter(d => d >= changeDate);
+  const replayedDates = replaySessionMutationDates(generateSessionDates(config), previousPlan);
+  const mutableDates = replayedDates.filter(d => d >= changeDate);
 
   const ctx = buildCostContext(input);
   const personIds = [...ctx.personKeywords.keys()];

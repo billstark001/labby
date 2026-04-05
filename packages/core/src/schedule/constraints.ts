@@ -225,14 +225,14 @@ export function computeCostBreakdown(
 
 export function weightedTotalCost(breakdown: CostBreakdown): number {
   return (
-    breakdown.uniformityPenalty       * COST_WEIGHTS.uniformity
-    + breakdown.questionerPenalty     * COST_WEIGHTS.questioner
-    + breakdown.relevancePenalty      * COST_WEIGHTS.relevance
-    + breakdown.presenterLoadPenalty  * COST_WEIGHTS.presenterLoad
+    breakdown.uniformityPenalty * COST_WEIGHTS.uniformity
+    + breakdown.questionerPenalty * COST_WEIGHTS.questioner
+    + breakdown.relevancePenalty * COST_WEIGHTS.relevance
+    + breakdown.presenterLoadPenalty * COST_WEIGHTS.presenterLoad
     + breakdown.questionerLoadPenalty * COST_WEIGHTS.questionerLoad
-    + breakdown.totalRolePenalty      * COST_WEIGHTS.totalRole
+    + breakdown.totalRolePenalty * COST_WEIGHTS.totalRole
     + breakdown.invalidAssignmentPenalty * COST_WEIGHTS.invalidAssignment
-    + breakdown.constraintPenalty     * COST_WEIGHTS.constraint
+    + breakdown.constraintPenalty * COST_WEIGHTS.constraint
   );
 }
 

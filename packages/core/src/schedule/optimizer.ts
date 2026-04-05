@@ -26,26 +26,26 @@ import {
  */
 export const MUTATION_WEIGHTS = {
   /** Swap presenter slots between two random sessions. */
-  swapPresenters:      0.20,
+  swapPresenters: 0.20,
   /** Reassign questioners for a random presentation. */
   reassignQuestioners: 0.20,
   /**
    * Replace a random presenter with the most under-represented eligible person
    * not currently scheduled in that session.
    */
-  replacePresenter:    0.20,
+  replacePresenter: 0.20,
   /**
    * Directly fix the person with the largest frequency-multiplier deviation by
    * inserting or removing them from a presentation slot.
    */
-  frequencyTargeted:   0.25,
+  frequencyTargeted: 0.25,
   /** Fully rebuild all presenter and questioner assignments for one session. */
-  sessionRebuild:      0.15,
+  sessionRebuild: 0.15,
 };
 
 /** Simulated annealing hyperparameters. */
 export const ANNEALING_CONFIG = {
-  maxIter:     5000,
+  maxIter: 5000,
   initialTemp: 1.0,
   coolingRate: 0.995,
   /** Hamming penalty weight applied during incremental solves. */
@@ -57,15 +57,15 @@ export const ANNEALING_CONFIG = {
 // ---------------------------------------------------------------------------
 
 interface AssignmentState {
-  presenterCounts:       Map<string, number>;
-  questionerCounts:      Map<string, number>;
-  totalRoleCounts:       Map<string, number>;
-  pairCounts:            Map<string, number>;
+  presenterCounts: Map<string, number>;
+  questionerCounts: Map<string, number>;
+  totalRoleCounts: Map<string, number>;
+  pairCounts: Map<string, number>;
   lastPresentationIndex: Map<string, number>;
 }
 
 interface PresentationTarget {
-  sessionIndex:      number;
+  sessionIndex: number;
   presentationIndex: number;
 }
 
@@ -79,10 +79,10 @@ function buildAssignmentState(
   currentSessions: Session[] = [],
   excludedTargets = new Set<string>(),
 ): AssignmentState {
-  const presenterCounts       = new Map<string, number>();
-  const questionerCounts      = new Map<string, number>();
-  const totalRoleCounts       = new Map<string, number>();
-  const pairCounts            = new Map<string, number>();
+  const presenterCounts = new Map<string, number>();
+  const questionerCounts = new Map<string, number>();
+  const totalRoleCounts = new Map<string, number>();
+  const pairCounts = new Map<string, number>();
   const lastPresentationIndex = new Map<string, number>();
 
   for (const id of personIds) {
