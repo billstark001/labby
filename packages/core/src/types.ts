@@ -296,3 +296,9 @@ export type ScheduleConstraint =
   | NoOverlapConstraint
   | AffinityBoostConstraint
   | FrequencyMultiplierConstraint;
+
+
+export interface ScheduleSolver {
+  solveFull(input: SolverInput): SchedulePlan;
+  solveIncremental(input: IncrementalSolverInput): SchedulePlan;
+}

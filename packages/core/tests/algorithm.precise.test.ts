@@ -358,4 +358,95 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     }
     expect((appearances.get('p1') ?? 0) + (appearances.get('p2') ?? 0)).toBeGreaterThan(0);
   });
+
+  test('optimizer applies no-overlap, affinity-boost, and frequency-multiplier together', () => {
+    const persons: Person[] = [1, 2, 3, 4].map(i => ({
+      id: `p${i}`,
+      name: `P${i}`,
+      names: { en: `P${i}` },
+      metadata: {},
+      keywordIds: [`k${i}`],
+    }));
+
+    const config = makeConfig({
+      startDate: '2026-04-01',
+      endDate: '2026-04-20',
+      daysOfWeek: [1, 3, 5],
+      presentersPerSession: 1,
+      questionersPerPresenter: 1,
+      targetSimilarityRadius: 0.5,
+    });
+
+    const similarities = new Map<string, number>([
+      ['k1|k2', 0.5],
+      ['k1|k3', 0.1],
+      ['k1|k4', 0.1],
+      ['k2|k3', 0.1],
+      ['k2|k4', 0.1],
+      ['k3|k4', 0.5],
+    ]);
+
+    const constraints = [
+      {
+        id: 'constraint-no-overlap',
+        configId: config.id,
+        type: 'no-overlap' as const,
+        personIds: ['p1', 'p2'],
+        weight: 50,
+      },
+      {
+        id: 'constraint-affinity',
+        configId: config.id,
+        type: 'affinity-boost' as const,
+        personIds: ['p3', 'p4'],
+        boost: 4,
+      },
+      {
+        id: 'constraint-frequency',
+        configId: config.id,
+        type: 'frequency-multiplier' as const,
+        personIds: ['p3'],
+        baseline: 2,
+        multiplier: 2,
+        roleScope: 'both' as const,
+        weight: 8,
+      },
+    ];
+
+    const plan = withSeed(2026, () => solveFull({
+      persons,
+      similarities,
+      config,
+      constraints,
+    }));
+
+    let noOverlapViolations = 0;
+    let affinityPairings = 0;
+    let p3Appearances = 0;
+
+    for (const session of plan.sessions) {
+      for (const presentation of session.presentations) {
+        if (presentation.presenterId === 'p3') p3Appearances++;
+        for (const q of presentation.questionerIds) {
+          if (q === 'p3') p3Appearances++;
+          if (
+            (presentation.presenterId === 'p1' || presentation.presenterId === 'p2')
+            && (q === 'p1' || q === 'p2')
+          ) {
+            noOverlapViolations++;
+          }
+          if (
+            (presentation.presenterId === 'p3' || presentation.presenterId === 'p4')
+            && (q === 'p3' || q === 'p4')
+          ) {
+            affinityPairings++;
+          }
+        }
+      }
+    }
+
+    expect(noOverlapViolations).toBe(0);
+    expect(affinityPairings).toBeGreaterThan(0);
+    expect(p3Appearances).toBeGreaterThanOrEqual(4);
+  });
 });

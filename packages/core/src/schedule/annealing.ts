@@ -5,13 +5,16 @@
  * MUTATION_WEIGHTS and ANNEALING_CONFIG.
  */
 
-import type { Session, Presentation, ScheduleConfig } from '../types.js';
+import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SchedulePlan, SolverInput } from '../types.js';
 import {
   type CostContext,
   incrementCount,
   personSimilarity,
   computeCost,
+  buildCostContext,
 } from './constraints.js';
+import { generateSessionDates, generateId } from './index.js';
+import { buildUnavailMap, replaySessionMutationDates } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // Configurable hyperparameters
@@ -69,13 +72,116 @@ interface PresentationTarget {
   presentationIndex: number;
 }
 
-// ---------------------------------------------------------------------------
-// Assignment state
-// ---------------------------------------------------------------------------
+interface NoOverlapGuide {
+  group: Set<string>;
+}
+
+interface AffinityGuide {
+  group: Set<string>;
+  boost: number;
+}
+
+interface FrequencyGuide {
+  personIds: Set<string>;
+  baseline: number;
+  multiplier: number;
+  roleScope: 'presenter' | 'questioner' | 'both';
+  weight: number;
+}
+
+interface ConstraintGuidance {
+  noOverlap: NoOverlapGuide[];
+  affinity: AffinityGuide[];
+  frequency: FrequencyGuide[];
+}
+
+function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
+  const guidance: ConstraintGuidance = {
+    noOverlap: [],
+    affinity: [],
+    frequency: [],
+  };
+
+  for (const c of ctx.constraints ?? []) {
+    if (c.type === 'no-overlap') {
+      guidance.noOverlap.push({
+        group: new Set(c.personIds),
+      });
+      continue;
+    }
+
+    if (c.type === 'affinity-boost') {
+      guidance.affinity.push({
+        group: new Set(c.personIds),
+        boost: c.boost ?? 2,
+      });
+      continue;
+    }
+
+    if (c.type === 'frequency-multiplier') {
+      const baseline = Number.isFinite(c.baseline) ? Math.max(0, c.baseline) : 0;
+      const multiplier = Number.isFinite(c.multiplier) ? c.multiplier : 1;
+      guidance.frequency.push({
+        personIds: new Set(c.personIds),
+        baseline,
+        multiplier,
+        roleScope: c.roleScope ?? 'presenter',
+        weight: c.weight ?? 1,
+      });
+    }
+  }
+
+  return guidance;
+}
+
+function noOverlapForbidden(
+  presenterId: string,
+  questionerId: string,
+  guidance: ConstraintGuidance,
+): boolean {
+  for (const c of guidance.noOverlap) {
+    if (c.group.has(presenterId) && c.group.has(questionerId)) return true;
+  }
+  return false;
+}
+
+function affinityPairFactor(
+  presenterId: string,
+  questionerId: string,
+  guidance: ConstraintGuidance,
+): number {
+  let factor = 1;
+  for (const c of guidance.affinity) {
+    if (!c.group.has(presenterId) || !c.group.has(questionerId)) continue;
+    const boost = Number.isFinite(c.boost) ? c.boost : 1;
+    if (boost > 0) factor = Math.min(factor, 1 / boost);
+  }
+  return factor;
+}
+
+function frequencyRoleFactor(
+  personId: string,
+  role: 'presenter' | 'questioner',
+  guidance: ConstraintGuidance,
+): number {
+  let factor = 1;
+  for (const f of guidance.frequency) {
+    if (!f.personIds.has(personId)) continue;
+    if (f.roleScope !== 'both' && f.roleScope !== role) continue;
+    const m = Number.isFinite(f.multiplier) ? f.multiplier : 1;
+    if (m > 0) factor = Math.min(factor, 1 / m);
+  }
+  return factor;
+}
+
+// #endregion
+
+// #region Assignment state
 
 function buildAssignmentState(
   personIds: string[],
   historicalSessions: Session[],
+  guidance: ConstraintGuidance,
   currentSessions: Session[] = [],
   excludedTargets = new Set<string>(),
 ): AssignmentState {
@@ -92,13 +198,17 @@ function buildAssignmentState(
   }
 
   const register = (p: Presentation, absIdx: number, includeQ: boolean) => {
-    incrementCount(presenterCounts, p.presenterId);
-    incrementCount(totalRoleCounts, p.presenterId);
+    const presenterInc = frequencyRoleFactor(p.presenterId, 'presenter', guidance);
+    incrementCount(presenterCounts, p.presenterId, presenterInc);
+    incrementCount(totalRoleCounts, p.presenterId, presenterInc);
     lastPresentationIndex.set(p.presenterId, absIdx);
     if (!includeQ) return;
     for (const q of p.questionerIds) {
-      incrementCount(questionerCounts, q);
-      incrementCount(totalRoleCounts, q);
+      const questionerInc =
+        frequencyRoleFactor(q, 'questioner', guidance)
+        * affinityPairFactor(p.presenterId, q, guidance);
+      incrementCount(questionerCounts, q, questionerInc);
+      incrementCount(totalRoleCounts, q, questionerInc);
       incrementCount(pairCounts, `${q}→${p.presenterId}`);
     }
   };
@@ -121,21 +231,36 @@ function choosePresenters(
   availableIds: string[],
   count: number,
   state: AssignmentState,
+  guidance: ConstraintGuidance,
 ): string[] {
-  return availableIds
-    .map(id => ({ id, tie: Math.random() }))
-    .sort((a, b) => {
-      let d = (state.presenterCounts.get(a.id) ?? 0) - (state.presenterCounts.get(b.id) ?? 0);
-      if (d !== 0) return d;
-      d = (state.totalRoleCounts.get(a.id) ?? 0) - (state.totalRoleCounts.get(b.id) ?? 0);
-      if (d !== 0) return d;
-      const la = state.lastPresentationIndex.get(a.id) ?? -1;
-      const lb = state.lastPresentationIndex.get(b.id) ?? -1;
-      if (la !== lb) return la - lb;
-      return a.tie - b.tie;
-    })
-    .slice(0, count)
-    .map(e => e.id);
+  if (count <= 0 || availableIds.length === 0) return [];
+  const n = Math.min(count, availableIds.length);
+
+  // Priority (ascending = more desirable):
+  // 1. fewer past presenter assignments
+  // 2. fewer total role assignments
+  // 3. longer time since last presentation (lower lastPresentationIndex)
+  // 4. random tie-breaker
+  const scored = availableIds.map(id => ({
+    id,
+    pc: state.presenterCounts.get(id) ?? 0,
+    tc: state.totalRoleCounts.get(id) ?? 0,
+    lastIdx: state.lastPresentationIndex.get(id) ?? -1,
+    jitter: Math.random(),
+  }));
+
+  scored.sort((a, b) => {
+    const jitterDiff = (a.jitter - b.jitter) / 2;
+    const pcDiff = a.pc - b.pc;
+    if (Math.abs(pcDiff) > 1e-9) return pcDiff + jitterDiff;
+    const tcDiff = a.tc - b.tc;
+    if (Math.abs(tcDiff) > 1e-9) return tcDiff + jitterDiff;
+    const gapDiff = a.lastIdx - b.lastIdx;
+    if (Math.abs(gapDiff) > 1e-9) return gapDiff + jitterDiff;
+    return jitterDiff;
+  });
+
+  return scored.slice(0, n).map(x => x.id);
 }
 
 function chooseQuestioners(
@@ -145,30 +270,54 @@ function chooseQuestioners(
   state: AssignmentState,
   sessionQuestionerCounts: Map<string, number>,
   ctx: CostContext,
+  guidance: ConstraintGuidance,
 ): string[] {
-  const pk = ctx.personKeywords.get(presenterId) ?? [];
-  return availableIds
-    .filter(id => id !== presenterId)
-    .map(id => ({ id, tie: Math.random() }))
-    .sort((a, b) => {
-      let d = (state.questionerCounts.get(a.id) ?? 0) - (state.questionerCounts.get(b.id) ?? 0);
-      if (d !== 0) return d;
-      d = (state.totalRoleCounts.get(a.id) ?? 0) - (state.totalRoleCounts.get(b.id) ?? 0);
-      if (d !== 0) return d;
-      d = (sessionQuestionerCounts.get(a.id) ?? 0) - (sessionQuestionerCounts.get(b.id) ?? 0);
-      if (d !== 0) return d;
-      d = (state.pairCounts.get(`${a.id}→${presenterId}`) ?? 0)
-        - (state.pairCounts.get(`${b.id}→${presenterId}`) ?? 0);
-      if (d !== 0) return d;
-      const sa = personSimilarity(pk, ctx.personKeywords.get(a.id) ?? [], ctx.similarities);
-      const sb = personSimilarity(pk, ctx.personKeywords.get(b.id) ?? [], ctx.similarities);
-      d = Math.abs(sa - ctx.r) - Math.abs(sb - ctx.r);
-      if (d !== 0) return d;
-      return a.tie - b.tie;
-    })
-    .slice(0, desiredCount)
-    .map(e => e.id);
+  if (desiredCount <= 0) return [];
+
+  // Hard constraints: cannot self-question; no-overlap group members excluded.
+  const candidates = availableIds.filter(
+    id => id !== presenterId && !noOverlapForbidden(presenterId, id, guidance),
+  );
+
+  const presenterKeywords = ctx.personKeywords.get(presenterId) ?? [];
+
+  // Priority (ascending = more desirable):
+  // 1. fewer past questioner assignments
+  // 2. fewer total role assignments
+  // 3. lower same-session questioner load
+  // 4. fewer repeated (questioner → presenter) pairs
+  // 5. similarity closer to target radius r
+  // 6. random tie-breaker
+  const scored = candidates.map(id => {
+    const qc = state.questionerCounts.get(id) ?? 0;
+    const tc = state.totalRoleCounts.get(id) ?? 0;
+    const sc = sessionQuestionerCounts.get(id) ?? 0;
+    const pc = state.pairCounts.get(`${id}→${presenterId}`) ?? 0;
+    const qKeywords = ctx.personKeywords.get(id) ?? [];
+    const sim = personSimilarity(presenterKeywords, qKeywords, ctx.similarities);
+    const relevance = Math.abs(sim - ctx.r);
+    return { id, qc, tc, sc, pc, relevance, jitter: Math.random() };
+  });
+
+  scored.sort((a, b) => {
+    const jitterDiff = (a.jitter - b.jitter) / 2;
+    const qcDiff = a.qc - b.qc;
+    if (Math.abs(qcDiff) > 1e-9) return qcDiff + jitterDiff;
+    const tcDiff = a.tc - b.tc;
+    if (Math.abs(tcDiff) > 1e-9) return tcDiff + jitterDiff;
+    if (a.sc !== b.sc) return a.sc - b.sc;
+    if (a.pc !== b.pc) return a.pc - b.pc;
+    const relDiff = a.relevance - b.relevance;
+    if (Math.abs(relDiff) > 1e-9) return relDiff + jitterDiff;
+    return jitterDiff;
+  });
+
+  return scored.slice(0, Math.min(desiredCount, scored.length)).map(x => x.id);
 }
+
+// #endregion
+
+// #region Targeted repairs
 
 function repairQuestionersForTargets(
   sessions: Session[],
@@ -181,7 +330,8 @@ function repairQuestionersForTargets(
 ): void {
   if (targets.length === 0) return;
   const excluded = new Set(targets.map(t => `${t.sessionIndex}:${t.presentationIndex}`));
-  const state = buildAssignmentState(personIds, historicalSessions, sessions, excluded);
+  const guidance = buildConstraintGuidance(ctx);
+  const state = buildAssignmentState(personIds, historicalSessions, guidance, sessions, excluded);
 
   for (const { sessionIndex, presentationIndex } of targets) {
     const sess = sessions[sessionIndex];
@@ -197,22 +347,31 @@ function repairQuestionersForTargets(
     const unavail = unavailMap.get(sess.date) ?? new Set<string>();
     const pool = personIds.filter(id => !unavail.has(id) && id !== pres.presenterId);
     const newQ = chooseQuestioners(
-      pres.presenterId, pool, config.questionersPerPresenter, state, sqc, ctx,
+      pres.presenterId,
+      pool,
+      config.questionersPerPresenter,
+      state,
+      sqc,
+      ctx,
+      guidance,
     );
     pres.questionerIds = newQ;
 
     for (const q of newQ) {
-      incrementCount(state.questionerCounts, q);
-      incrementCount(state.totalRoleCounts, q);
+      const questionerInc =
+        frequencyRoleFactor(q, 'questioner', guidance)
+        * affinityPairFactor(pres.presenterId, q, guidance);
+      incrementCount(state.questionerCounts, q, questionerInc);
+      incrementCount(state.totalRoleCounts, q, questionerInc);
       incrementCount(state.pairCounts, `${q}→${pres.presenterId}`);
       incrementCount(sqc, q);
     }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Utilities
 
 export function deepCloneSessions(sessions: Session[]): Session[] {
   return sessions.map(s => ({
@@ -234,10 +393,10 @@ export function hammingDistance(a: Session[], b: Session[]): number {
   }
   return diff;
 }
+  
+// #endregion
 
-// ---------------------------------------------------------------------------
-// Schedule builder
-// ---------------------------------------------------------------------------
+// #region Schedule builder
 
 export function buildRandomSchedule(
   personIds: string[],
@@ -251,7 +410,8 @@ export function buildRandomSchedule(
 
   const maxPresenters = Math.min(config.presentersPerSession, personIds.length);
   const sessions: Session[] = [];
-  const state = buildAssignmentState(personIds, historicalSessions);
+  const guidance = buildConstraintGuidance(ctx);
+  const state = buildAssignmentState(personIds, historicalSessions, guidance);
 
   for (let si = 0; si < dates.length; si++) {
     const date = dates[si];
@@ -260,21 +420,31 @@ export function buildRandomSchedule(
     const n = Math.min(maxPresenters, available.length);
     if (n === 0) { sessions.push({ date, presentations: [] }); continue; }
 
-    const presenters = choosePresenters(available, n, state);
+    const presenters = choosePresenters(available, n, state, guidance);
     const sqc = new Map<string, number>();
     const presentations: Presentation[] = [];
 
     for (const presenterId of presenters) {
-      incrementCount(state.presenterCounts, presenterId);
-      incrementCount(state.totalRoleCounts, presenterId);
+      const presenterInc = frequencyRoleFactor(presenterId, 'presenter', guidance);
+      incrementCount(state.presenterCounts, presenterId, presenterInc);
+      incrementCount(state.totalRoleCounts, presenterId, presenterInc);
       state.lastPresentationIndex.set(presenterId, historicalSessions.length + si);
 
       const questionerIds = chooseQuestioners(
-        presenterId, available, config.questionersPerPresenter, state, sqc, ctx,
+        presenterId,
+        available,
+        config.questionersPerPresenter,
+        state,
+        sqc,
+        ctx,
+        guidance,
       );
       for (const q of questionerIds) {
-        incrementCount(state.questionerCounts, q);
-        incrementCount(state.totalRoleCounts, q);
+        const questionerInc =
+          frequencyRoleFactor(q, 'questioner', guidance)
+          * affinityPairFactor(presenterId, q, guidance);
+        incrementCount(state.questionerCounts, q, questionerInc);
+        incrementCount(state.totalRoleCounts, q, questionerInc);
         incrementCount(state.pairCounts, `${q}→${presenterId}`);
         incrementCount(sqc, q);
       }
@@ -285,9 +455,9 @@ export function buildRandomSchedule(
   return sessions;
 }
 
-// ---------------------------------------------------------------------------
-// Mutation strategies (all mutate sessions in-place on a pre-cloned array)
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Mutation strategies (all mutate sessions in-place on a pre-cloned array)
 
 function swapPresentersMutation(
   sessions: Session[],
@@ -386,22 +556,16 @@ function frequencyTargetedMutation(
   config: ScheduleConfig,
   unavailMap: Map<string, Set<string>>,
 ): void {
-  const freqConstraints = (ctx.constraints ?? []).filter(c => c.type === 'frequency-multiplier');
-  if (!freqConstraints.length) {
+  const guidance = buildConstraintGuidance(ctx);
+  if (!guidance.frequency.length) {
     replacePresenterMutation(sessions, personIds, ctx, historicalSessions, config, unavailMap);
     return;
   }
 
   // Build current counts across historical + planned sessions.
-  const allSessions = [...historicalSessions, ...sessions];
-  const presenterCounts = new Map<string, number>(personIds.map(id => [id, 0]));
-  const questionerCounts = new Map<string, number>(personIds.map(id => [id, 0]));
-  for (const s of allSessions) {
-    for (const p of s.presentations) {
-      incrementCount(presenterCounts, p.presenterId);
-      for (const q of p.questionerIds) incrementCount(questionerCounts, q);
-    }
-  }
+  const state = buildAssignmentState(personIds, historicalSessions, guidance, sessions);
+  const presenterCounts = state.presenterCounts;
+  const questionerCounts = state.questionerCounts;
 
   // Find the person with the largest absolute deviation from their target.
   let maxAbsDev = -1;
@@ -409,21 +573,17 @@ function frequencyTargetedMutation(
   let needsMore = true;
   let roleScope: 'presenter' | 'questioner' | 'both' = 'presenter';
 
-  for (const c of freqConstraints) {
-    if (c.type !== 'frequency-multiplier') continue;
-    const scope = c.roleScope ?? 'presenter';
-    const baseline = Number.isFinite(c.baseline) ? Math.max(0, c.baseline) : 0;
-    const target = Math.max(0, baseline * (Number.isFinite(c.multiplier) ? c.multiplier : 1));
+  for (const c of guidance.frequency) {
     for (const id of c.personIds) {
       const pc = presenterCounts.get(id) ?? 0;
       const qc = questionerCounts.get(id) ?? 0;
-      const actual = scope === 'both' ? pc + qc : scope === 'questioner' ? qc : pc;
-      const dev = target - actual;
+      const actual = c.roleScope === 'both' ? pc + qc : c.roleScope === 'questioner' ? qc : pc;
+      const dev = c.baseline - actual;
       if (Math.abs(dev) > maxAbsDev) {
         maxAbsDev = Math.abs(dev);
         targetId = id;
         needsMore = dev > 0;
-        roleScope = scope;
+        roleScope = c.roleScope;
       }
     }
   }
@@ -538,28 +698,39 @@ function sessionRebuildMutation(
   if (available.length < sess.presentations.length) return;
 
   const targets = sess.presentations.map((_, pi) => ({ sessionIndex: si, presentationIndex: pi }));
+  const guidance = buildConstraintGuidance(ctx);
   const state = buildAssignmentState(
-    personIds, historicalSessions, sessions,
+    personIds, historicalSessions, guidance, sessions,
     new Set(targets.map(t => `${t.sessionIndex}:${t.presentationIndex}`)),
   );
 
-  const newPresenters = choosePresenters(available, sess.presentations.length, state);
+  const newPresenters = choosePresenters(available, sess.presentations.length, state, guidance);
   const sqc = new Map<string, number>();
 
   newPresenters.forEach((presenterId, pi) => {
     sess.presentations[pi].presenterId = presenterId;
-    incrementCount(state.presenterCounts, presenterId);
-    incrementCount(state.totalRoleCounts, presenterId);
+    const presenterInc = frequencyRoleFactor(presenterId, 'presenter', guidance);
+    incrementCount(state.presenterCounts, presenterId, presenterInc);
+    incrementCount(state.totalRoleCounts, presenterId, presenterInc);
     state.lastPresentationIndex.set(presenterId, historicalSessions.length + si);
 
     const questionerIds = chooseQuestioners(
-      presenterId, available, config.questionersPerPresenter, state, sqc, ctx,
+      presenterId,
+      available,
+      config.questionersPerPresenter,
+      state,
+      sqc,
+      ctx,
+      guidance,
     );
     sess.presentations[pi].questionerIds = questionerIds;
 
     for (const q of questionerIds) {
-      incrementCount(state.questionerCounts, q);
-      incrementCount(state.totalRoleCounts, q);
+      const questionerInc =
+        frequencyRoleFactor(q, 'questioner', guidance)
+        * affinityPairFactor(presenterId, q, guidance);
+      incrementCount(state.questionerCounts, q, questionerInc);
+      incrementCount(state.totalRoleCounts, q, questionerInc);
       incrementCount(state.pairCounts, `${q}→${presenterId}`);
       incrementCount(sqc, q);
     }
@@ -653,4 +824,54 @@ export function simulatedAnnealing(
     }
   }
   return best;
+}
+
+export const annealingSolver: ScheduleSolver = {
+  solveFull(input: SolverInput): SchedulePlan {
+    const { config, unavailabilities = [] } = input;
+    const ctx = buildCostContext(input);
+    const personIds = [...ctx.personKeywords.keys()];
+    const dates = generateSessionDates(config);
+    const unavailMap = buildUnavailMap(unavailabilities, config.id);
+  
+    const initial = buildRandomSchedule(personIds, dates, config, ctx, [], unavailMap);
+    const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap);
+  
+    return {
+      id: generateId(),
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions: optimized,
+    };
+  },
+  
+  /**
+   * Re-schedule sessions from changeDate onward, minimizing divergence from the
+   * previous plan via a Hamming penalty.
+   */
+  solveIncremental(input: IncrementalSolverInput): SchedulePlan {
+    const { config, previousPlan, changeDate, unavailabilities = [] } = input;
+  
+    const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
+    const replayedDates = replaySessionMutationDates(generateSessionDates(config), previousPlan);
+    const mutableDates = replayedDates.filter(d => d >= changeDate);
+  
+    const ctx = buildCostContext(input);
+    const personIds = [...ctx.personKeywords.keys()];
+    const unavailMap = buildUnavailMap(unavailabilities, config.id);
+    const hammingRef = previousPlan.sessions.filter(s => s.date >= changeDate);
+  
+    const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
+    const optimized = simulatedAnnealing(
+      initial, ctx, frozenSessions, config,
+      hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap,
+    );
+  
+    return {
+      id: generateId(),
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions: [...frozenSessions, ...optimized],
+    };
+  },
 }

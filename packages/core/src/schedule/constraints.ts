@@ -62,6 +62,84 @@ export interface CostBreakdown {
   constraintPenalty: number;
 }
 
+interface AffinityGuide {
+  group: Set<string>;
+  boost: number;
+}
+
+interface FrequencyGuide {
+  personIds: Set<string>;
+  baseline: number;
+  multiplier: number;
+  roleScope: 'presenter' | 'questioner' | 'both';
+  weight: number;
+}
+
+interface ConstraintGuidance {
+  affinity: AffinityGuide[];
+  frequency: FrequencyGuide[];
+}
+
+function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
+  const guidance: ConstraintGuidance = {
+    affinity: [],
+    frequency: [],
+  };
+
+  for (const c of ctx.constraints ?? []) {
+    if (c.type === 'affinity-boost') {
+      guidance.affinity.push({
+        group: new Set(c.personIds),
+        boost: c.boost ?? 2,
+      });
+      continue;
+    }
+
+    if (c.type === 'frequency-multiplier') {
+      const baseline = Number.isFinite(c.baseline) ? Math.max(0, c.baseline) : 0;
+      const multiplier = Number.isFinite(c.multiplier) ? c.multiplier : 1;
+      guidance.frequency.push({
+        personIds: new Set(c.personIds),
+        baseline,
+        multiplier,
+        roleScope: c.roleScope ?? 'presenter',
+        weight: c.weight ?? 1,
+      });
+    }
+  }
+
+  return guidance;
+}
+
+function affinityPairFactor(
+  presenterId: string,
+  questionerId: string,
+  guidance: ConstraintGuidance,
+): number {
+  let factor = 1;
+  for (const c of guidance.affinity) {
+    if (!c.group.has(presenterId) || !c.group.has(questionerId)) continue;
+    const boost = Number.isFinite(c.boost) ? c.boost : 1;
+    if (boost > 0) factor = Math.min(factor, 1 / boost);
+  }
+  return factor;
+}
+
+function frequencyRoleFactor(
+  personId: string,
+  role: 'presenter' | 'questioner',
+  guidance: ConstraintGuidance,
+): number {
+  let factor = 1;
+  for (const f of guidance.frequency) {
+    if (!f.personIds.has(personId)) continue;
+    if (f.roleScope !== 'both' && f.roleScope !== role) continue;
+    const m = Number.isFinite(f.multiplier) ? f.multiplier : 1;
+    if (m > 0) factor = Math.min(factor, 1 / m);
+  }
+  return factor;
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers (also consumed by optimizer.ts)
 // ---------------------------------------------------------------------------
@@ -107,6 +185,7 @@ export function computeCostBreakdown(
 ): CostBreakdown {
   const allSessions = [...historicalSessions, ...sessions];
   const personIds = [...ctx.personKeywords.keys()];
+  const guidance = buildConstraintGuidance(ctx);
 
   const presentationIndices = new Map<string, number[]>();
   const presenterCounts = new Map<string, number>();
@@ -118,8 +197,9 @@ export function computeCostBreakdown(
       const arr = presentationIndices.get(p.presenterId) ?? [];
       arr.push(idx);
       presentationIndices.set(p.presenterId, arr);
-      incrementCount(presenterCounts, p.presenterId);
-      incrementCount(totalRoleCounts, p.presenterId);
+      const presenterInc = frequencyRoleFactor(p.presenterId, 'presenter', guidance);
+      incrementCount(presenterCounts, p.presenterId, presenterInc);
+      incrementCount(totalRoleCounts, p.presenterId, presenterInc);
     }
   });
 
@@ -140,8 +220,11 @@ export function computeCostBreakdown(
     for (const pres of sess.presentations) {
       const seen = new Set<string>();
       for (const q of pres.questionerIds) {
-        incrementCount(questionerCounts, q);
-        incrementCount(totalRoleCounts, q);
+        const questionerInc =
+          frequencyRoleFactor(q, 'questioner', guidance)
+          * affinityPairFactor(pres.presenterId, q, guidance);
+        incrementCount(questionerCounts, q, questionerInc);
+        incrementCount(totalRoleCounts, q, questionerInc);
         if (q === pres.presenterId) invalidAssignmentPenalty += 1000;
         if (seen.has(q)) invalidAssignmentPenalty += 250;
         seen.add(q);
@@ -172,44 +255,7 @@ export function computeCostBreakdown(
   const totalRolePenalty = varianceForPeople(totalRoleCounts, personIds);
 
   // 5. User-defined constraints
-  let constraintPenalty = 0;
-  for (const constraint of ctx.constraints ?? []) {
-    if (constraint.type === 'no-overlap') {
-      const group = new Set(constraint.personIds);
-      const weight = constraint.weight ?? 5.0;
-      for (const sess of allSessions) {
-        for (const pres of sess.presentations) {
-          if (!group.has(pres.presenterId)) continue;
-          for (const q of pres.questionerIds) {
-            if (group.has(q)) constraintPenalty += weight;
-          }
-        }
-      }
-    } else if (constraint.type === 'affinity-boost') {
-      const group = new Set(constraint.personIds);
-      const boost = constraint.boost ?? 2.0;
-      for (const sess of allSessions) {
-        for (const pres of sess.presentations) {
-          if (!group.has(pres.presenterId)) continue;
-          for (const q of pres.questionerIds) {
-            if (group.has(q)) constraintPenalty -= (boost - 1) * 0.5;
-          }
-        }
-      }
-    } else if (constraint.type === 'frequency-multiplier') {
-      const roleScope = constraint.roleScope ?? 'presenter';
-      const baseline = Number.isFinite(constraint.baseline) ? Math.max(0, constraint.baseline) : 0;
-      const multiplier = Number.isFinite(constraint.multiplier) ? constraint.multiplier : 1;
-      const target = Math.max(0, baseline * multiplier);
-      const weight = constraint.weight ?? 1.0;
-      for (const id of constraint.personIds) {
-        const pc = presenterCounts.get(id) ?? 0;
-        const qc = questionerCounts.get(id) ?? 0;
-        const actual = roleScope === 'both' ? pc + qc : roleScope === 'questioner' ? qc : pc;
-        constraintPenalty += Math.abs(actual - target) * weight;
-      }
-    }
-  }
+  const constraintPenalty = 0;
 
   return {
     uniformityPenalty,
