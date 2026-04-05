@@ -21,12 +21,12 @@ import type {
  * Increase a weight to penalize that term more heavily during optimization.
  */
 export const COST_WEIGHTS = {
-  /** Variance of each person's presentation gaps – encourages uniform spacing. */
-  uniformity: 4,
+  /** Interval-uniformity penalty for presenter/questioner appearances. */
+  uniformity: 10,
   /** Exponential penalty for repeated (questioner → presenter) pairs. */
-  questioner: 2,
+  questioner: 1,
   /** |sim(questioner, presenter) − r| summed over all pairs. */
-  relevance: 1,
+  relevance: 0.8,
   /** Variance of per-person presenter appearance counts. */
   presenterLoad: 5,
   /** Variance of per-person questioner appearance counts. */
@@ -148,6 +148,32 @@ export function incrementCount(map: Map<string, number>, key: string, amount = 1
   map.set(key, (map.get(key) ?? 0) + amount);
 }
 
+const MIN_GAP_TARGET_RATIO = 0.7;
+const MIN_GAP_PENALTY_WEIGHT = 2;
+const MAX_GAP_TARGET_RATIO = 1.3;
+const MAX_GAP_PENALTY_WEIGHT = 1.5;
+
+function intervalUniformityPenalty(indicesByPerson: Map<string, number[]>): number {
+  let penalty = 0;
+  for (const indices of indicesByPerson.values()) {
+    if (indices.length < 2) continue;
+    const gaps = indices.slice(1).map((v, i) => v - indices[i]);
+    const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+    if (mean <= 0) continue;
+    const variancePenalty = gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / (gaps.length * mean * mean);
+    const minGap = Math.min(...gaps);
+    const targetMinGap = mean * MIN_GAP_TARGET_RATIO;
+    const minGapShortfall = Math.max(0, targetMinGap - minGap) / mean;
+    const minGapPenalty = MIN_GAP_PENALTY_WEIGHT * (minGapShortfall ** 2);
+    const maxGap = Math.max(...gaps);
+    const targetMaxGap = mean * MAX_GAP_TARGET_RATIO;
+    const maxGapExcess = Math.max(0, maxGap - targetMaxGap) / mean;
+    const maxGapPenalty = MAX_GAP_PENALTY_WEIGHT * (maxGapExcess ** 2);
+    penalty += variancePenalty + minGapPenalty + maxGapPenalty;
+  }
+  return penalty;
+}
+
 function varianceForPeople(counts: Map<string, number>, personIds: string[]): number {
   if (personIds.length === 0) return 0;
   const values = personIds.map(id => counts.get(id) ?? 0);
@@ -187,43 +213,44 @@ export function computeCostBreakdown(
   const personIds = [...ctx.personKeywords.keys()];
   const guidance = buildConstraintGuidance(ctx);
 
-  const presentationIndices = new Map<string, number[]>();
+  const presenterIndices = new Map<string, number[]>();
+  const questionerIndices = new Map<string, number[]>();
   const presenterCounts = new Map<string, number>();
   const questionerCounts = new Map<string, number>();
   const totalRoleCounts = new Map<string, number>();
 
   allSessions.forEach((sess, idx) => {
     for (const p of sess.presentations) {
-      const arr = presentationIndices.get(p.presenterId) ?? [];
+      const arr = presenterIndices.get(p.presenterId) ?? [];
       arr.push(idx);
-      presentationIndices.set(p.presenterId, arr);
+      presenterIndices.set(p.presenterId, arr);
       const presenterInc = frequencyRoleFactor(p.presenterId, 'presenter', guidance);
       incrementCount(presenterCounts, p.presenterId, presenterInc);
       incrementCount(totalRoleCounts, p.presenterId, presenterInc);
     }
   });
 
-  // 1. Uniformity – relative-variance (CV²) of presentation gaps per person.
+  // 1. Uniformity – interval penalty for presenter/questioner appearances.
   // Dividing by mean² normalises for frequency-multiplier constraints: a person
   // scheduled twice as often has naturally half the gap, so their absolute
   // variance is inherently ~4× smaller – using CV² makes all persons comparable.
-  let uniformityPenalty = 0;
-  for (const indices of presentationIndices.values()) {
-    if (indices.length < 2) continue;
-    const gaps = indices.slice(1).map((v, i) => v - indices[i]);
-    const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-    if (mean <= 0) continue;
-    uniformityPenalty += gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / (gaps.length * mean * mean);
-  }
+  // Add an extra term for extremely short minimum gaps to avoid schedules that
+  // have acceptable variance but still contain a near-back-to-back presentation.
+  let uniformityPenalty = intervalUniformityPenalty(presenterIndices);
 
   // 2. Questioner frequency + hard invalidity
   const questionerFreq = new Map<string, number>();
   let questionerPenalty = 0;
   let invalidAssignmentPenalty = 0;
-  for (const sess of allSessions) {
+  allSessions.forEach((sess, idx) => {
     for (const pres of sess.presentations) {
       const seen = new Set<string>();
       for (const q of pres.questionerIds) {
+        if (!seen.has(q)) {
+          const arr = questionerIndices.get(q) ?? [];
+          arr.push(idx);
+          questionerIndices.set(q, arr);
+        }
         const questionerInc =
           frequencyRoleFactor(q, 'questioner', guidance)
           * affinityPairFactor(pres.presenterId, q, guidance);
@@ -238,7 +265,8 @@ export function computeCostBreakdown(
         if (freq > 1) questionerPenalty += Math.exp(freq - 1) - 1;
       }
     }
-  }
+  });
+  uniformityPenalty += intervalUniformityPenalty(questionerIndices);
 
   // 3. Domain relevance – |sim(q, presenter) − r|
   let relevancePenalty = 0;

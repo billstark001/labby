@@ -41,7 +41,7 @@ export { generateId, generateSessionDates } from './utils.js';
 function metricSummary(key: keyof ScheduleMetrics, value: number): string {
   switch (key) {
     case 'totalCost': return `Overall objective value: ${value.toFixed(3)} (lower is better).`;
-    case 'uniformityPenalty': return `Presentation interval variance is ${value.toFixed(3)}.`;
+    case 'uniformityPenalty': return `Presenter/questioner interval non-uniformity contributes ${value.toFixed(3)}.`;
     case 'questionerPenalty': return `Repeated questioner–presenter pairs contribute ${value.toFixed(3)}.`;
     case 'relevancePenalty': return `Similarity mismatch contributes ${value.toFixed(3)}.`;
     case 'presenterLoadPenalty': return `Presenter load imbalance variance is ${value.toFixed(3)}.`;

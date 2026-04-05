@@ -1,6 +1,6 @@
 import type { AppRoute } from './lib/router';
 import { PersonsPage } from './pages/person';
-import { SchedulePage } from './pages/SchedulePage';
+import { SchedulePage } from './pages/schedule';
 import { SettingsPage } from './pages/SettingsPage';
 import { KeywordsPage } from './pages/KeywordsPage';
 import { LoginPage } from './pages/LoginPage';

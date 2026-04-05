@@ -12,7 +12,7 @@ import {
   isComputingSignal,
   personMapSignal,
   unavailabilitiesSignal,
-} from '../store/index';
+} from '@/store/index';
 import { fallbackEntityId, displayName } from '@/i18n';
 import {
   loadAllConfigs,
@@ -23,16 +23,16 @@ import {
   loadAllSimilarities,
   loadAllUnavailabilities,
   useDatabase,
-} from '../db/index';
+} from '@/db/index';
 import { computeScheduleMetrics, explainScheduleMetrics, solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation, MetricExplanation, ScheduleMetrics } from '@labby/core';
-import * as s from '../styles/components.css';
+import * as s from '@/styles/components.css';
 import {
   Button,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from '../components/ui/index';
+} from '@/components/ui/index';
 import {
   copyScheduleTable,
   copyScheduleHtml,
@@ -40,15 +40,15 @@ import {
   downloadScheduleCsv,
   downloadScheduleHtml,
   downloadScheduleIcs,
-} from '../lib/scheduleExport';
-import { Dialog, confirmDialog } from '../components/ui/Dialog';
-import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '../components/ui/Menu';
-import { toast } from '../components/ui/Toast';
+} from '@/lib/scheduleExport';
+import { Dialog, confirmDialog } from '@/components/ui/Dialog';
+import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '@/components/ui/Menu';
+import { toast } from '@/components/ui/Toast';
 import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
 import { i18n } from '@/i18n';
 import { getScheduleConfigLabel, getScheduleConfigSummary } from '@/lib/scheduleConfigLabel';
-import { ConfigForm, HistoryNotesDialog, UnavailForm } from './schedulePageParts';
+import { ConfigForm, HistoryNotesDialog, UnavailForm } from './forms';
 
 const LAST_SELECTED_CONFIG_STORAGE_KEY = 'schedule.lastSelectedConfigId';
 // ---------------------------------------------------------------------------

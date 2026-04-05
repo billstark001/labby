@@ -2,12 +2,12 @@ import { useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import type { PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
 
-import { personsSignal } from '../store/index';
+import { personsSignal } from '@/store/index';
 import { displayName } from '@/i18n';
 import { i18n } from '@/i18n';
-import * as s from '../styles/components.css';
-import { Button } from '../components/ui/index';
-import { Dialog } from '../components/ui/Dialog';
+import * as s from '@/styles/components.css';
+import { Button } from '@/components/ui/index';
+import { Dialog } from '@/components/ui/Dialog';
 import { getScheduleConfigTitle } from '@/lib/scheduleConfigLabel';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
