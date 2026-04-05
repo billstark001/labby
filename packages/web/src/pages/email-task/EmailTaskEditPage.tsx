@@ -230,6 +230,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     }
   }, [taskId, tasks, configs]);
 
+  const skipNextHashChangeRef = useRef(false);
+
   useEffect(() => {
     if (!isDirty) return;
 
@@ -239,11 +241,18 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     };
 
     const handleHashChange = (e: HashChangeEvent) => {
+      // Skip if this event was triggered by our own programmatic navigation
+      if (skipNextHashChangeRef.current) {
+        skipNextHashChangeRef.current = false;
+        return;
+      }
       // Revert the navigation first, then ask for confirmation
+      skipNextHashChangeRef.current = true;
       window.history.pushState(null, '', e.oldURL);
       confirmDialog(t('unsavedChangesWarning'), '', () => {
         // User confirmed leaving - navigate to the new URL and mark clean
         setIsDirty(false);
+        skipNextHashChangeRef.current = true;
         window.history.pushState(null, '', e.newURL);
       }, undefined, t('confirm'));
     };

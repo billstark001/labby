@@ -204,7 +204,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
               <td class={s.td}>{user.disabled ? '✓' : '—'}</td>
               <td class={s.td}>
                 <div class={s.flexGapSm}>
-                  {user.role < USER_ROLE_ROOT && (
+                  {canManageUsers && user.role < USER_ROLE_ROOT && (
                     <Button variant="ghost" onClick={() => setEditingUser(user)}>
                       {t('editUser')}
                     </Button>
