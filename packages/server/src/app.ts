@@ -189,6 +189,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       },
       permissions: {
         canManageBackups: session.role >= UserRole.Admin,
+        canManageUsers: session.role >= UserRole.Root,
       },
     });
   });
@@ -313,6 +314,45 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.get("/api/v1/users", requireMinRole(UserRole.Admin), async (c) => {
     const users = (await store.listUsers()).map(({ passwordHash: _, ...u }) => u);
     return ok(c, users);
+  });
+
+  app.patch("/api/v1/users/:id", requireMinRole(UserRole.Admin), async (c) => {
+    const session = getAuthSession(c);
+    const id = c.req.param("id");
+    const target = await store.getUserById(id);
+    if (!target) {
+      throw new AppError("VALIDATION_ERROR", "user not found", 404);
+    }
+    // Admin can only update User-role users; Root can update anyone
+    if (session.role < UserRole.Root && target.role >= UserRole.Admin) {
+      throw new AppError("AUTH_FORBIDDEN", "insufficient permissions to update this user", 403);
+    }
+    const body = await c.req.json<{ role?: number; disabled?: boolean }>();
+    const updated = { ...target };
+    if (body.role !== undefined) {
+      const newRole = Number(body.role);
+      // Cannot elevate beyond own role
+      if (newRole > session.role) {
+        throw new AppError("AUTH_FORBIDDEN", "cannot grant a role higher than your own", 403);
+      }
+      updated.role = newRole as typeof updated.role;
+    }
+    if (body.disabled !== undefined) {
+      updated.disabled = Boolean(body.disabled);
+    }
+    await store.updateUser(updated);
+    const { passwordHash: _, ...safeUser } = updated;
+    return ok(c, safeUser);
+  });
+
+  app.delete("/api/v1/users/:id", requireMinRole(UserRole.Root), async (c) => {
+    const id = c.req.param("id");
+    const target = await store.getUserById(id);
+    if (!target) {
+      throw new AppError("VALIDATION_ERROR", "user not found", 404);
+    }
+    await store.deleteUser(id);
+    return c.body(null, 204);
   });
 
   // ---------------------------------------------------------------------------

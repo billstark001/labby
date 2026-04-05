@@ -1,7 +1,7 @@
 /** Root application shell with sidebar navigation. */
 import { useEffect, useState } from 'preact/hooks';
 import { effect, useComputed } from '@preact/signals';
-import { Calendar, LogOut, Mail, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
+import { Calendar, Info, LogOut, Mail, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
 import { themeSignal } from './store/index';
 import { AUTH_INVALIDATE_EVENT, isAuthenticated, logout } from './lib/auth';
 import { i18n } from './i18n';
@@ -12,6 +12,7 @@ import { renderRoute } from './route';
 import { ConfirmDialogComponent } from './components/ui/Dialog';
 import { Toaster } from './components/ui/Toast';
 import { isServerDeployment } from './lib/runtime';
+import { AboutDialog } from './components/AboutDialog';
 import clsx from 'clsx';
 
 const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrings }[] = [
@@ -41,6 +42,7 @@ export function App() {
   const route = useRoute();
   const theme = themeSignal.value;
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const authed = useComputed(() => isAuthenticated.value);
 
   useEffect(() => {
@@ -144,6 +146,14 @@ export function App() {
             <span class={s.hideOnMobile}>{t('logout')}</span>
           </button>
         )}
+        <button
+          class={s.navIconButtonDesktop}
+          onClick={() => setAboutOpen(true)}
+          title={t('about')}
+        >
+          <Info size={16} />
+          <span class={s.hideOnMobile}>{t('about')}</span>
+        </button>
       </aside>
 
       {/* Main content */}
@@ -152,6 +162,7 @@ export function App() {
       </main>
       <ConfirmDialogComponent />
       <Toaster />
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   );
 }

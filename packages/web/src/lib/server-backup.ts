@@ -15,6 +15,7 @@ export interface SystemCapabilities {
   };
   permissions: {
     canManageBackups: boolean;
+    canManageUsers: boolean;
   };
 }
 

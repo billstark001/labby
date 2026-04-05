@@ -22,7 +22,6 @@ export const dialogContent = style({
   borderRadius: vars.radius.lg,
   padding: vars.space.xl,
   minWidth: '320px',
-  width: '480px',
   maxWidth: '90vw',
   maxHeight: '80vh',
   overflow: 'auto',

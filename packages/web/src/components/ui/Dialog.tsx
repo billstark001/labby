@@ -27,13 +27,17 @@ interface DialogProps {
   description?: ComponentChildren;
   children: ComponentChildren;
   actions?: ComponentChildren;
+  width?: string | number;
 }
 
-export function Dialog({ open, onClose, closeOnOverlayClick = true, title, description, children, actions }: DialogProps) {
+export function Dialog({ open, onClose, closeOnOverlayClick = true, title, description, children, actions, width }: DialogProps) {
+  const widthStyle = width
+    ? { width: typeof width === 'number' ? `${width}px` : width }
+    : undefined;
   return (
     <PrimitiveDialog open={open} onClose={onClose} closeOnOverlayClick={closeOnOverlayClick}>
       <PrimitiveDialogOverlay class={s.dialogOverlay} />
-      <PrimitiveDialogContent class={s.dialogContent}>
+      <PrimitiveDialogContent class={s.dialogContent} style={widthStyle}>
         {title && <PrimitiveDialogTitle class={s.dialogTitle}>{title}</PrimitiveDialogTitle>}
         {description && <PrimitiveDialogDescription class={s.dialogDescription}>{description}</PrimitiveDialogDescription>}
         {children}
@@ -137,7 +141,7 @@ export function ConfirmDialogComponent() {
             {t('cancel')}
           </button>
           <button class={btnStyles.btnVariants.danger} onClick={handleConfirm}>
-            {t('delete')}
+            {t('confirm')}
           </button>
         </>
       }
