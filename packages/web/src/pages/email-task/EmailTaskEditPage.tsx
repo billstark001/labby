@@ -15,6 +15,7 @@ import {
 } from '@labby/core';
 
 import { Button, Dialog, toast } from '@/components/ui';
+import { confirmDialog } from '@/components/ui/Dialog';
 import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
 import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/lib/email-task-actions';
@@ -238,12 +239,13 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     };
 
     const handleHashChange = (e: HashChangeEvent) => {
-      if (window.confirm(t('unsavedChangesWarning'))) {
-        // Allow navigation - mark clean so re-navigation doesn't re-prompt
+      // Revert the navigation first, then ask for confirmation
+      window.history.pushState(null, '', e.oldURL);
+      confirmDialog(t('unsavedChangesWarning'), '', () => {
+        // User confirmed leaving - navigate to the new URL and mark clean
         setIsDirty(false);
-      } else {
-        window.history.pushState(null, '', e.oldURL);
-      }
+        window.history.pushState(null, '', e.newURL);
+      }, undefined, t('confirm'));
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);

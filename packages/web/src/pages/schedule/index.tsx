@@ -578,8 +578,12 @@ export function SchedulePage() {
 
   async function handleDeleteUnavail(id: string) {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
-      await db.unavailabilities.delete(id);
-      await loadAllUnavailabilities(db);
+      try {
+        await db.unavailabilities.delete(id);
+        await loadAllUnavailabilities(db);
+      } catch (err) {
+        toast.error(`${t('computeError')}: ${String(err)}`);
+      }
     });
   }
 

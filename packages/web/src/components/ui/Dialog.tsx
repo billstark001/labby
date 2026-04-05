@@ -55,6 +55,7 @@ type ConfirmDialogState = {
   isOpen: boolean;
   title: string;
   message: string;
+  confirmLabel?: string;
   onConfirm: () => void;
   onCancel?: () => void;
 } | null;
@@ -77,11 +78,13 @@ export function confirmDialog(
   message: string,
   onConfirm: () => void,
   onCancel?: () => void,
+  confirmLabel?: string,
 ): void {
   confirmDialogState.value = {
     isOpen: true,
     title,
     message,
+    confirmLabel,
     onConfirm,
     onCancel,
   };
@@ -141,7 +144,7 @@ export function ConfirmDialogComponent() {
             {t('cancel')}
           </button>
           <button class={btnStyles.btnVariants.danger} onClick={handleConfirm}>
-            {t('confirm')}
+            {state.confirmLabel ?? t('delete')}
           </button>
         </>
       }
