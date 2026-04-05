@@ -8,6 +8,7 @@
 import nodemailer, { type Transporter, type SendMailOptions } from 'nodemailer';
 
 import { loadGoogleOAuthClientFromFile } from './google.js';
+import fs from 'fs';
 
 export interface SmtpMailerOptions {
   mode: 'smtp';
@@ -95,22 +96,38 @@ export class Mailer {
   }
 }
 
+function tryParseRefreshToken(token: string): string | null {
+  try {
+    const t = JSON.parse(token);
+    return t.refresh_token || t.refreshToken || null;
+  } catch {
+    return token || null; // Not JSON, treat as raw token
+  }
+}
+
 /** Create a Mailer instance from environment variables. Returns null if SMTP is not configured. */
 export function createMailerFromEnv(): Mailer | null {
   const provider = (process.env.SMTP_PROVIDER ?? '').trim().toLowerCase();
   const googleOAuthJsonPath = process.env.GOOGLE_OAUTH_JSON_PATH?.trim();
   const gmailUser = process.env.GMAIL_USER?.trim() ?? process.env.SMTP_USER?.trim();
-  const gmailRefreshToken = process.env.GMAIL_REFRESH_TOKEN?.trim() ?? process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim();
+  const gmailRefreshTokenRaw = process.env.GMAIL_REFRESH_TOKEN?.trim() ?? process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim();
+  const gmailRefreshTokenPath = process.env.GOOGLE_OAUTH_REFRESH_TOKEN_PATH?.trim();
+  const gmailRefreshToken = gmailRefreshTokenRaw
+    ? tryParseRefreshToken(gmailRefreshTokenRaw)
+    : (gmailRefreshTokenPath && fs.existsSync(gmailRefreshTokenPath))
+      ? tryParseRefreshToken(fs.readFileSync(gmailRefreshTokenPath, 'utf-8').trim())
+      : null;
 
   if (provider === 'gmail' || (!process.env.SMTP_HOST?.trim() && gmailUser && gmailRefreshToken)) {
     const googleClient = googleOAuthJsonPath ? loadGoogleOAuthClientFromFile(googleOAuthJsonPath) : null;
-    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim() ?? googleClient?.clientId;
-    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim() ?? googleClient?.clientSecret;
+    const clientId = googleClient?.clientId;
+    const clientSecret = googleClient?.clientSecret;
     const from = process.env.SMTP_FROM?.trim() ?? gmailUser;
 
     if (!gmailUser || !gmailRefreshToken || !clientId || !clientSecret || !from) {
       return null;
     }
+
 
     return new Mailer({
       mode: 'gmail',

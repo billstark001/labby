@@ -1,9 +1,11 @@
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
+  ScheduleConstraint,
   SchedulePlan,
 } from './types.js';
 
@@ -53,6 +55,14 @@ export interface ScheduleConfigStore {
   clear(): Promise<void>;
 }
 
+export interface ScheduleConstraintStore {
+  get(id: string): Promise<ScheduleConstraint | undefined>;
+  list(query: ListQuery): Promise<PaginatedResult<ScheduleConstraint>>;
+  put(value: ScheduleConstraint): Promise<void>;
+  delete(id: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface SchedulePlanStore {
   get(id: string): Promise<SchedulePlan | undefined>;
   list(query: ListQuery): Promise<PaginatedResult<SchedulePlan>>;
@@ -69,13 +79,23 @@ export interface PersonUnavailabilityStore {
   clear(): Promise<void>;
 }
 
+export interface EmailTaskStore {
+  get(id: string): Promise<EmailTask | undefined>;
+  list(query: ListQuery): Promise<PaginatedResult<EmailTask>>;
+  put(value: EmailTask): Promise<void>;
+  delete(id: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface LabbyDB {
   persons: PersonStore;
   keywords: KeywordStore;
   keywordVectors: KeywordVectorStore;
   configs: ScheduleConfigStore;
+  constraints: ScheduleConstraintStore;
   schedules: SchedulePlanStore;
   unavailabilities: PersonUnavailabilityStore;
+  emailTasks: EmailTaskStore;
 }
 
 export interface DatabaseDump {
@@ -83,6 +103,8 @@ export interface DatabaseDump {
   keywords: Keyword[];
   keywordVectors: KeywordVector[];
   configs: ScheduleConfig[];
+  constraints: ScheduleConstraint[];
   schedules: SchedulePlan[];
   unavailabilities: PersonUnavailability[];
+  emailTasks: EmailTask[];
 }

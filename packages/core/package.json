@@ -28,5 +28,8 @@
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "marked": "^17.0.6"
   }
 }

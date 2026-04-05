@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { scheduler } from "./cron/scheduler.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
 import type { StoreConnectionConfig } from "./store/index.js";
+import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-task-notifier.js";
 
 import { config } from "dotenv";
 
@@ -12,6 +13,8 @@ config();
 const port = Number(process.env.PORT ?? 4410);
 const dbPath = process.env.DB_PATH ?? "./run/labby.db";
 const dbDriver = process.env.DB_DRIVER?.trim().toLowerCase();
+const enablePublicEmailTaskIcs = /^(1|true|yes)$/i.test(process.env.ENABLE_PUBLIC_EMAIL_TASK_ICS ?? '');
+const publicBaseUrl = (process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${port}`);
 
 const dbConfig: StoreConnectionConfig = dbDriver === "postgres"
   ? {
@@ -27,6 +30,8 @@ const dbConfig: StoreConnectionConfig = dbDriver === "postgres"
 if (dbConfig.dialect === "postgres" && !dbConfig.connectionString) {
   throw new Error("DATABASE_URL is required when DB_DRIVER=postgres");
 }
+
+let emailTaskNotifier: EmailTaskNotifierType | null = null;
 
 const { app, store, close } = await createApp({
   db: dbConfig,
@@ -44,19 +49,45 @@ const { app, store, close } = await createApp({
   bootstrapUsername: process.env.BOOTSTRAP_ADMIN_USERNAME,
   bootstrapPassword: process.env.BOOTSTRAP_ADMIN_PASSWORD,
   bootstrapEmail: process.env.BOOTSTRAP_ADMIN_EMAIL,
+  enablePublicEmailTaskIcs,
+  onEmailTasksChanged: async () => {
+    await emailTaskNotifier?.syncJobs();
+  },
+  runEmailTaskNow: async (taskId: string) => {
+    if (!emailTaskNotifier) {
+      throw new Error('email task notifier is not configured');
+    }
+    await emailTaskNotifier.runTaskNow(taskId);
+  },
 });
 
 // Email / cron subsystem (optional – only starts if SMTP is configured)
 const mailer = createMailerFromEnv();
 if (mailer) {
+  const mailerOk = await mailer.verify();
+  if (!mailerOk) {
+    console.warn('[mail] Mailer configured but verify() failed. Check Gmail OAuth/SMTP credentials.');
+  } else {
+    console.info('[mail] Mailer verify() succeeded.');
+  }
+
   const recipients = (process.env.NOTIFY_RECIPIENTS ?? "")
     .split(",")
     .map(r => r.trim())
     .filter(Boolean);
 
   const { ScheduleNotifier } = await import("./cron/notifier.js");
+  const { EmailTaskNotifier } = await import("./cron/email-task-notifier.js");
   const notifier = new ScheduleNotifier({ scheduler, mailer, store, recipients });
+  emailTaskNotifier = new EmailTaskNotifier({
+    scheduler,
+    mailer,
+    store,
+    enablePublicEmailTaskIcs,
+    publicBaseUrl,
+  });
   await notifier.syncJobs();
+  await emailTaskNotifier.syncJobs();
   console.info(`[cron] Email notifications enabled. Registered ${scheduler.registeredJobs.length} job(s).`);
 } else {
   console.info("[cron] SMTP not configured; email notifications disabled.");

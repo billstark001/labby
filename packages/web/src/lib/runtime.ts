@@ -1,9 +1,16 @@
 export type DatabaseMode = 'idb' | 'api' | 'dummy';
 export type DeploymentMode = 'frontend-only' | 'server';
 
-export const databaseMode = (import.meta.env.VITE_DB_CONFIG || 'idb') as DatabaseMode;
+type RuntimeEnv = {
+  VITE_DB_CONFIG?: string;
+  VITE_DEPLOYMENT_MODE?: string;
+};
 
-const configuredDeploymentMode = import.meta.env.VITE_DEPLOYMENT_MODE;
+const runtimeEnv = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env ?? {}) as RuntimeEnv;
+
+export const databaseMode = (runtimeEnv.VITE_DB_CONFIG || 'idb') as DatabaseMode;
+
+const configuredDeploymentMode = runtimeEnv.VITE_DEPLOYMENT_MODE;
 
 export const deploymentMode: DeploymentMode = configuredDeploymentMode === 'server'
   ? 'server'

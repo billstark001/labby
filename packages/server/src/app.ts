@@ -6,14 +6,20 @@ import { logger } from "hono/logger";
 import { z } from "zod";
 
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
+  ScheduleConstraint,
   SchedulePlan,
 } from "@labby/core";
 import {
+  buildScheduleIcs,
+  computeScheduleMetrics,
+  explainScheduleMetrics,
+  renderTemplate,
   solveFull,
   solveIncremental,
   keywordVectorsToSimilarityLookup,
@@ -30,6 +36,26 @@ import {
   requireMinRole,
   requireRequestId,
 } from "./http/middleware.js";
+import {
+  defaultDisplayName,
+  defaultIncrementalDate,
+  parsePagination,
+  toPage,
+} from "./lib/app-helpers.js";
+import {
+  backupActionSchema,
+  issueUserBodySchema,
+  loginBodySchema,
+  pairUpdateSchema,
+  refreshBodySchema,
+  solverIncrementalInputSchema,
+  solverInputSchema,
+  solverMetricsInputSchema,
+  supervisionSchema,
+  templatePreviewSchema,
+  tripletRecommendSchema,
+  tripletUpdateSchema,
+} from "./lib/app-schemas.js";
 import { SqliteStore, type StoreConnectionConfig } from "./store/index.js";
 
 export interface CreateAppOptions {
@@ -51,6 +77,9 @@ export interface CreateAppOptions {
   bootstrapUsername?: string;
   bootstrapPassword?: string;
   bootstrapEmail?: string;
+  enablePublicEmailTaskIcs?: boolean;
+  onEmailTasksChanged?: () => Promise<void> | void;
+  runEmailTaskNow?: (taskId: string) => Promise<void>;
 }
 
 export async function createApp(options: CreateAppOptions): Promise<{ app: Hono; store: SqliteStore; close: () => Promise<void>; }> {
@@ -85,45 +114,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     });
   }
 
-  const loginBodySchema = z.object({
-    password: z.string().min(1),
-    identity: z.string().min(1).optional(),
-    username: z.string().min(1).optional(),
-    email: z.string().min(1).optional(),
-  }).refine(value => Boolean(value.identity || value.username || value.email), {
-    message: "identity, username, or email is required",
-  });
-
-  const refreshBodySchema = z.object({
-    refresh_token: z.string().min(1),
-  });
-
-  const issueUserBodySchema = z.object({
-    username: z.string().min(1).max(64),
-    password: z.string().min(8),
-    email: z.string().email().optional(),
-    role: z.number().int().min(0).max(1),
-  });
-
   const app = new Hono();
-
-  function parsePagination(input: { offset?: string; limit?: string }): { offset: number; limit: number } {
-    const rawOffset = Number.parseInt(input.offset ?? '0', 10);
-    const rawLimit = Number.parseInt(input.limit ?? '20', 10);
-    return {
-      offset: Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0,
-      limit: Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 20,
-    };
-  }
-
-  function toPage<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; offset: number; limit: number } {
-    return {
-      items: items.slice(offset, offset + limit),
-      total: items.length,
-      offset,
-      limit,
-    };
-  }
 
   if (options.enableLogger ?? true) {
     app.use("*", logger());
@@ -132,6 +123,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.use("/api/v1/db/*", requireClientAuth(authService));
   app.use("/api/v1/solver/*", requireClientAuth(authService));
   app.use("/api/v1/nlp/*", requireClientAuth(authService));
+  app.use("/api/v1/templates/*", requireClientAuth(authService));
   app.use("/api/v1/users/*", requireClientAuth(authService));
   app.use("/api/v1/system/*", requireClientAuth(authService));
   app.use("/api/v1/auth/logout", requireClientAuth(authService));
@@ -145,9 +137,38 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   });
   app.use("/api/v1/solver/*", requireMinRole(UserRole.Admin));
   app.use("/api/v1/nlp/*", requireMinRole(UserRole.Admin));
+  app.use("/api/v1/templates/*", requireMinRole(UserRole.Admin));
   app.use("/api/v1/system/backup/*", requireMinRole(UserRole.Admin));
 
   app.get("/health", (c) => c.json({ ok: true, now: Date.now() }));
+
+  if (options.enablePublicEmailTaskIcs) {
+    app.get('/public/email-tasks/:id/schedule.ics', async (c) => {
+      const taskId = c.req.param('id');
+      const task = await store.getEmailTask(taskId);
+      const shouldServeIcs = Boolean(task?.metadata && (task.metadata as Record<string, unknown>).serveScheduleIcs === true);
+      if (!task || !shouldServeIcs) {
+        throw new AppError('VALIDATION_ERROR', 'schedule ics not found', 404);
+      }
+
+      const latest = (await store.listSchedules())
+        .filter((item) => item.configId === task.configId)
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+
+      if (!latest) {
+        throw new AppError('VALIDATION_ERROR', 'schedule ics not found', 404);
+      }
+
+      const config = await store.getConfig(task.configId);
+      const personMap = new Map((await store.listPersons()).map((person) => [person.id, person]));
+      const ics = buildScheduleIcs(latest, personMap, defaultDisplayName, config ?? undefined);
+
+      c.header('Content-Type', 'text/calendar; charset=utf-8');
+      c.header('Cache-Control', 'no-store');
+      c.header('Content-Disposition', `inline; filename="labby-schedule-${taskId}.ics"`);
+      return c.body(ics);
+    });
+  }
 
   app.get("/api/v1/system/capabilities", (c) => {
     const session = getAuthSession(c);
@@ -170,11 +191,6 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         canManageBackups: session.role >= UserRole.Admin,
       },
     });
-  });
-
-  const backupActionSchema = z.object({
-    format: z.enum(['sqlite', 'msgpack']).optional(),
-    target: z.enum(['email', 'google-drive', 'onedrive']).optional(),
   });
 
   app.post("/api/v1/system/backup/run", async (c) => {
@@ -369,6 +385,21 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return c.body(null, 204);
   });
 
+  app.get("/api/v1/db/constraints", async (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(await store.listConstraints(), offset, limit));
+  });
+  app.get("/api/v1/db/constraints/:id", async (c) => ok(c, (await store.getConstraint(c.req.param("id"))) ?? null));
+  app.put("/api/v1/db/constraints/:id", async (c) => {
+    const constraint = await c.req.json<ScheduleConstraint>();
+    await store.putConstraint({ ...constraint, id: c.req.param("id") });
+    return ok(c, await store.getConstraint(c.req.param("id")), 201);
+  });
+  app.delete("/api/v1/db/constraints/:id", async (c) => {
+    await store.deleteConstraint(c.req.param("id"));
+    return c.body(null, 204);
+  });
+
   app.get("/api/v1/db/schedules", async (c) => {
     const { offset, limit } = parsePagination(c.req.query());
     return ok(c, toPage(await store.listSchedules(), offset, limit));
@@ -399,21 +430,58 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return c.body(null, 204);
   });
 
+  app.get("/api/v1/db/email-tasks", async (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    return ok(c, toPage(await store.listEmailTasks(), offset, limit));
+  });
+  app.get("/api/v1/db/email-tasks/:id", async (c) => ok(c, (await store.getEmailTask(c.req.param("id"))) ?? null));
+  app.put("/api/v1/db/email-tasks/:id", async (c) => {
+    const task = await c.req.json<EmailTask>();
+    await store.putEmailTask({ ...task, id: c.req.param("id") });
+    await options.onEmailTasksChanged?.();
+    return ok(c, await store.getEmailTask(c.req.param("id")), 201);
+  });
+  app.delete("/api/v1/db/email-tasks/:id", async (c) => {
+    await store.deleteEmailTask(c.req.param("id"));
+    await options.onEmailTasksChanged?.();
+    return c.body(null, 204);
+  });
+  app.post('/api/v1/db/email-tasks/:id/send-now', async (c) => {
+    const taskId = c.req.param('id');
+    const task = await store.getEmailTask(taskId);
+    if (!task) {
+      throw new AppError('VALIDATION_ERROR', 'email task not found', 404);
+    }
+    if (!options.runEmailTaskNow) {
+      throw new AppError('INTERNAL_ERROR', 'email sender is not configured on server', 503);
+    }
+    await options.runEmailTaskNow(taskId);
+    return ok(c, { ok: true });
+  });
+  app.post('/api/v1/db/email-tasks/:id/skip-next', async (c) => {
+    const taskId = c.req.param('id');
+    const task = await store.getEmailTask(taskId);
+    if (!task) {
+      throw new AppError('VALIDATION_ERROR', 'email task not found', 404);
+    }
+
+    const body = await c.req.json().catch(() => ({})) as { skip?: unknown };
+    const skip = typeof body.skip === 'boolean' ? body.skip : true;
+
+    const updated: EmailTask = {
+      ...task,
+      skipNextRun: skip,
+      modifiedAt: Date.now(),
+    };
+
+    await store.putEmailTask(updated);
+    await options.onEmailTasksChanged?.();
+    return ok(c, updated);
+  });
+
   // ---------------------------------------------------------------------------
   // Solver routes (call @labby/core)
   // ---------------------------------------------------------------------------
-
-  const solverInputSchema = z.object({
-    configId: z.string().min(1),
-    personIds: z.array(z.string()).optional(),
-  });
-
-  const solverIncrementalInputSchema = z.object({
-    configId: z.string().min(1),
-    previousPlanId: z.string().min(1),
-    changeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    personIds: z.array(z.string()).optional(),
-  });
 
   app.post("/api/v1/solver/run", async (c) => {
     const body = solverInputSchema.parse(await c.req.json());
@@ -426,11 +494,30 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       : allPersons;
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
+    const constraints = await store.listConstraintsByConfig(config.id);
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
-    const plan = solveFull({ persons, similarities: similarityLookup, config, unavailabilities });
-    return ok(c, plan);
+    const plan = solveFull({
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+      constraints,
+    });
+    const metrics = computeScheduleMetrics(plan, {
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+      constraints,
+    });
+    return ok(c, {
+      plan,
+      metrics,
+      explanations: explainScheduleMetrics(metrics),
+      warnings: [] as string[],
+    });
   });
 
   app.post("/api/v1/solver/run-incremental", async (c) => {
@@ -446,8 +533,15 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       : allPersons;
     const vectors = await store.listKeywordVectors();
     const unavailabilities = await store.listUnavailabilities();
+    const constraints = await store.listConstraintsByConfig(config.id);
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
+
+    const warnings: string[] = [];
+    const suggestedDate = defaultIncrementalDate();
+    if (body.changeDate < suggestedDate) {
+      warnings.push(`changeDate ${body.changeDate} is earlier than suggested default ${suggestedDate}`);
+    }
 
     const plan = solveIncremental({
       persons,
@@ -456,49 +550,92 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       unavailabilities,
       previousPlan,
       changeDate: body.changeDate,
+      constraints,
     });
-    return ok(c, plan);
+    const metrics = computeScheduleMetrics(plan, {
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+      constraints,
+    });
+    return ok(c, {
+      plan,
+      metrics,
+      explanations: explainScheduleMetrics(metrics),
+      warnings,
+      startsInclusive: true,
+      suggestedChangeDate: suggestedDate,
+    });
+  });
+
+  app.post("/api/v1/solver/metrics", async (c) => {
+    const body = solverMetricsInputSchema.parse(await c.req.json());
+    const plan = await store.getSchedule(body.scheduleId);
+    if (!plan) throw new AppError("VALIDATION_ERROR", "schedule not found", 404);
+    const config = await store.getConfig(plan.configId);
+    if (!config) throw new AppError("VALIDATION_ERROR", "config not found", 404);
+
+    const persons = await store.listPersons();
+    const vectors = await store.listKeywordVectors();
+    const unavailabilities = await store.listUnavailabilities();
+    const constraints = await store.listConstraintsByConfig(config.id);
+    const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
+
+    if (!body.sessionDate) {
+      const metrics = computeScheduleMetrics(plan, {
+        persons,
+        similarities: similarityLookup,
+        config,
+        unavailabilities,
+        constraints,
+      });
+      return ok(c, { metrics, explanations: explainScheduleMetrics(metrics) });
+    }
+
+    const sessionIndex = plan.sessions.findIndex((s) => s.date === body.sessionDate);
+    if (sessionIndex < 0) {
+      throw new AppError("VALIDATION_ERROR", "session date not found in schedule", 404);
+    }
+
+    const sessionOnlyPlan: SchedulePlan = {
+      ...plan,
+      sessions: [plan.sessions[sessionIndex]],
+    };
+
+    const historical = plan.sessions.slice(0, sessionIndex);
+    const metrics = computeScheduleMetrics(sessionOnlyPlan, {
+      persons,
+      similarities: similarityLookup,
+      config,
+      unavailabilities,
+      constraints,
+    }, historical);
+
+    return ok(c, {
+      metrics,
+      explanations: explainScheduleMetrics(metrics),
+      scope: {
+        scheduleId: body.scheduleId,
+        sessionDate: body.sessionDate,
+      },
+    });
+  });
+
+  app.post('/api/v1/templates/preview', async (c) => {
+    const body = templatePreviewSchema.parse(await c.req.json());
+    const result = renderTemplate(body.templateText, {
+      ...body.context,
+      language: body.language ?? (body.context.language as string | undefined) ?? 'en',
+    }, {
+      format: body.format,
+    });
+    return ok(c, result);
   });
 
   // ---------------------------------------------------------------------------
   // NLP / embedding routes (call @labby/core)
   // ---------------------------------------------------------------------------
-
-  const tripletUpdateSchema = z.object({
-    anchorId: z.string().min(1),
-    positiveId: z.string().min(1),
-    negativeId: z.string().min(1),
-    margin: z.number().positive().optional(),
-    learningRate: z.number().optional(),
-  });
-
-  const pairUpdateSchema = z.object({
-    leftId: z.string().min(1),
-    rightId: z.string().min(1),
-    targetDistance: z.number().nonnegative(),
-    learningRate: z.number().optional(),
-  });
-
-  const tripletRecommendSchema = z.object({
-    excludedPairs: z.array(z.string().min(3)).optional(),
-  });
-
-  const supervisionSchema = z.discriminatedUnion('kind', [
-    z.object({
-      kind: z.literal('pair'),
-      leftId: z.string().min(1),
-      rightId: z.string().min(1),
-      targetDistance: z.number().nonnegative(),
-      learningRate: z.number().optional(),
-    }),
-    z.object({
-      kind: z.literal('ranked'),
-      anchorId: z.string().min(1),
-      orderedIds: z.array(z.string().min(1)).min(2),
-      margin: z.number().positive().optional(),
-      learningRate: z.number().optional(),
-    }),
-  ]);
 
   app.post("/api/v1/nlp/recommend-triplet", async (c) => {
     const body = tripletRecommendSchema.parse(await c.req.json());
@@ -528,7 +665,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         body.positiveId,
         body.negativeId,
         body.margin ?? 0.2,
-        body.learningRate ?? 0.05,
+        body.updateOptions,
       );
       loss = result.loss;
       updatedVectors = result.updatedVectors;
@@ -551,7 +688,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         body.leftId,
         body.rightId,
         body.targetDistance,
-        body.learningRate ?? 0.05,
+        body.updateOptions,
       );
       loss = result.loss;
       updatedVectors = result.updatedVectors;

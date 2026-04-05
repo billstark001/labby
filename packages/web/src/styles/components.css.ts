@@ -265,6 +265,14 @@ export const input = style({
   },
 });
 
+export const preWrap = style({
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  margin: 0,
+  fontSize: vars.font.size.sm,
+  lineHeight: 1.5,
+});
+
 // ---------------------------------------------------------------------------
 // Table
 // ---------------------------------------------------------------------------

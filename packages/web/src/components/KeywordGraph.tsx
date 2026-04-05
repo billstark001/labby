@@ -384,7 +384,9 @@ export function KeywordGraph() {
         leftId,
         rightId,
         targetDistance,
-        learningRate,
+        updateOptions: {
+          learningRate,
+        },
       });
 
       if (result.updatedVectors.length > 0) {
@@ -434,7 +436,9 @@ export function KeywordGraph() {
         anchorId,
         orderedIds,
         margin,
-        learningRate,
+        updateOptions: {
+          learningRate,
+        },
       });
 
       if (result.updatedVectors.length > 0) {

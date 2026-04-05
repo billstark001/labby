@@ -1,7 +1,7 @@
 /** Root application shell with sidebar navigation. */
 import { useEffect, useState } from 'preact/hooks';
 import { effect, useComputed } from '@preact/signals';
-import { Calendar, LogOut, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
+import { Calendar, LogOut, Mail, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
 import { themeSignal } from './store/index';
 import { AUTH_INVALIDATE_EVENT, isAuthenticated, logout } from './lib/auth';
 import { i18n } from './i18n';
@@ -18,6 +18,7 @@ const NAV_ITEMS: { key: AppRoute; icon: typeof Calendar; labelKey: keyof UIStrin
   { key: '/schedule', icon: Calendar, labelKey: 'navSchedule' },
   { key: '/persons', icon: Users, labelKey: 'navPersons' },
   { key: '/keywords', icon: Tags, labelKey: 'navKeywords' },
+  { key: '/email-tasks', icon: Mail, labelKey: 'navEmailTasks' },
   // { key: '/graph', icon: GitBranch, labelKey: 'navGraph' },
   { key: '/settings', icon: Settings, labelKey: 'navSettings' },
 ];

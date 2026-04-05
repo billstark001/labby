@@ -1,6 +1,6 @@
 import { signal, computed } from '@preact/signals';
 import { keywordVectorsToSimilarityMap } from '@labby/core';
-import type { Person, Keyword, SchedulePlan, ScheduleConfig, KeywordVector, PersonUnavailability } from '@labby/core';
+import type { Person, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -22,7 +22,9 @@ export const personsSignal = signal<Person[]>([]);
 export const keywordsSignal = signal<Keyword[]>([]);
 export const keywordVectorsSignal = signal<KeywordVector[]>([]);
 export const configsSignal = signal<ScheduleConfig[]>([]);
+export const constraintsSignal = signal<ScheduleConstraint[]>([]);
 export const schedulesSignal = signal<SchedulePlan[]>([]);
+export const emailTasksSignal = signal<EmailTask[]>([]);
 export const currentScheduleSignal = signal<SchedulePlan | null>(null);
 export const isComputingSignal = signal(false);
 export const unavailabilitiesSignal = signal<PersonUnavailability[]>([]);

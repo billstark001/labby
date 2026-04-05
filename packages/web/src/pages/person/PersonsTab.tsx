@@ -1,32 +1,21 @@
-/** Person management panel. */
 import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import {
-  personsSignal,
-  keywordsSignal,
-  keywordMapSignal,
-  schedulesSignal,
-} from '../store/index';
-import { fallbackEntityId } from '@/i18n';
-import { displayName } from '@/i18n';
-import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '../db/index';
-import * as s from '../styles/components.css';
+import type { Person, Keyword } from '@labby/core';
+
+import { personsSignal, keywordsSignal, keywordMapSignal, schedulesSignal } from '@/store';
+import { fallbackEntityId, displayName, i18n } from '@/i18n';
+import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '@/db';
+import * as s from '@/styles/components.css';
 import {
   Button,
   Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
   responsiveDataStyles as dataStyles,
-} from '../components/ui/index';
-import { Dialog, confirmDialog } from '../components/ui/Dialog';
-import type { Person, Keyword } from '@labby/core';
-import { i18n } from '@/i18n';
+} from '@/components/ui';
+import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 
 const MAX_KEYWORDS = 10;
-
-// ---------------------------------------------------------------------------
-// PersonForm
-// ---------------------------------------------------------------------------
 
 interface PersonFormProps {
   initial?: Partial<Person>;
@@ -38,9 +27,9 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
   const { t } = i18n;
   const keywords = keywordsSignal.value;
 
-  const [nameEn, setNameEn] = useState(initial?.names?.['en'] ?? initial?.name ?? '');
-  const [nameZh, setNameZh] = useState(initial?.names?.['zh'] ?? '');
-  const [nameJa, setNameJa] = useState(initial?.names?.['ja'] ?? '');
+  const [nameEn, setNameEn] = useState(initial?.names?.en ?? initial?.name ?? '');
+  const [nameZh, setNameZh] = useState(initial?.names?.zh ?? '');
+  const [nameJa, setNameJa] = useState(initial?.names?.ja ?? '');
   const [selectedIds, setSelectedIds] = useState<string[]>(initial?.keywordIds ?? []);
   const [newKeywordName, setNewKeywordName] = useState('');
   const [newKeywords, setNewKeywords] = useState<Keyword[]>([]);
@@ -51,8 +40,8 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
 
   function toggle(id: string) {
     setKeywordLimitHit(false);
-    setSelectedIds(prev => {
-      if (prev.includes(id)) return prev.filter(x => x !== id);
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
       if (prev.length >= MAX_KEYWORDS) {
         setKeywordLimitHit(true);
         return prev;
@@ -71,13 +60,15 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       keywordIds: selectedIds,
       disabled: initial?.disabled,
       notes: notes.trim() || undefined,
+      modifiedAt: Date.now(),
     }, newKeywords);
   }
 
   function handleAddKeyword() {
     const normalized = newKeywordName.trim();
     if (!normalized) return;
-    const existing = allKeywords.find(keyword => keyword.name.toLowerCase() === normalized.toLowerCase());
+
+    const existing = allKeywords.find((keyword) => keyword.name.toLowerCase() === normalized.toLowerCase());
     if (existing) {
       if (!selectedIds.includes(existing.id)) {
         if (selectedIds.length >= MAX_KEYWORDS) {
@@ -85,7 +76,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
           setNewKeywordName('');
           return;
         }
-        setSelectedIds(prev => [...prev, existing.id]);
+        setSelectedIds((prev) => [...prev, existing.id]);
       }
       setNewKeywordName('');
       return;
@@ -102,10 +93,11 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       name: normalized,
       names: { en: normalized, zh: '', ja: '' },
       metadata: {},
+      modifiedAt: Date.now(),
     };
 
-    setNewKeywords(prev => [...prev, keyword]);
-    setSelectedIds(prev => [...prev, keyword.id]);
+    setNewKeywords((prev) => [...prev, keyword]);
+    setSelectedIds((prev) => [...prev, keyword.id]);
     setNewKeywordName('');
   }
 
@@ -113,37 +105,23 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
     <div>
       <div class={s.formGroup}>
         <label class={s.label}>Name (EN)</label>
-        <input
-          class={s.input}
-          value={nameEn}
-          onInput={e => setNameEn((e.target as HTMLInputElement).value)}
-        />
+        <input class={s.input} value={nameEn} onInput={(e) => setNameEn((e.target as HTMLInputElement).value)} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>Name (中文)</label>
-        <input
-          class={s.input}
-          value={nameZh}
-          onInput={e => setNameZh((e.target as HTMLInputElement).value)}
-        />
+        <input class={s.input} value={nameZh} onInput={(e) => setNameZh((e.target as HTMLInputElement).value)} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>Name (日本語)</label>
-        <input
-          class={s.input}
-          value={nameJa}
-          onInput={e => setNameJa((e.target as HTMLInputElement).value)}
-        />
+        <input class={s.input} value={nameJa} onInput={(e) => setNameJa((e.target as HTMLInputElement).value)} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>
           {t('keywords')} ({selectedIds.length}/{MAX_KEYWORDS})
         </label>
-        {keywordLimitHit && (
-          <p class={`${s.text12} ${s.textDanger}`}>{t('keywordLimitReached')}</p>
-        )}
+        {keywordLimitHit && <p class={`${s.text12} ${s.textDanger}`}>{t('keywordLimitReached')}</p>}
         <div class={s.tagList}>
-          {allKeywords.map(kw => (
+          {allKeywords.map((kw) => (
             <button
               key={kw.id}
               class={`${s.badgeSelectable} ${selectedIds.includes(kw.id) ? s.badgeSelectableActive : ''}`}
@@ -157,11 +135,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       <div class={s.formGroup}>
         <label class={s.label}>{t('addKeywordToNonePerson')}</label>
         <div class={s.flexGapSm}>
-          <input
-            class={s.input}
-            value={newKeywordName}
-            onInput={e => setNewKeywordName((e.target as HTMLInputElement).value)}
-          />
+          <input class={s.input} value={newKeywordName} onInput={(e) => setNewKeywordName((e.target as HTMLInputElement).value)} />
           <Button variant="secondary" onClick={handleAddKeyword}>
             {t('addKeyword')}
           </Button>
@@ -169,30 +143,17 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('notes')}</label>
-        <textarea
-          class={s.input}
-          rows={3}
-          value={notes}
-          onInput={e => setNotes((e.target as HTMLTextAreaElement).value)}
-        />
+        <textarea class={s.input} rows={3} value={notes} onInput={(e) => setNotes((e.target as HTMLTextAreaElement).value)} />
       </div>
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={handleSave}>
-          {t('save')}
-        </Button>
-        <Button variant="secondary" onClick={onCancel}>
-          {t('cancel')}
-        </Button>
+        <Button variant="primary" onClick={handleSave}>{t('save')}</Button>
+        <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
       </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// PersonList
-// ---------------------------------------------------------------------------
-
-export function PersonsPage() {
+export function PersonsTab() {
   const db = useDatabase();
   const { t } = i18n;
   const persons = personsSignal.value;
@@ -228,19 +189,18 @@ export function PersonsPage() {
     void refreshPersonsPage(page, pageSize);
   }, [db, page, pageSize]);
 
-  /** Check if a person is referenced in any schedule */
   function isPersonReferenced(id: string): boolean {
-    return schedules.some(plan =>
-      plan.sessions.some(sess =>
-        sess.presentations.some(
-          p => p.presenterId === id || p.questionerIds.includes(id),
+    return schedules.some((plan) =>
+      plan.sessions.some((sess) =>
+        sess.presentations.some((presentation) =>
+          presentation.presenterId === id || presentation.questionerIds.includes(id),
         ),
       ),
     );
   }
 
   async function handleSave(p: Person, newKeywords: Keyword[]) {
-    await Promise.all(newKeywords.map(keyword => db.keywords.put(keyword)));
+    await Promise.all(newKeywords.map((keyword) => db.keywords.put(keyword)));
     await db.persons.put(p);
     await loadAllKeywords(db);
     await refreshPersonsPage();
@@ -248,7 +208,7 @@ export function PersonsPage() {
   }
 
   async function handleDisableToggle(p: Person) {
-    const updated: Person = { ...p, disabled: !p.disabled };
+    const updated: Person = { ...p, disabled: !p.disabled, modifiedAt: Date.now() };
     await db.persons.put(updated);
     await refreshPersonsPage();
   }
@@ -265,7 +225,7 @@ export function PersonsPage() {
   }
 
   return (
-    <div>
+    <>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navPersons')}</h2>
         <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
@@ -293,22 +253,20 @@ export function PersonsPage() {
           { header: t('keywords') },
           { header: t('notes') },
         ]}
-        getKey={person => person.id}
-        getDesktopRowProps={person => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
-        getMobileCardProps={person => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
-        renderDesktopRow={person => (
+        getKey={(person) => person.id}
+        getDesktopRowProps={(person) => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
+        getMobileCardProps={(person) => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
+        renderDesktopRow={(person) => (
           <>
             <td class={s.td}>
               <div class={s.flexGapXs}>
                 {displayName(person)}
-                {person.disabled && (
-                  <span class={s.badgeDisabled}>{t('disabled')}</span>
-                )}
+                {person.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
               </div>
             </td>
             <td class={s.td}>
               <div class={s.tagList}>
-                {person.keywordIds.map(kid => {
+                {person.keywordIds.map((kid) => {
                   const kw = keywordMapSignal.value.get(kid);
                   return (
                     <span key={kid} class={s.badge}>
@@ -323,7 +281,7 @@ export function PersonsPage() {
             </td>
           </>
         )}
-        renderMobileCard={person => (
+        renderMobileCard={(person) => (
           <>
             <div class={dataStyles.mobileHeader}>
               <div>
@@ -339,7 +297,7 @@ export function PersonsPage() {
               <ResponsiveDataField label={t('keywords')}>
                 <div class={s.tagList}>
                   {person.keywordIds.length > 0
-                    ? person.keywordIds.map(kid => {
+                    ? person.keywordIds.map((kid) => {
                       const kw = keywordMapSignal.value.get(kid);
                       return (
                         <span key={kid} class={s.badge}>
@@ -356,18 +314,13 @@ export function PersonsPage() {
             </div>
           </>
         )}
-        renderActions={person => (
+        renderActions={(person) => (
           <>
-
-            <Button variant="ghost" onClick={() => setEditing(person)}>
-              {t('edit')}
-            </Button>
+            <Button variant="ghost" onClick={() => setEditing(person)}>{t('edit')}</Button>
             <Button variant="ghost" onClick={() => handleDisableToggle(person)}>
               {person.disabled ? t('enable') : t('disable')}
             </Button>
-            <Button variant="danger" onClick={() => handleDelete(person)}>
-              {t('delete')}
-            </Button>
+            <Button variant="danger" onClick={() => handleDelete(person)}>{t('delete')}</Button>
           </>
         )}
       />
@@ -377,11 +330,11 @@ export function PersonsPage() {
         pageSize={pageSize}
         totalItems={totalItems}
         onPageChange={setPage}
-        onPageSizeChange={nextPageSize => {
+        onPageSizeChange={(nextPageSize) => {
           setPageSize(nextPageSize);
           setPage(1);
         }}
       />
-    </div>
+    </>
   );
 }

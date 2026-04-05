@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
@@ -87,6 +88,19 @@ function sampleVector(keywordId = 'k1'): KeywordVector {
   };
 }
 
+function sampleEmailTask(id = 'et1', configId = 'c1'): EmailTask {
+  return {
+    id,
+    configId,
+    daysOfWeek: [1, 3, 5],
+    emails: ['foo@example.com', 'bar@example.com'],
+    recentTimes: 0,
+    templateText: 'Hello {{ user.name }}',
+    sentCounts: {},
+    metadata: {},
+  };
+}
+
 function sampleUser(id = 'user-1'): StoredUser {
   return {
     id,
@@ -122,6 +136,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     const plan = samplePlan();
     const unavailability = sampleUnavailability();
     const vector = sampleVector();
+    const emailTask = sampleEmailTask();
     const user = sampleUser();
     const token = sampleRefreshToken(user.id);
 
@@ -131,6 +146,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     await store.putSchedule(plan);
     await store.putUnavailability(unavailability);
     await store.putKeywordVector(vector);
+    await store.putEmailTask(emailTask);
     await store.createUser(user);
     await store.saveRefreshToken(token);
 
@@ -141,6 +157,7 @@ test('SqliteStore initializes and supports core CRUD', async () => {
     assert.equal((await store.getUnavailability(unavailability.id))?.id, unavailability.id);
     assert.equal((await store.getKeywordVector(vector.keywordId))?.keywordId, vector.keywordId);
     assert.equal((await store.getKeywordVectors([vector.keywordId])).length, 1);
+    assert.equal((await store.getEmailTask(emailTask.id))?.id, emailTask.id);
     assert.equal((await store.findUserByIdentity('ALICE'))?.id, user.id);
     assert.equal((await store.getRefreshToken(token.tokenId))?.tokenId, token.tokenId);
   } finally {
@@ -191,5 +208,52 @@ test('SqliteStore binary backup and restore from sqlite file works', async () =>
   } finally {
     await source.close();
     await target.close();
+  }
+});
+
+test('SqliteStore keeps modifiedAt sorting and standalone constraints persistence', async () => {
+  const dbPath = createTempDbPath('labby-store-order-constraints');
+  const store = new SqliteStore({ dialect: 'sqlite', path: dbPath });
+
+  try {
+    const older = samplePerson('p-old');
+    older.modifiedAt = 10;
+    const newer = samplePerson('p-new');
+    newer.modifiedAt = 20;
+    await store.putPerson(older);
+    await store.putPerson(newer);
+
+    const persons = await store.listPersons();
+    assert.equal(persons[0]?.id, 'p-new');
+    assert.equal(persons[1]?.id, 'p-old');
+
+    const config = sampleConfig('cfg-constraints');
+    await store.putConfig(config);
+
+    await store.putConstraint({
+      id: 'constraint-1',
+      configId: config.id,
+      type: 'no-overlap',
+      personIds: ['p-old', 'p-new'],
+      weight: 2,
+    });
+    await store.putConstraint({
+      id: 'constraint-2',
+      configId: config.id,
+      type: 'frequency-multiplier',
+      personIds: ['p-new'],
+      baseline: 1,
+      multiplier: 2,
+      roleScope: 'presenter',
+      weight: 1,
+    });
+
+    const loaded = await store.listConstraintsByConfig(config.id);
+    assert.equal(loaded.length, 2);
+    const types = new Set(loaded.map((item) => item.type));
+    assert.equal(types.has('no-overlap'), true);
+    assert.equal(types.has('frequency-multiplier'), true);
+  } finally {
+    await store.close();
   }
 });

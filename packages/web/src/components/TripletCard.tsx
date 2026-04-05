@@ -18,7 +18,6 @@ import { isServerDeployment } from '@/lib/runtime';
 
 /** Max number of recently answered pair keys to exclude from next query. */
 const RECENT_PAIR_LIMIT = 32;
-const PERSIST_DEBOUNCE_MS = 800;
 
 export function TripletCard() {
   const db = useDatabase();
@@ -31,38 +30,7 @@ export function TripletCard() {
   const [recentPairs, setRecentPairs] = useState<string[]>([]);
   const [query, setQuery] = useState<TripletQuery | null>(null);
   const [feedback, setFeedback] = useState<string>('');
-  const pendingPersistRef = useRef<Map<string, KeywordVector>>(new Map());
-  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recommendSeqRef = useRef(0);
-
-  async function flushPendingPersist(): Promise<void> {
-    if (isServerDeployment) {
-      pendingPersistRef.current.clear();
-      return;
-    }
-    if (pendingPersistRef.current.size === 0) return;
-    const values = [...pendingPersistRef.current.values()];
-    pendingPersistRef.current.clear();
-    await db.keywordVectors.putMany(values);
-  }
-
-  function schedulePersist(): void {
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-    }
-    flushTimerRef.current = setTimeout(() => {
-      void flushPendingPersist();
-    }, PERSIST_DEBOUNCE_MS);
-  }
-
-  useEffect(() => {
-    return () => {
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current);
-      }
-      void flushPendingPersist();
-    };
-  }, []);
 
   function ensureKeywordVectors() {
     const current = keywordVectorsSignal.value;
@@ -133,14 +101,11 @@ export function TripletCard() {
           const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
           for (const vec of result.updatedVectors) {
             merged.set(vec.keywordId, vec);
-            if (!isServerDeployment) {
-              pendingPersistRef.current.set(vec.keywordId, vec);
-            }
-          }
-          if (!isServerDeployment) {
-            schedulePersist();
           }
           keywordVectorsSignal.value = [...merged.values()];
+
+          // Persist immediately so page refresh cannot roll vectors back.
+          await db.keywordVectors.putMany(result.updatedVectors);
         }
         setFeedback(`Supervision applied. Updated ${result.updatedVectors.length} vectors.`);
       } catch (error) {

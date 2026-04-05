@@ -1,4 +1,9 @@
-import type { KeywordVector, SupervisionQuery, TripletQuery } from '@labby/core';
+import type {
+  IterativeUpdateOptions,
+  KeywordVector,
+  SupervisionQuery,
+  TripletQuery,
+} from '@labby/core';
 import { initKeywordVectors } from '@labby/core';
 
 import { EmbeddingEngineAdapter } from './embedding-engine.js';
@@ -45,7 +50,7 @@ export class EmbeddingService {
     positiveId: string,
     negativeId: string,
     margin: number,
-    learningRate: number,
+    updateOptions?: IterativeUpdateOptions,
   ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
     await this.ensureInitialized();
 
@@ -56,11 +61,12 @@ export class EmbeddingService {
       throw new Error('triplet ids not found in embedding engine');
     }
 
-    const loss = this.engine.updateTriplet(a, b, c, margin, learningRate);
+    const loss = this.engine.updateTriplet(a, b, c, margin, updateOptions);
     const updatedVectors = this.collectDirtyVectors();
     for (const vector of updatedVectors) {
       this.pendingWrites.set(vector.keywordId, vector);
     }
+    await this.flushBufferedWrites();
     return { loss, updatedVectors };
   }
 
@@ -104,7 +110,7 @@ export class EmbeddingService {
     leftId: string,
     rightId: string,
     targetDistance: number,
-    learningRate: number,
+    updateOptions?: IterativeUpdateOptions,
   ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
     await this.ensureInitialized();
 
@@ -114,11 +120,12 @@ export class EmbeddingService {
       throw new Error('pair ids not found in embedding engine');
     }
 
-    const loss = this.engine!.updatePair(a, b, targetDistance, learningRate);
+    const loss = this.engine!.updatePair(a, b, targetDistance, updateOptions);
     const updatedVectors = this.collectDirtyVectors();
     for (const vector of updatedVectors) {
       this.pendingWrites.set(vector.keywordId, vector);
     }
+    await this.flushBufferedWrites();
     return { loss, updatedVectors };
   }
 
@@ -135,7 +142,7 @@ export class EmbeddingService {
         query.leftId,
         query.rightId,
         query.targetDistance,
-        query.learningRate ?? 0.05,
+        query.updateOptions,
       );
     }
 
@@ -170,12 +177,13 @@ export class EmbeddingService {
     const updatedNodes = this.engine.updateTripletsBatchFlush(
       Uint32Array.from(triplets),
       query.margin ?? 0.2,
-      query.learningRate ?? 0.05,
+      query.updateOptions,
     );
     const updatedVectors = this.collectDirtyVectorsFromNodes(updatedNodes);
     for (const vector of updatedVectors) {
       this.pendingWrites.set(vector.keywordId, vector);
     }
+    await this.flushBufferedWrites();
     return {
       // Batch API currently does not return per-triplet loss.
       loss: 0,

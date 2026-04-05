@@ -8,11 +8,13 @@ import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
 import type {
+  EmailTask,
   Keyword,
   KeywordVector,
   Person,
   PersonUnavailability,
   ScheduleConfig,
+  ScheduleConstraint,
   SchedulePlan,
 } from '@labby/core';
 
@@ -52,8 +54,10 @@ export interface DatabaseBackupSnapshot {
     keywords: Array<Record<string, string | number | null>>;
     keywordVectors: Array<Record<string, string | number | null>>;
     configs: Array<Record<string, string | number | null>>;
+    constraints: Array<Record<string, string | number | null>>;
     schedules: Array<Record<string, string | number | null>>;
     unavailabilities: Array<Record<string, string | number | null>>;
+    emailTasks: Array<Record<string, string | number | null>>;
     users: Array<Record<string, string | number | null>>;
     refreshTokens: Array<Record<string, string | number | null>>;
   };
@@ -81,6 +85,10 @@ const PROJECTION_DIM = 2;
 
 function normalizeIdentity(identity: string): string {
   return identity.trim().toLowerCase();
+}
+
+function nowMs(): number {
+  return Date.now();
 }
 
 function toSqlitePath(input: string): string {
@@ -213,26 +221,45 @@ export class SqliteStore {
     const commonSql = `
       CREATE TABLE IF NOT EXISTS persons (
         id TEXT PRIMARY KEY,
+        updated_at BIGINT NOT NULL DEFAULT 0,
         payload TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS persons_updated_at_idx ON persons (updated_at DESC, id DESC);
 
       CREATE TABLE IF NOT EXISTS keywords (
         id TEXT PRIMARY KEY,
+        updated_at BIGINT NOT NULL DEFAULT 0,
         payload TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS keywords_updated_at_idx ON keywords (updated_at DESC, id DESC);
 
       CREATE TABLE IF NOT EXISTS configs (
         id TEXT PRIMARY KEY,
+        updated_at BIGINT NOT NULL DEFAULT 0,
         payload TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS configs_updated_at_idx ON configs (updated_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS constraints (
+        id TEXT PRIMARY KEY,
+        config_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS constraints_config_idx ON constraints (config_id);
+      CREATE INDEX IF NOT EXISTS constraints_updated_at_idx ON constraints (updated_at DESC, id DESC);
 
       CREATE TABLE IF NOT EXISTS schedules (
         id TEXT PRIMARY KEY,
         config_id TEXT NOT NULL,
         created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL DEFAULT 0,
         payload TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS schedules_created_at_idx ON schedules (created_at);
+      CREATE INDEX IF NOT EXISTS schedules_created_at_idx ON schedules (created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS schedules_updated_at_idx ON schedules (updated_at DESC, id DESC);
 
       CREATE TABLE IF NOT EXISTS unavailabilities (
         id TEXT PRIMARY KEY,
@@ -244,6 +271,15 @@ export class SqliteStore {
       );
       CREATE INDEX IF NOT EXISTS unavailabilities_person_idx ON unavailabilities (person_id);
       CREATE INDEX IF NOT EXISTS unavailabilities_config_idx ON unavailabilities (config_id);
+
+      CREATE TABLE IF NOT EXISTS email_tasks (
+        id TEXT PRIMARY KEY,
+        config_id TEXT NOT NULL,
+        updated_at BIGINT NOT NULL DEFAULT 0,
+        payload TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS email_tasks_config_idx ON email_tasks (config_id);
+      CREATE INDEX IF NOT EXISTS email_tasks_updated_at_idx ON email_tasks (updated_at DESC, id DESC);
 
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -272,6 +308,12 @@ export class SqliteStore {
 
     if (this.sqliteRaw) {
       this.sqliteRaw.exec(commonSql);
+      // Backward-compatible column additions for existing databases.
+      try { this.sqliteRaw.exec('ALTER TABLE persons ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+      try { this.sqliteRaw.exec('ALTER TABLE keywords ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+      try { this.sqliteRaw.exec('ALTER TABLE configs ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+      try { this.sqliteRaw.exec('ALTER TABLE schedules ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+      try { this.sqliteRaw.exec('ALTER TABLE email_tasks ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
       this.sqliteRaw.exec(`
         CREATE TABLE IF NOT EXISTS keyword_vectors (
           keyword_id TEXT PRIMARY KEY,
@@ -303,6 +345,18 @@ export class SqliteStore {
       .map((part) => part.trim())
       .filter(Boolean)) {
       await this.executeCommand(sql.raw(`${statement};`));
+    }
+
+    // Backward-compatible column additions for existing databases.
+    const alterStatements = [
+      'ALTER TABLE persons ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+      'ALTER TABLE keywords ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+      'ALTER TABLE configs ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+      'ALTER TABLE schedules ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+      'ALTER TABLE email_tasks ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+    ];
+    for (const statement of alterStatements) {
+      await this.executeCommand(sql.raw(statement));
     }
 
     await this.executeCommand(sql.raw('CREATE EXTENSION IF NOT EXISTS vector;'));
@@ -451,8 +505,10 @@ export class SqliteStore {
     await this.ensureReady();
     await this.run(`
       DELETE FROM keyword_vectors;
+      DELETE FROM email_tasks;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
+      DELETE FROM constraints;
       DELETE FROM configs;
       DELETE FROM keywords;
       DELETE FROM persons;
@@ -466,14 +522,17 @@ export class SqliteStore {
 
   async listPersons(): Promise<Person[]> {
     await this.ensureReady();
-    return this.listPayloads<Person>(sql`SELECT payload FROM persons ORDER BY id`);
+    return this.listPayloads<Person>(sql`SELECT payload FROM persons ORDER BY updated_at DESC, id DESC`);
   }
 
   async putPerson(person: Person): Promise<void> {
     await this.ensureReady();
+    const updated = { ...person, modifiedAt: person.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
-      INSERT INTO persons (id, payload) VALUES (${person.id}, ${JSON.stringify(person)})
-      ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+      INSERT INTO persons (id, updated_at, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      ON CONFLICT(id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        payload = excluded.payload
     `);
   }
 
@@ -494,14 +553,17 @@ export class SqliteStore {
 
   async listKeywords(): Promise<Keyword[]> {
     await this.ensureReady();
-    return this.listPayloads<Keyword>(sql`SELECT payload FROM keywords ORDER BY id`);
+    return this.listPayloads<Keyword>(sql`SELECT payload FROM keywords ORDER BY updated_at DESC, id DESC`);
   }
 
   async putKeyword(keyword: Keyword): Promise<void> {
     await this.ensureReady();
+    const updated = { ...keyword, modifiedAt: keyword.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
-      INSERT INTO keywords (id, payload) VALUES (${keyword.id}, ${JSON.stringify(keyword)})
-      ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+      INSERT INTO keywords (id, updated_at, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      ON CONFLICT(id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        payload = excluded.payload
     `);
   }
 
@@ -557,12 +619,12 @@ export class SqliteStore {
       ? await this.queryRows(sql`
         SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
         FROM keyword_vectors
-        ORDER BY keyword_id
+        ORDER BY updated_at DESC, keyword_id DESC
       `)
       : await this.queryRows(sql`
         SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
         FROM keyword_vectors
-        ORDER BY keyword_id
+        ORDER BY updated_at DESC, keyword_id DESC
       `);
     return rows.map((row) => this.parseKeywordVectorRow(row));
   }
@@ -674,25 +736,146 @@ export class SqliteStore {
 
   async listConfigs(): Promise<ScheduleConfig[]> {
     await this.ensureReady();
-    return this.listPayloads<ScheduleConfig>(sql`SELECT payload FROM configs ORDER BY id`);
+    return this.listPayloads<ScheduleConfig>(sql`SELECT payload FROM configs ORDER BY updated_at DESC, id DESC`);
   }
 
   async putConfig(config: ScheduleConfig): Promise<void> {
     await this.ensureReady();
+    const updated = { ...config, modifiedAt: config.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
-      INSERT INTO configs (id, payload) VALUES (${config.id}, ${JSON.stringify(config)})
-      ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+      INSERT INTO configs (id, updated_at, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      ON CONFLICT(id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        payload = excluded.payload
     `);
   }
 
   async deleteConfig(id: string): Promise<void> {
     await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM constraints WHERE config_id = ${id}`);
     await this.executeCommand(sql`DELETE FROM configs WHERE id = ${id}`);
   }
 
   async clearConfigs(): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`DELETE FROM configs`);
+  }
+
+  async getConstraint(id: string): Promise<ScheduleConstraint | undefined> {
+    await this.ensureReady();
+    const rows = await this.queryRows(sql`
+      SELECT id, config_id, payload
+      FROM constraints
+      WHERE id = ${id}
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row) return undefined;
+    const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+    const configId = String(row.config_id ?? payload.configId ?? '');
+    return {
+      ...payload,
+      id: String(payload.id ?? row.id),
+      configId,
+    };
+  }
+
+  async listConstraints(): Promise<ScheduleConstraint[]> {
+    await this.ensureReady();
+    const rows = await this.queryRows(sql`
+      SELECT id, config_id, payload
+      FROM constraints
+      ORDER BY updated_at DESC, id DESC
+    `);
+    return rows.map((row) => {
+      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const configId = String(row.config_id ?? payload.configId ?? '');
+      return {
+        ...payload,
+        id: String(payload.id ?? row.id),
+        configId,
+      };
+    });
+  }
+
+  async putConstraint(constraint: ScheduleConstraint): Promise<void> {
+    await this.ensureReady();
+    const updated = {
+      ...constraint,
+      configId: constraint.configId ?? '',
+      modifiedAt: constraint.modifiedAt ?? nowMs(),
+    };
+    await this.executeCommand(sql`
+      INSERT INTO constraints (id, config_id, type, payload, created_at, updated_at)
+      VALUES (${updated.id}, ${updated.configId}, ${updated.type}, ${JSON.stringify(updated)}, ${updated.modifiedAt ?? 0}, ${updated.modifiedAt ?? 0})
+      ON CONFLICT(id) DO UPDATE SET
+        config_id = excluded.config_id,
+        type = excluded.type,
+        payload = excluded.payload,
+        updated_at = excluded.updated_at
+    `);
+  }
+
+  async deleteConstraint(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM constraints WHERE id = ${id}`);
+  }
+
+  async clearConstraints(): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM constraints`);
+  }
+
+  async listConstraintsByConfig(configId: string): Promise<ScheduleConstraint[]> {
+    await this.ensureReady();
+    const rows = await this.queryRows(sql`
+      SELECT id, config_id, payload
+      FROM constraints
+      WHERE config_id = ${configId} OR config_id = ''
+      ORDER BY updated_at DESC, id DESC
+    `);
+    return rows.map((row) => {
+      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const rowConfigId = String(row.config_id ?? payload.configId ?? '');
+      return {
+        ...payload,
+        id: String(payload.id ?? row.id),
+        configId: rowConfigId,
+      };
+    });
+  }
+
+  async getEmailTask(id: string): Promise<EmailTask | undefined> {
+    await this.ensureReady();
+    return this.getPayload<EmailTask>(sql`SELECT payload FROM email_tasks WHERE id = ${id}`);
+  }
+
+  async listEmailTasks(): Promise<EmailTask[]> {
+    await this.ensureReady();
+    return this.listPayloads<EmailTask>(sql`SELECT payload FROM email_tasks ORDER BY updated_at DESC, id DESC`);
+  }
+
+  async putEmailTask(task: EmailTask): Promise<void> {
+    await this.ensureReady();
+    const updated = { ...task, modifiedAt: task.modifiedAt ?? nowMs() };
+    await this.executeCommand(sql`
+      INSERT INTO email_tasks (id, config_id, updated_at, payload)
+      VALUES (${updated.id}, ${updated.configId}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      ON CONFLICT(id) DO UPDATE SET
+        config_id = excluded.config_id,
+        updated_at = excluded.updated_at,
+        payload = excluded.payload
+    `);
+  }
+
+  async deleteEmailTask(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM email_tasks WHERE id = ${id}`);
+  }
+
+  async clearEmailTasks(): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM email_tasks`);
   }
 
   async getSchedule(id: string): Promise<SchedulePlan | undefined> {
@@ -702,17 +885,19 @@ export class SqliteStore {
 
   async listSchedules(): Promise<SchedulePlan[]> {
     await this.ensureReady();
-    return this.listPayloads<SchedulePlan>(sql`SELECT payload FROM schedules ORDER BY created_at DESC, id DESC`);
+    return this.listPayloads<SchedulePlan>(sql`SELECT payload FROM schedules ORDER BY updated_at DESC, created_at DESC, id DESC`);
   }
 
   async putSchedule(schedule: SchedulePlan): Promise<void> {
     await this.ensureReady();
+    const updated = { ...schedule, modifiedAt: schedule.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
-      INSERT INTO schedules (id, config_id, created_at, payload)
-      VALUES (${schedule.id}, ${schedule.configId}, ${schedule.createdAt}, ${JSON.stringify(schedule)})
+      INSERT INTO schedules (id, config_id, created_at, updated_at, payload)
+      VALUES (${updated.id}, ${updated.configId}, ${updated.createdAt}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
         payload = excluded.payload
     `);
   }
@@ -878,8 +1063,10 @@ export class SqliteStore {
         keywords: await this.exportTable('keywords'),
         keywordVectors: await this.exportTable('keyword_vectors'),
         configs: await this.exportTable('configs'),
+        constraints: await this.exportTable('constraints'),
         schedules: await this.exportTable('schedules'),
         unavailabilities: await this.exportTable('unavailabilities'),
+        emailTasks: await this.exportTable('email_tasks'),
         users: await this.exportTable('users'),
         refreshTokens: await this.exportTable('refresh_tokens'),
       },
@@ -910,8 +1097,10 @@ export class SqliteStore {
       keywords: this.validateTableRows('keywords', snapshotObject.tables.keywords),
       keyword_vectors: this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
       configs: this.validateTableRows('configs', snapshotObject.tables.configs),
+      constraints: this.validateTableRows('constraints', snapshotObject.tables.constraints ?? []),
       schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
       unavailabilities: this.validateTableRows('unavailabilities', snapshotObject.tables.unavailabilities),
+      email_tasks: this.validateTableRows('email_tasks', snapshotObject.tables.emailTasks),
       users: this.validateTableRows('users', snapshotObject.tables.users),
       refresh_tokens: this.validateTableRows('refresh_tokens', snapshotObject.tables.refreshTokens),
     };
@@ -920,8 +1109,10 @@ export class SqliteStore {
       DELETE FROM refresh_tokens;
       DELETE FROM users;
       DELETE FROM keyword_vectors;
+      DELETE FROM email_tasks;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
+      DELETE FROM constraints;
       DELETE FROM configs;
       DELETE FROM keywords;
       DELETE FROM persons;
@@ -931,8 +1122,10 @@ export class SqliteStore {
     await this.restoreTableRows('keywords', tables.keywords);
     await this.restoreTableRows('keyword_vectors', tables.keyword_vectors);
     await this.restoreTableRows('configs', tables.configs);
+    await this.restoreTableRows('constraints', tables.constraints);
     await this.restoreTableRows('schedules', tables.schedules);
     await this.restoreTableRows('unavailabilities', tables.unavailabilities);
+    await this.restoreTableRows('email_tasks', tables.email_tasks);
     await this.restoreTableRows('users', tables.users);
     await this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
   }
@@ -949,25 +1142,44 @@ export class SqliteStore {
       keywords?: unknown;
       keywordVectors?: unknown;
       configs?: unknown;
+      constraints?: unknown;
       schedules?: unknown;
       unavailabilities?: unknown;
+      emailTasks?: unknown;
     };
 
-    if (!Array.isArray(dumpObject.persons)
-      || !Array.isArray(dumpObject.keywords)
-      || !Array.isArray(dumpObject.keywordVectors)
-      || !Array.isArray(dumpObject.configs)
-      || !Array.isArray(dumpObject.schedules)
-      || !Array.isArray(dumpObject.unavailabilities)) {
-      throw new Error('Invalid backup payload: missing entity lists');
+    const missings = [
+      !Array.isArray(dumpObject.persons),
+      !Array.isArray(dumpObject.keywords),
+      !Array.isArray(dumpObject.keywordVectors),
+      !Array.isArray(dumpObject.configs),
+      !Array.isArray(dumpObject.constraints),
+      !Array.isArray(dumpObject.schedules),
+      !Array.isArray(dumpObject.unavailabilities),
+      !Array.isArray(dumpObject.emailTasks),
+    ];
+
+    if (missings.some((missing) => missing)) {
+      console.warn('Warning: backup payload is missing some entity arrays or has invalid formats. Missing entities:', {
+        persons: missings[0],
+        keywords: missings[1],
+        keywordVectors: missings[2],
+        configs: missings[3],
+        constraints: missings[4],
+        schedules: missings[5],
+        unavailabilities: missings[6],
+        emailTasks: missings[7],
+      });
     }
 
-    const persons = dumpObject.persons as Person[];
-    const keywords = dumpObject.keywords as Keyword[];
-    const keywordVectors = dumpObject.keywordVectors as KeywordVector[];
-    const configs = dumpObject.configs as ScheduleConfig[];
-    const schedules = dumpObject.schedules as SchedulePlan[];
-    const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[];
+    const persons = dumpObject.persons as Person[] ?? [];
+    const keywords = dumpObject.keywords as Keyword[] ?? [];
+    const keywordVectors = dumpObject.keywordVectors as KeywordVector[] ?? [];
+    const configs = dumpObject.configs as ScheduleConfig[] ?? [];
+    const constraints = dumpObject.constraints as ScheduleConstraint[] ?? [];
+    const schedules = dumpObject.schedules as SchedulePlan[] ?? [];
+    const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[] ?? [];
+    const emailTasks = dumpObject.emailTasks as EmailTask[] ?? [];
 
     await this.clearAllEntityData();
 
@@ -983,11 +1195,17 @@ export class SqliteStore {
     for (const config of configs) {
       await this.putConfig(config);
     }
+    for (const constraint of constraints) {
+      await this.putConstraint(constraint);
+    }
     for (const schedule of schedules) {
       await this.putSchedule(schedule);
     }
     for (const unavailability of unavailabilities) {
       await this.putUnavailability(unavailability);
+    }
+    for (const task of emailTasks) {
+      await this.putEmailTask(task);
     }
   }
 
@@ -996,6 +1214,12 @@ export class SqliteStore {
 
     const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
     try {
+      let constraintsRows: unknown[] = [];
+      try {
+        constraintsRows = source.prepare('SELECT * FROM constraints').all();
+      } catch {
+        constraintsRows = [];
+      }
       const snapshot = {
         version: 1,
         tables: {
@@ -1003,8 +1227,10 @@ export class SqliteStore {
           keywords: source.prepare('SELECT * FROM keywords').all(),
           keywordVectors: source.prepare('SELECT * FROM keyword_vectors').all(),
           configs: source.prepare('SELECT * FROM configs').all(),
+          constraints: constraintsRows,
           schedules: source.prepare('SELECT * FROM schedules').all(),
           unavailabilities: source.prepare('SELECT * FROM unavailabilities').all(),
+          emailTasks: source.prepare('SELECT * FROM email_tasks').all(),
           users: source.prepare('SELECT * FROM users').all(),
           refreshTokens: source.prepare('SELECT * FROM refresh_tokens').all(),
         },

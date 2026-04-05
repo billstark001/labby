@@ -1,4 +1,6 @@
 import type {
+  EmailTask,
+  EmailTaskStore,
   Keyword,
   KeywordStore,
   KeywordVector,
@@ -12,6 +14,8 @@ import type {
   PersonUnavailabilityStore,
   ScheduleConfig,
   ScheduleConfigStore,
+  ScheduleConstraint,
+  ScheduleConstraintStore,
   SchedulePlan,
   SchedulePlanStore,
 } from '@labby/core';
@@ -62,6 +66,14 @@ export function createDummyDB(): LabbyDB {
     clear: async () => void 0,
   };
 
+  const constraintsStore: ScheduleConstraintStore = {
+    get: async (id: string) => undefined,
+    list: async (query: ListQuery) => emptyPage<ScheduleConstraint>(query),
+    put: async (value: ScheduleConstraint) => void 0,
+    delete: async (id: string) => void 0,
+    clear: async () => void 0,
+  };
+
   const schedulesStore: SchedulePlanStore = {
     get: async (id: string) => undefined,
     list: async (query: ListQuery) => emptyPage<SchedulePlan>(query),
@@ -78,13 +90,23 @@ export function createDummyDB(): LabbyDB {
     clear: async () => void 0,
   };
 
+  const emailTasksStore: EmailTaskStore = {
+    get: async (id: string) => undefined,
+    list: async (query: ListQuery) => emptyPage<EmailTask>(query),
+    put: async (value: EmailTask) => void 0,
+    delete: async (id: string) => void 0,
+    clear: async () => void 0,
+  };
+
   const db: LabbyDB = {
     persons: personsStore,
     keywords: keywordsStore,
     keywordVectors: keywordVectorsStore,
     configs: configsStore,
+    constraints: constraintsStore,
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
+    emailTasks: emailTasksStore,
   };
 
   return db;

@@ -1,7 +1,7 @@
-//! Hierarchical Navigable Small World (HNSW) approximate nearest-neighbour index.
+//! Hierarchical Navigable Small World (HNSW) approximate nearest-neighbor index.
 //!
 //! Reference: Malkov & Yashunin, "Efficient and robust approximate nearest
-//! neighbour search using Hierarchical Navigable Small World graphs", IEEE
+//! neighbor search using Hierarchical Navigable Small World graphs", IEEE
 //! Transactions on Pattern Analysis and Machine Intelligence, 2018.
 
 use ndarray::Array2;

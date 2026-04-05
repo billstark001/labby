@@ -113,9 +113,48 @@ This helps avoid poor local minima while converging over time.
 - frozen sessions still count for fairness and pair-frequency history
 - additional Hamming penalty discourages unnecessary presenter churn
 
+Default date guidance and warning behavior:
+
+- recommended incremental changeDate is today + 7 days
+- the start date is inclusive: changeDate itself is part of the mutable set
+- if changeDate is earlier than the recommended default, UI shows a warning but does not block execution
+- full re-run can also show the same non-blocking warning when the configuration start date is earlier than the recommended default
+
 Hamming term meaning:
 
 - it penalizes changed (date, presenter) pairs between old mutable part and new mutable part
+
+## Metrics and Human-readable Explanations
+
+Each solve operation can return objective metrics and explanations:
+
+- `uniformityPenalty`
+- `questionerPenalty`
+- `relevancePenalty`
+- `presenterLoadPenalty`
+- `questionerLoadPenalty`
+- `totalRolePenalty`
+- `invalidAssignmentPenalty`
+- `constraintPenalty`
+- `totalCost`
+
+The server also exposes a metrics endpoint for:
+
+- one full history plan
+- one specific session date inside a plan
+
+Explanations are plain-language summaries for each metric item.
+
+## Temporary Session Insert/Delete (History-local)
+
+Temporary operations apply to the current history chain only (new snapshot), not to config defaults.
+
+Supported strategies:
+
+- shift: apply insertion/deletion by shifting session sequence
+- in-place replan: mutate only the selected index locally
+
+These operations are intentionally non-destructive to previous history snapshots.
 
 ## Edge Cases
 

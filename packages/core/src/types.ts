@@ -13,11 +13,13 @@ export interface BaseEntity {
 /** A seminar participant. */
 export interface Person extends BaseEntity {
   keywordIds: string[]; // associated keyword IDs (max 10)
+  modifiedAt?: number;
 }
 
 /** A research keyword / topic tag. */
 export interface Keyword extends BaseEntity {
   // metadata may cache D3 layout coordinates, e.g. { x: 0.4, y: 0.7 }
+  modifiedAt?: number;
 }
 
 /** Directed similarity edge between two keywords. */
@@ -60,15 +62,97 @@ export interface ScheduleConfig {
   notifyTimezone?: string;
   /** Arbitrary extension metadata. */
   metadata?: Record<string, unknown>;
+  modifiedAt?: number;
+}
+
+/** User-configurable scheduled email task. */
+export interface EmailTask {
+  id: string;
+  configId: string;
+  /** 0=Sun..6=Sat */
+  daysOfWeek: number[];
+  /** Daily local send time in HH:mm for the selected timezone. */
+  sendTime?: string;
+  /** IANA timezone, e.g. Asia/Shanghai. Defaults to UTC when omitted. */
+  timezone?: string;
+  emails: string[];
+  /** 0 means unlimited sends for each recipient. */
+  recentTimes: number;
+  /** Template source text, parsed by the template module. */
+  templateText: string;
+  /** Per-recipient successful send count. */
+  sentCounts?: Record<string, number>;
+  /** Last execution timestamp in epoch ms. */
+  lastRunAt?: number;
+  /** Skip exactly one upcoming scheduled run, then auto-reset to false. */
+  skipNextRun?: boolean;
+  /** Last time a scheduled run was skipped due to skipNextRun. */
+  lastSkippedAt?: number;
+  metadata?: Record<string, unknown>;
+  modifiedAt?: number;
+}
+
+export type TemplateFormat = 'markdown' | 'html';
+
+export interface TemplateRenderError {
+  expression: string;
+  message: string;
+  start: number;
+  end: number;
+  kind: 'lex' | 'parse' | 'eval' | 'template';
+}
+
+export interface TemplateRenderResult {
+  output: string;
+  errors: TemplateRenderError[];
+}
+
+export interface ScheduleMetrics {
+  uniformityPenalty: number;
+  questionerPenalty: number;
+  relevancePenalty: number;
+  presenterLoadPenalty: number;
+  questionerLoadPenalty: number;
+  totalRolePenalty: number;
+  invalidAssignmentPenalty: number;
+  constraintPenalty: number;
+  totalCost: number;
+}
+
+export interface MetricExplanation {
+  key: keyof ScheduleMetrics;
+  label: string;
+  value: number;
+  summary: string;
+}
+
+export interface ScheduleMutationInput {
+  previousPlan: SchedulePlan;
+  /** Target session date in the previous plan. */
+  date: string;
+  action: 'insert' | 'delete';
+  insertedDate?: string;
+  position?: 'before' | 'after';
 }
 
 /** Immutable snapshot of a generated schedule. */
 export interface SchedulePlan {
   id: string;
   createdAt: number; // epoch ms – used for timeline history
+  modifiedAt?: number;
   configId: string;
   sessions: Session[];
   notes?: string; // user-written notes for this history entry
+  sessionMutations?: ScheduleSessionMutationRecord[];
+}
+
+/** Mutation event stored by date so it can be replayed across config date changes. */
+export interface ScheduleSessionMutationRecord {
+  date: string;
+  action: 'insert' | 'delete';
+  insertedDate?: string;
+  position?: 'before' | 'after';
+  createdAt: number;
 }
 
 /** A period when a person is unavailable (cannot present or question). */
@@ -117,13 +201,22 @@ export interface TripletQuery {
   negativeId: string; // keyword B ("… than to B")
 }
 
+/** Iterative optimizer options for embedding updates. */
+export interface IterativeUpdateOptions {
+  learningRate?: number;
+  minIters?: number;
+  maxIters?: number;
+  stabilityWindow?: number;
+  stabilityTolerance?: number;
+}
+
 /** Pair distance supervision query (2 points). */
 export interface PairSupervisionQuery {
   kind: 'pair';
   leftId: string;
   rightId: string;
   targetDistance: number;
-  learningRate?: number;
+  updateOptions?: IterativeUpdateOptions;
 }
 
 /**
@@ -138,7 +231,7 @@ export interface RankedSupervisionQuery {
   anchorId: string;
   orderedIds: string[];
   margin?: number;
-  learningRate?: number;
+  updateOptions?: IterativeUpdateOptions;
 }
 
 /** Unified supervision query for similarity training. */
@@ -154,6 +247,9 @@ export type SupervisionQuery = PairSupervisionQuery | RankedSupervisionQuery;
  * or too unfamiliar with the research topic).
  */
 export interface NoOverlapConstraint {
+  id: string;
+  /** Optional config scope. Omit or set empty string to apply to all configs. */
+  configId?: string;
   type: 'no-overlap';
   /** Constraint applies to any person whose ID is in this set. */
   personIds: string[];
@@ -162,6 +258,7 @@ export interface NoOverlapConstraint {
    * Defaults to 5.0.
    */
   weight?: number;
+  modifiedAt?: number;
 }
 
 /**
@@ -170,6 +267,9 @@ export interface NoOverlapConstraint {
  * Useful when a group benefits from cross-exposure or shared research topics.
  */
 export interface AffinityBoostConstraint {
+  id: string;
+  /** Optional config scope. Omit or set empty string to apply to all configs. */
+  configId?: string;
   type: 'affinity-boost';
   /** Members of the group whose co-occurrence should be boosted. */
   personIds: string[];
@@ -179,7 +279,34 @@ export interface AffinityBoostConstraint {
    * Defaults to 2.0.
    */
   boost?: number;
+  modifiedAt?: number;
+}
+
+/**
+ * Adjust expected appearance frequency for selected persons by multiplier k.
+ * k > 1 encourages more appearances, k < 1 discourages them.
+ */
+export interface FrequencyMultiplierConstraint {
+  id: string;
+  /** Optional config scope. Omit or set empty string to apply to all configs. */
+  configId?: string;
+  type: 'frequency-multiplier';
+  personIds: string[];
+  baseline: number;
+  multiplier: number;
+  roleScope?: 'presenter' | 'questioner' | 'both';
+  weight?: number;
+  modifiedAt?: number;
 }
 
 /** Union of all supported schedule constraints. */
-export type ScheduleConstraint = NoOverlapConstraint | AffinityBoostConstraint;
+export type ScheduleConstraint =
+  | NoOverlapConstraint
+  | AffinityBoostConstraint
+  | FrequencyMultiplierConstraint;
+
+
+export interface ScheduleSolver {
+  solveFull(input: SolverInput): SchedulePlan;
+  solveIncremental(input: IncrementalSolverInput): SchedulePlan;
+}

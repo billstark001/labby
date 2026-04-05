@@ -1,14 +1,34 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import type { IterativeUpdateOptions } from '@labby/core';
 
 type NativeEngineLike = {
   hydrate(data: Float32Array, nNodes: number): void;
   recommendTriplet(excludedPairs: Uint32Array): Uint32Array | number[];
-  updateTriplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number;
-  updatePair(idA: number, idB: number, targetDistance: number, learningRate: number): number;
-  updateTripletsBatchFlush(triplets: Uint32Array, margin: number, learningRate: number): Buffer | Uint8Array;
-  updatePairsBatchFlush(pairs: Uint32Array, targetDistance: number, learningRate: number): Buffer | Uint8Array;
+  updateTriplet(
+    idA: number,
+    idB: number,
+    idC: number,
+    margin: number,
+    options?: IterativeUpdateOptions,
+  ): number;
+  updatePair(
+    idA: number,
+    idB: number,
+    targetDistance: number,
+    options?: IterativeUpdateOptions,
+  ): number;
+  updateTripletsBatchFlush(
+    triplets: Uint32Array,
+    margin: number,
+    options?: IterativeUpdateOptions,
+  ): Buffer | Uint8Array;
+  updatePairsBatchFlush(
+    pairs: Uint32Array,
+    targetDistance: number,
+    options?: IterativeUpdateOptions,
+  ): Buffer | Uint8Array;
   flushDirtyNodes(): Buffer | Uint8Array;
 };
 
@@ -19,6 +39,23 @@ interface DirtyNode {
 }
 
 const LATENT_DIM = 64;
+const DEFAULT_ITERATIVE_UPDATE_OPTIONS: Required<IterativeUpdateOptions> = {
+  learningRate: 0.05,
+  minIters: 2,
+  maxIters: 16,
+  stabilityWindow: 3,
+  stabilityTolerance: 1e-3,
+};
+
+function resolveUpdateOptions(options?: IterativeUpdateOptions): IterativeUpdateOptions {
+  return {
+    learningRate: options?.learningRate ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.learningRate,
+    minIters: options?.minIters ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.minIters,
+    maxIters: options?.maxIters ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.maxIters,
+    stabilityWindow: options?.stabilityWindow ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.stabilityWindow,
+    stabilityTolerance: options?.stabilityTolerance ?? DEFAULT_ITERATIVE_UPDATE_OPTIONS.stabilityTolerance,
+  };
+}
 
 function parseDirtyBuffer(buffer: Buffer | Uint8Array): DirtyNode[] {
   const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
@@ -107,20 +144,39 @@ export class EmbeddingEngineAdapter {
     return [values[0]!, values[1]!, values[2]!];
   }
 
-  updateTriplet(idA: number, idB: number, idC: number, margin: number, learningRate: number): number {
-    return this.engine.updateTriplet(idA, idB, idC, margin, learningRate);
+  updateTriplet(
+    idA: number,
+    idB: number,
+    idC: number,
+    margin: number,
+    options?: IterativeUpdateOptions,
+  ): number {
+    return this.engine.updateTriplet(idA, idB, idC, margin, resolveUpdateOptions(options));
   }
 
-  updatePair(idA: number, idB: number, targetDistance: number, learningRate: number): number {
-    return this.engine.updatePair(idA, idB, targetDistance, learningRate);
+  updatePair(
+    idA: number,
+    idB: number,
+    targetDistance: number,
+    options?: IterativeUpdateOptions,
+  ): number {
+    return this.engine.updatePair(idA, idB, targetDistance, resolveUpdateOptions(options));
   }
 
-  updateTripletsBatchFlush(triplets: Uint32Array, margin: number, learningRate: number): DirtyNode[] {
-    return parseDirtyBuffer(this.engine.updateTripletsBatchFlush(triplets, margin, learningRate));
+  updateTripletsBatchFlush(
+    triplets: Uint32Array,
+    margin: number,
+    options?: IterativeUpdateOptions,
+  ): DirtyNode[] {
+    return parseDirtyBuffer(this.engine.updateTripletsBatchFlush(triplets, margin, resolveUpdateOptions(options)));
   }
 
-  updatePairsBatchFlush(pairs: Uint32Array, targetDistance: number, learningRate: number): DirtyNode[] {
-    return parseDirtyBuffer(this.engine.updatePairsBatchFlush(pairs, targetDistance, learningRate));
+  updatePairsBatchFlush(
+    pairs: Uint32Array,
+    targetDistance: number,
+    options?: IterativeUpdateOptions,
+  ): DirtyNode[] {
+    return parseDirtyBuffer(this.engine.updatePairsBatchFlush(pairs, targetDistance, resolveUpdateOptions(options)));
   }
 
   flushDirtyNodes(): DirtyNode[] {
