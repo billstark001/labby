@@ -194,7 +194,7 @@ pub struct EmbeddingEngine {
     free_list:  Vec<u32>,
     /// Nodes modified since last flush.
     dirty:      HashSet<u32>,
-    /// Approximate nearest-neighbour index over the 64-D space.
+    /// Approximate nearest-neighbor index over the 64-D space.
     ann:        HNSWIndex,
     /// Number of currently active nodes.
     n_active:   usize,
@@ -353,8 +353,8 @@ impl EmbeddingEngine {
     /// Recommend one high-information triplet `(anchor, positive, negative)`.
     ///
     /// Strategy:
-    /// - anchor-positive from near neighbours with non-trivial uncertainty
-    /// - negative from slightly farther neighbours (hard but valid)
+    /// - anchor-positive from near neighbors with non-trivial uncertainty
+    /// - negative from slightly farther neighbors (hard but valid)
     /// - skip recently asked anchor-positive pairs from `excluded_pairs`
     ///
     /// `excluded_pairs` format: `[a0,b0,a1,b1,...]`.
@@ -770,7 +770,7 @@ impl EmbeddingEngine {
 
     // ── k-NN query (public) ───────────────────────────────────────────────────
 
-    /// Returns up to `k` nearest neighbours as `(node_id, true_distance)` pairs.
+    /// Returns up to `k` nearest neighbors as `(node_id, true_distance)` pairs.
     pub fn get_knn(&self, id: u32, k: usize) -> Vec<(u32, f32)> {
         let query_row: Vec<f32> = self.coords.row(id as usize).to_vec();
         let mut results = self.ann.knn_search(&query_row, k + 1, k * 2 + 20, &self.coords);
@@ -1503,7 +1503,7 @@ mod tests {
         pts.push(axis_vec(0, 0.0));
         pts.push(axis_vec(0, 0.35));
 
-        // Near neighbourhood around touched points.
+        // Near neighborhood around touched points.
         for i in 0..8 {
             let mut v = [0.0f32; LATENT_DIM];
             v[0] = 0.15 + i as f32 * 0.06;
