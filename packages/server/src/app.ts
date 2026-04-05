@@ -78,6 +78,8 @@ export interface CreateAppOptions {
   bootstrapPassword?: string;
   bootstrapEmail?: string;
   enablePublicEmailTaskIcs?: boolean;
+  onEmailTasksChanged?: () => Promise<void> | void;
+  runEmailTaskNow?: (taskId: string) => Promise<void>;
 }
 
 export async function createApp(options: CreateAppOptions): Promise<{ app: Hono; store: SqliteStore; close: () => Promise<void>; }> {
@@ -436,11 +438,45 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.put("/api/v1/db/email-tasks/:id", async (c) => {
     const task = await c.req.json<EmailTask>();
     await store.putEmailTask({ ...task, id: c.req.param("id") });
+    await options.onEmailTasksChanged?.();
     return ok(c, await store.getEmailTask(c.req.param("id")), 201);
   });
   app.delete("/api/v1/db/email-tasks/:id", async (c) => {
     await store.deleteEmailTask(c.req.param("id"));
+    await options.onEmailTasksChanged?.();
     return c.body(null, 204);
+  });
+  app.post('/api/v1/db/email-tasks/:id/send-now', async (c) => {
+    const taskId = c.req.param('id');
+    const task = await store.getEmailTask(taskId);
+    if (!task) {
+      throw new AppError('VALIDATION_ERROR', 'email task not found', 404);
+    }
+    if (!options.runEmailTaskNow) {
+      throw new AppError('INTERNAL_ERROR', 'email sender is not configured on server', 503);
+    }
+    await options.runEmailTaskNow(taskId);
+    return ok(c, { ok: true });
+  });
+  app.post('/api/v1/db/email-tasks/:id/skip-next', async (c) => {
+    const taskId = c.req.param('id');
+    const task = await store.getEmailTask(taskId);
+    if (!task) {
+      throw new AppError('VALIDATION_ERROR', 'email task not found', 404);
+    }
+
+    const body = await c.req.json().catch(() => ({})) as { skip?: unknown };
+    const skip = typeof body.skip === 'boolean' ? body.skip : true;
+
+    const updated: EmailTask = {
+      ...task,
+      skipNextRun: skip,
+      modifiedAt: Date.now(),
+    };
+
+    await store.putEmailTask(updated);
+    await options.onEmailTasksChanged?.();
+    return ok(c, updated);
   });
 
   // ---------------------------------------------------------------------------

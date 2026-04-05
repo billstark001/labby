@@ -659,6 +659,16 @@ navEmailTasks:
   zh-CN: 邮件任务
   ja-JP: メールタスク
 
+emailTaskSendTime:
+  en: Send Time (HH:mm)
+  zh-CN: 发送时间（HH:mm）
+  ja-JP: 送信時刻（HH:mm）
+
+emailTaskTimezone:
+  en: Timezone (IANA)
+  zh-CN: 时区（IANA）
+  ja-JP: タイムゾーン（IANA）
+
 newEmailTask:
   en: New Email Task
   zh-CN: 新建邮件任务
@@ -698,6 +708,46 @@ copyNextEmailManually:
   en: Copy Next Email Manually
   zh-CN: 手动复制下一封邮件
   ja-JP: 次のメールを手動コピー
+
+emailTaskSendNow:
+  en: Send Now
+  zh-CN: 立即发送
+  ja-JP: 今すぐ送信
+
+emailTaskSendNowSuccess:
+  en: Email task sent successfully
+  zh-CN: 邮件任务发送成功
+  ja-JP: メールタスクを送信しました
+
+emailTaskSendNowFailed:
+  en: Failed to send email task
+  zh-CN: 邮件任务发送失败
+  ja-JP: メールタスクの送信に失敗しました
+
+emailTaskSkipNext:
+  en: Skip Next Run
+  zh-CN: 跳过下一次
+  ja-JP: 次回をスキップ
+
+emailTaskSkipNextCancel:
+  en: Cancel Skip Next
+  zh-CN: 取消跳过下一次
+  ja-JP: 次回スキップを取消
+
+emailTaskSkipNextEnabled:
+  en: Next scheduled run will be skipped
+  zh-CN: 下一次定时发送将被跳过
+  ja-JP: 次回の定期実行をスキップします
+
+emailTaskSkipNextDisabled:
+  en: Skip-next has been canceled
+  zh-CN: 已取消跳过下一次
+  ja-JP: 次回スキップを解除しました
+
+emailTaskSkipNextFailed:
+  en: Failed to update skip-next state
+  zh-CN: 更新跳过状态失败
+  ja-JP: スキップ状態の更新に失敗しました
 
 emailTaskEditorTitle:
   en: Email Task Editor

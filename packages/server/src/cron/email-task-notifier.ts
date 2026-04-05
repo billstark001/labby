@@ -18,11 +18,69 @@ function uniqueSortedDays(days: number[]): number[] {
   return [...new Set(days.filter((day) => day >= 0 && day <= 6))].sort((a, b) => a - b);
 }
 
-function toCronExpression(days: number[], hour: number): string {
+function parseSendTime(sendTime: string | undefined, fallbackHour: number): { hour: number; minute: number } {
+  const text = (sendTime ?? '').trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return {
+      hour: Math.max(0, Math.min(23, fallbackHour)),
+      minute: 0,
+    };
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return {
+      hour: Math.max(0, Math.min(23, fallbackHour)),
+      minute: 0,
+    };
+  }
+
+  return { hour, minute };
+}
+
+function toCronExpression(days: number[], hour: number, minute: number): string {
   const normalizedDays = uniqueSortedDays(days);
   const dow = normalizedDays.join(',');
   const clampedHour = Math.max(0, Math.min(23, hour));
-  return `0 ${clampedHour} * * ${dow}`;
+  const clampedMinute = Math.max(0, Math.min(59, minute));
+  return `${clampedMinute} ${clampedHour} * * ${dow}`;
+}
+
+function resolveTaskTimezone(task: EmailTask): string {
+  return (
+    task.timezone
+    ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : undefined)
+    ?? 'UTC'
+  );
+}
+
+function formatZonedDate(runAt: number, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(runAt));
+  const year = parts.find((part) => part.type === 'year')?.value ?? '1970';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '01';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '01';
+  return `${year}-${month}-${day}`;
+}
+
+function formatZonedDateTime(runAt: number, locale: string, timeZone: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).format(new Date(runAt));
 }
 
 function latestScheduleSummary(sessions: number, createdAt: number | null): string {
@@ -55,8 +113,9 @@ export class EmailTaskNotifier {
       const jobName = `email-task:${task.id}`;
       active.add(jobName);
 
-      const expression = toCronExpression(days, this.options.defaultHour ?? 9);
-      const timezone = typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : 'UTC';
+      const sendTime = parseSendTime(task.sendTime ?? (task.metadata?.sendTime as string | undefined), this.options.defaultHour ?? 9);
+      const expression = toCronExpression(days, sendTime.hour, sendTime.minute);
+      const timezone = resolveTaskTimezone(task);
 
       scheduler.register({
         name: jobName,
@@ -78,10 +137,16 @@ export class EmailTaskNotifier {
   async runTask(taskId: string): Promise<void> {
     const task = await this.options.store.getEmailTask(taskId);
     if (!task) return;
-    await this.executeTask(task);
+    await this.executeTask(task, { manual: false });
   }
 
-  private async executeTask(task: EmailTask): Promise<void> {
+  async runTaskNow(taskId: string): Promise<void> {
+    const task = await this.options.store.getEmailTask(taskId);
+    if (!task) return;
+    await this.executeTask(task, { manual: true });
+  }
+
+  private async executeTask(task: EmailTask, options: { manual: boolean }): Promise<void> {
     const config = await this.options.store.getConfig(task.configId);
     if (!config) return;
     const persons = await this.options.store.listPersons();
@@ -92,6 +157,16 @@ export class EmailTaskNotifier {
 
     const sentCounts = { ...(task.sentCounts ?? {}) };
     const runAt = Date.now();
+
+    if (!options.manual && task.skipNextRun) {
+      await this.options.store.putEmailTask({
+        ...task,
+        skipNextRun: false,
+        lastSkippedAt: runAt,
+        modifiedAt: runAt,
+      });
+      return;
+    }
 
     for (const recipient of task.emails) {
       const currentSent = sentCounts[recipient] ?? 0;
@@ -131,6 +206,7 @@ export class EmailTaskNotifier {
       ...task,
       sentCounts,
       lastRunAt: runAt,
+      modifiedAt: runAt,
     });
   }
 
@@ -148,6 +224,8 @@ export class EmailTaskNotifier {
       ?? (task.metadata?.injectionLanguage as string | undefined)
       ?? 'en';
     const granularity = (task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date';
+    const timeZone = resolveTaskTimezone(task);
+    const anchorDate = formatZonedDate(runAt, timeZone);
 
     const scheduleVariables = buildEmailTemplateScheduleVariables({
       plan: latestPlan,
@@ -155,15 +233,21 @@ export class EmailTaskNotifier {
       config,
       locale,
       granularity,
-      anchorDate: new Date(runAt).toISOString().slice(0, 10),
+      anchorDate,
     });
     const scheduleIcsUrl = this.buildTaskIcsUrl(task);
+    const nowIsoUtc = new Date(runAt).toISOString();
+    const nowLocal = formatZonedDateTime(runAt, locale, timeZone);
 
     return {
       taskId: task.id,
       configId: config.id,
       recipient,
-      now: new Date(runAt).toISOString(),
+      now: nowIsoUtc,
+      nowIsoUtc,
+      nowLocal,
+      runTimezone: timeZone,
+      anchorDate,
       sessionCount,
       latestCreatedAt,
       summary: latestScheduleSummary(sessionCount, latestCreatedAt),

@@ -71,6 +71,10 @@ export interface EmailTask {
   configId: string;
   /** 0=Sun..6=Sat */
   daysOfWeek: number[];
+  /** Daily local send time in HH:mm for the selected timezone. */
+  sendTime?: string;
+  /** IANA timezone, e.g. Asia/Shanghai. Defaults to UTC when omitted. */
+  timezone?: string;
   emails: string[];
   /** 0 means unlimited sends for each recipient. */
   recentTimes: number;
@@ -80,6 +84,10 @@ export interface EmailTask {
   sentCounts?: Record<string, number>;
   /** Last execution timestamp in epoch ms. */
   lastRunAt?: number;
+  /** Skip exactly one upcoming scheduled run, then auto-reset to false. */
+  skipNextRun?: boolean;
+  /** Last time a scheduled run was skipped due to skipNextRun. */
+  lastSkippedAt?: number;
   metadata?: Record<string, unknown>;
   modifiedAt?: number;
 }

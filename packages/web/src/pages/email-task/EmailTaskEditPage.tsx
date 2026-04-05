@@ -14,9 +14,10 @@ import {
   type TemplateFormat,
 } from '@labby/core';
 
-import { Button, Dialog } from '@/components/ui';
+import { Button, Dialog, toast } from '@/components/ui';
 import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
+import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/lib/email-task-actions';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
@@ -115,6 +116,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [selectedTaskId, setSelectedTaskId] = useState<string>(taskId ?? '');
   const [configId, setConfigId] = useState('');
   const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]);
+  const [sendTime, setSendTime] = useState('09:00');
+  const [taskTimezone, setTaskTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   const [emailsText, setEmailsText] = useState('');
   const [recentTimes, setRecentTimes] = useState(0);
   const [templateText, setTemplateText] = useState('');
@@ -178,6 +181,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setSelectedTaskId(task.id);
     setConfigId(task.configId);
     setSelectedDays(task.daysOfWeek);
+    setSendTime(task.sendTime ?? '09:00');
+    setTaskTimezone(task.timezone ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : 'UTC'));
     setEmailsText(task.emails.join(', '));
     setRecentTimes(task.recentTimes);
     setTemplateText(task.templateText);
@@ -191,6 +196,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setSelectedTaskId('');
     setConfigId(nextConfigId ?? configs[0]?.id ?? '');
     setSelectedDays([1, 3, 5]);
+    setSendTime('09:00');
+    setTaskTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     setEmailsText('');
     setRecentTimes(0);
     setTemplateText(DEFAULT_TEMPLATE_PRESETS[0]?.content ?? '');
@@ -226,6 +233,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       id: nextId,
       configId,
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
+      sendTime,
+      timezone: taskTimezone || 'UTC',
       emails: parseEmails(emailsText),
       recentTimes,
       templateText,
@@ -236,6 +245,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         dateGranularity,
         dateLocale: injectionLanguage,
         serveScheduleIcs,
+        timezone: taskTimezone || 'UTC',
+        sendTime,
       },
     };
     await db.emailTasks.put(task);
@@ -254,6 +265,35 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   async function copyNextEmail(): Promise<void> {
     await navigator.clipboard.writeText(previewResult.html);
   }
+
+  async function triggerSendNow(): Promise<void> {
+    if (!selectedTaskId || !capability.canAutoSend) return;
+    try {
+      await sendEmailTaskNow(selectedTaskId);
+      await loadAllEmailTasks(db);
+      toast.success(t('emailTaskSendNowSuccess'));
+    } catch (err) {
+      toast.error(`${t('emailTaskSendNowFailed')}: ${String(err)}`);
+    }
+  }
+
+  async function toggleSkipNext(): Promise<void> {
+    if (!selectedTaskId || !capability.canAutoSend) return;
+    const current = tasks.find((item) => item.id === selectedTaskId);
+    const nextSkip = !(current?.skipNextRun ?? false);
+    try {
+      await setEmailTaskSkipNext(selectedTaskId, nextSkip);
+      await loadAllEmailTasks(db);
+      toast.success(nextSkip ? t('emailTaskSkipNextEnabled') : t('emailTaskSkipNextDisabled'));
+    } catch (err) {
+      toast.error(`${t('emailTaskSkipNextFailed')}: ${String(err)}`);
+    }
+  }
+
+  const currentTask = useMemo(
+    () => tasks.find((item) => item.id === selectedTaskId),
+    [tasks, selectedTaskId],
+  );
 
   function toggleDay(day: number): void {
     setSelectedDays((prev) => prev.includes(day)
@@ -321,6 +361,26 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
               {selectedDays.map((day) => DAY_OPTIONS.find((item) => item.value === day)?.label ?? String(day)).join(', ') || t('noneSelected')}
             </span>
           </div>
+        </div>
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('emailTaskSendTime')}</label>
+          <input
+            class={s.input}
+            type="time"
+            value={sendTime}
+            onInput={(e) => setSendTime((e.target as HTMLInputElement).value || '09:00')}
+          />
+        </div>
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('emailTaskTimezone')}</label>
+          <input
+            class={s.input}
+            value={taskTimezone}
+            onInput={(e) => setTaskTimezone((e.target as HTMLInputElement).value)}
+            placeholder="Asia/Shanghai"
+          />
         </div>
 
         <div class={s.formGroup}>
@@ -425,6 +485,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         <div class={s.flexGapSm}>
           <Button variant="primary" onClick={() => void saveTask()}>{t('save')}</Button>
           <Button variant="secondary" onClick={() => resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
+          {capability.canAutoSend && selectedTaskId && (
+            <>
+              <Button variant="secondary" onClick={() => void triggerSendNow()}>{t('emailTaskSendNow')}</Button>
+              <Button variant="ghost" onClick={() => void toggleSkipNext()}>
+                {currentTask?.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
+              </Button>
+            </>
+          )}
           <Button variant="ghost" onClick={() => navigate('/email-tasks')}>{t('backToList')}</Button>
         </div>
       </div>
