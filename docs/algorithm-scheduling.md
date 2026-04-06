@@ -16,7 +16,7 @@ where $\Delta$ is cost increase and $T$ decreases over iterations.
 
 ## Scope
 
-- Solver implementation: packages/core/src/solver.ts
+- Solver implementation: packages/core/src/schedule/annealing.ts and packages/core/src/schedule/index.ts
 - This document covers scheduling only.
 - Similarity supervision and projection are documented in docs/algorithm-similarity.md.
 

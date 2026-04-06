@@ -35,6 +35,7 @@ let emailTaskNotifier: EmailTaskNotifierType | null = null;
 
 const { app, store, close } = await createApp({
   db: dbConfig,
+  webDistDir: process.env.WEB_DIST_DIR,
   enableLogger: true,
   authIssuer: process.env.AUTH_ISSUER,
   authAudience: process.env.AUTH_AUDIENCE,
@@ -46,9 +47,6 @@ const { app, store, close } = await createApp({
   rootUsername: process.env.ROOT_USERNAME,
   rootPassword: process.env.ROOT_PASSWORD,
   rootEmail: process.env.ROOT_EMAIL,
-  bootstrapUsername: process.env.BOOTSTRAP_ADMIN_USERNAME,
-  bootstrapPassword: process.env.BOOTSTRAP_ADMIN_PASSWORD,
-  bootstrapEmail: process.env.BOOTSTRAP_ADMIN_EMAIL,
   enablePublicEmailTaskIcs,
   onEmailTasksChanged: async () => {
     await emailTaskNotifier?.syncJobs();

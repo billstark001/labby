@@ -12,6 +12,7 @@
 - Run Rust-backed embedding supervision (triplet, pair, ranked) and persist updated vectors
 - Register cron-based email reminders from schedule configs
 - Register cron-based whole-database backups to email, Google Drive, or OneDrive
+- Optionally serve built frontend static assets (`packages/web/dist`) with SPA fallback
 
 ## Roles
 
@@ -74,7 +75,7 @@ Required or important settings:
 - `DB_PATH`
 - `PASETO_SECRET` or separate access/refresh keys
 - `ROOT_PASSWORD`
-- `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_ADMIN_EMAIL`
+- `WEB_DIST_DIR` (optional, for serving built frontend static files in server mode)
 
 Optional settings:
 
@@ -129,6 +130,13 @@ When `BACKUP_CRON` is configured, the server registers a recurring whole-databas
 - `BACKUP_TARGET=onedrive` uploads to OneDrive using Microsoft OAuth refresh credentials.
 
 Gmail delivery can reuse the same Google OAuth client JSON by setting `SMTP_PROVIDER=gmail` and supplying a Gmail-capable refresh token.
+
+For container/server deployment:
+
+- Docker: mount OAuth JSON/token files read-only and set `GOOGLE_OAUTH_JSON_PATH` / `GOOGLE_OAUTH_REFRESH_TOKEN_PATH` to mounted paths.
+- GCP Cloud Run: prefer Secret Manager; mount OAuth JSON as files and bind refresh token via file or env secret.
+
+See `docs/deploy-gcp.md` for concrete CLI examples.
 
 ## Embedding Runtime Notes
 

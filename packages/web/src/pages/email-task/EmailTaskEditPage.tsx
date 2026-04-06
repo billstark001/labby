@@ -15,6 +15,7 @@ import {
 } from '@labby/core';
 
 import { Button, Dialog, toast } from '@/components/ui';
+import { confirmDialog } from '@/components/ui/Dialog';
 import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
 import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/lib/email-task-actions';
@@ -129,6 +130,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [showDaysDialog, setShowDaysDialog] = useState(false);
   const [showVarDialog, setShowVarDialog] = useState(false);
   const [docLanguage, setDocLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
+  const [isDirty, setIsDirty] = useState(false);
 
   const initializedKeyRef = useRef('');
 
@@ -190,6 +192,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
     setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
     setServeScheduleIcs((task.metadata?.serveScheduleIcs as boolean | undefined) ?? false);
+    setIsDirty(false);
   }
 
   function resetForm(nextConfigId?: string): void {
@@ -205,6 +208,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setInjectionLanguage(i18n.lang.value);
     setDateGranularity('date');
     setServeScheduleIcs(false);
+    setIsDirty(false);
   }
 
   useEffect(() => {
@@ -225,6 +229,41 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       initializedKeyRef.current = targetKey;
     }
   }, [taskId, tasks, configs]);
+
+  const skipNextHashChangeRef = useRef(false);
+
+  useEffect(() => {
+    if (!isDirty) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    const handleHashChange = (e: HashChangeEvent) => {
+      // Skip if this event was triggered by our own programmatic navigation
+      if (skipNextHashChangeRef.current) {
+        skipNextHashChangeRef.current = false;
+        return;
+      }
+      // Revert the navigation first, then ask for confirmation
+      skipNextHashChangeRef.current = true;
+      window.history.pushState(null, '', e.oldURL);
+      confirmDialog(t('unsavedChangesWarning'), '', () => {
+        // User confirmed leaving - navigate to the new URL and mark clean
+        setIsDirty(false);
+        skipNextHashChangeRef.current = true;
+        window.history.pushState(null, '', e.newURL);
+      }, undefined, t('confirm'));
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, [isDirty]);
 
   async function saveTask(): Promise<void> {
     if (!configId) return;
@@ -251,6 +290,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     };
     await db.emailTasks.put(task);
     await loadAllEmailTasks(db);
+    setIsDirty(false);
     setSelectedTaskId(nextId);
     navigate(`/email-tasks/edit/${nextId}`);
   }
@@ -296,12 +336,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   );
 
   function toggleDay(day: number): void {
+    setIsDirty(true);
     setSelectedDays((prev) => prev.includes(day)
       ? prev.filter((value) => value !== day)
       : [...prev, day].sort((a, b) => a - b));
   }
 
   function insertScheduleTableSnippet(): void {
+    setIsDirty(true);
     if (templateFormat === 'html') {
       setTemplateText((prev) => `${prev}\n\n<table border="1" cellpadding="6" cellspacing="0">\n  <thead><tr><th>Date</th><th>Presenter</th><th>Questioners</th></tr></thead>\n  <tbody>\n    <tr><td>{{ now }}</td><td>{{ recipient }}</td><td>{{ summary }}</td></tr>\n  </tbody>\n</table>`.trim());
       return;
@@ -345,7 +387,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       <div class={s.card}>
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskConfig')}</label>
-          <select class={s.input} value={configId} onChange={(e) => setConfigId((e.target as HTMLSelectElement).value)}>
+          <select class={s.input} value={configId} onChange={(e) => { setIsDirty(true); setConfigId((e.target as HTMLSelectElement).value); }}>
             <option value="">{t('selectConfigFirst')}</option>
             {configs.map((config) => (
               <option key={config.id} value={config.id}>{getScheduleConfigLabel(config)}</option>
@@ -369,7 +411,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             class={s.input}
             type="time"
             value={sendTime}
-            onInput={(e) => setSendTime((e.target as HTMLInputElement).value || '09:00')}
+            onInput={(e) => { setIsDirty(true); setSendTime((e.target as HTMLInputElement).value || '09:00'); }}
           />
         </div>
 
@@ -378,14 +420,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
           <input
             class={s.input}
             value={taskTimezone}
-            onInput={(e) => setTaskTimezone((e.target as HTMLInputElement).value)}
+            onInput={(e) => { setIsDirty(true); setTaskTimezone((e.target as HTMLInputElement).value); }}
             placeholder="Asia/Shanghai"
           />
         </div>
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskEmails')}</label>
-          <input class={s.input} value={emailsText} onInput={(e) => setEmailsText((e.target as HTMLInputElement).value)} />
+          <input class={s.input} value={emailsText} onInput={(e) => { setIsDirty(true); setEmailsText((e.target as HTMLInputElement).value); }} />
         </div>
 
         <div class={s.formGroup}>
@@ -395,7 +437,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             type="number"
             min={0}
             value={recentTimes}
-            onInput={(e) => setRecentTimes(Number.parseInt((e.target as HTMLInputElement).value || '0', 10))}
+            onInput={(e) => { setIsDirty(true); setRecentTimes(Number.parseInt((e.target as HTMLInputElement).value || '0', 10)); }}
           />
         </div>
 
@@ -419,7 +461,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTemplateFormat')}</label>
-          <select class={s.input} value={templateFormat} onChange={(e) => setTemplateFormat((e.target as HTMLSelectElement).value as TemplateFormat)}>
+          <select class={s.input} value={templateFormat} onChange={(e) => { setIsDirty(true); setTemplateFormat((e.target as HTMLSelectElement).value as TemplateFormat); }}>
             <option value="markdown">Markdown</option>
             <option value="html">HTML</option>
           </select>
@@ -427,7 +469,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('templateInjectionLanguage')}</label>
-          <select class={s.input} value={injectionLanguage} onChange={(e) => setInjectionLanguage((e.target as HTMLSelectElement).value as 'en' | 'zh-CN' | 'ja-JP')}>
+          <select class={s.input} value={injectionLanguage} onChange={(e) => { setIsDirty(true); setInjectionLanguage((e.target as HTMLSelectElement).value as 'en' | 'zh-CN' | 'ja-JP'); }}>
             <option value="en">English</option>
             <option value="zh-CN">中文</option>
             <option value="ja-JP">日本語</option>
@@ -436,7 +478,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('dateDisplayGranularity')}</label>
-          <select class={s.input} value={dateGranularity} onChange={(e) => setDateGranularity((e.target as HTMLSelectElement).value as ScheduleDateGranularity)}>
+          <select class={s.input} value={dateGranularity} onChange={(e) => { setIsDirty(true); setDateGranularity((e.target as HTMLSelectElement).value as ScheduleDateGranularity); }}>
             <option value="date">{t('dateGranularityDate')}</option>
             <option value="date-time">{t('dateGranularityDateTime')}</option>
             <option value="month-day">{t('dateGranularityMonthDay')}</option>
@@ -450,7 +492,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             <input
               type="checkbox"
               checked={serveScheduleIcs}
-              onChange={(e) => setServeScheduleIcs((e.target as HTMLInputElement).checked)}
+              onChange={(e) => { setIsDirty(true); setServeScheduleIcs((e.target as HTMLInputElement).checked); }}
             />
             <span class={`${s.text12} ${s.textMuted}`}>{t('emailTaskServeScheduleIcsHint')}</span>
           </label>
@@ -458,7 +500,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTemplateEditor')}</label>
-          <CodeMirrorEditor value={templateText} onChange={setTemplateText} />
+          <CodeMirrorEditor value={templateText} onChange={(v) => { setIsDirty(true); setTemplateText(v); }} />
           <div class={`${s.text12} ${s.textMuted}`}>{t('templateSyntaxHint')}</div>
           <div class={s.flexGapSm}>
             <Button variant="ghost" onClick={insertScheduleTableSnippet}>{t('insertScheduleTableTemplate')}</Button>

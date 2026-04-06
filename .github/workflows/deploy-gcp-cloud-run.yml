@@ -1,0 +1,90 @@
+name: Deploy Server to GCP Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: GCP Project ID
+        required: true
+        type: string
+      region:
+        description: Cloud Run region
+        required: true
+        default: asia-east1
+        type: string
+      service:
+        description: Cloud Run service name
+        required: true
+        default: labby-server
+        type: string
+      repository:
+        description: Artifact Registry repository name
+        required: true
+        default: labby
+        type: string
+      db_driver:
+        description: Database driver for runtime
+        required: true
+        default: postgres
+        type: choice
+        options:
+          - postgres
+          - sqlite
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      PROJECT_ID: ${{ inputs.project_id }}
+      REGION: ${{ inputs.region }}
+      SERVICE: ${{ inputs.service }}
+      REPOSITORY: ${{ inputs.repository }}
+      DB_DRIVER: ${{ inputs.db_driver }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/labby-server:${GITHUB_SHA}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+          docker build \
+            --build-arg VITE_DB_CONFIG=api \
+            --tag "${IMAGE}" \
+            .
+          docker push "${IMAGE}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "${SERVICE}" \
+            --image "${IMAGE}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --platform managed \
+            --port 4410 \
+            --allow-unauthenticated \
+            --set-env-vars "NODE_ENV=production,PORT=4410,DB_DRIVER=${DB_DRIVER},WEB_DIST_DIR=/app/packages/web/dist"
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe "${SERVICE}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format='value(status.url)'

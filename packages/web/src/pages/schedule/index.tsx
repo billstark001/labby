@@ -1,7 +1,7 @@
 /** Schedule configuration form and schedule view. */
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import { Calendar, X, Pencil } from 'lucide-preact';
+import { Pencil } from 'lucide-preact';
 import {
   personsSignal,
   configsSignal,
@@ -13,7 +13,7 @@ import {
   personMapSignal,
   unavailabilitiesSignal,
 } from '@/store/index';
-import { fallbackEntityId, displayName } from '@/i18n';
+import { displayName } from '@/i18n';
 import {
   loadAllConfigs,
   loadAllConstraints,
@@ -27,12 +27,7 @@ import {
 import { computeScheduleMetrics, explainScheduleMetrics, solveFull, solveIncremental } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation, MetricExplanation, ScheduleMetrics } from '@labby/core';
 import * as s from '@/styles/components.css';
-import {
-  Button,
-  ResponsiveDataField,
-  ResponsiveDataView,
-  responsiveDataStyles as dataStyles,
-} from '@/components/ui/index';
+import { Button } from '@/components/ui/index';
 import {
   copyScheduleTable,
   copyScheduleHtml,
@@ -42,13 +37,13 @@ import {
   downloadScheduleIcs,
 } from '@/lib/scheduleExport';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
-import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '@/components/ui/Menu';
 import { toast } from '@/components/ui/Toast';
 import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
 import { i18n } from '@/i18n';
-import { getScheduleConfigLabel, getScheduleConfigSummary } from '@/lib/scheduleConfigLabel';
-import { ConfigForm, HistoryNotesDialog, UnavailForm } from './forms';
+import { ConfigPanel } from './ConfigPanel';
+import { ScheduleHistoryPanel } from './ScheduleHistoryPanel';
+import { ScheduleView } from './ScheduleView';
 
 const LAST_SELECTED_CONFIG_STORAGE_KEY = 'schedule.lastSelectedConfigId';
 // ---------------------------------------------------------------------------
@@ -582,8 +577,14 @@ export function SchedulePage() {
   }
 
   async function handleDeleteUnavail(id: string) {
-    await db.unavailabilities.delete(id);
-    await loadAllUnavailabilities(db);
+    confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
+      try {
+        await db.unavailabilities.delete(id);
+        await loadAllUnavailabilities(db);
+      } catch (err) {
+        toast.error(`${t('computeError')}: ${String(err)}`);
+      }
+    });
   }
 
   async function handleApplySessionMutation(): Promise<void> {
@@ -686,127 +687,32 @@ export function SchedulePage() {
         </Button>
       </div>
 
-      {/* Config section */}
-      <div class={`${s.card} ${s.mb24}`}>
-        <div class={`${s.flexBetween} ${s.mb12}`}>
-          <strong>{t('configTitle')}</strong>
-          <div class={s.flexGapSm}>
-            {selectedConfig && (
-              <Button variant="ghost" onClick={() => { setEditingConfig(selectedConfig); setShowConfigForm(true); }}>
-                {t('editConfig')}
-              </Button>
-            )}
-            <Button variant="secondary" onClick={() => { setEditingConfig(null); setShowConfigForm(true); }}>
-              + {t('newConfig')}
-            </Button>
-          </div>
-        </div>
-
-        {configs.length === 0 ? (
-          <p class={`${s.text14} ${s.textMuted}`}>{t('noConfigYet')}</p>
-        ) : (
-          <select
-            class={s.input}
-            value={selectedConfigId}
-            onChange={e => setSelectedConfigId((e.target as HTMLSelectElement).value)}
-          >
-            <option value="">{t('selectConfigFirst')}</option>
-            {configs.map(c => (
-              <option key={c.id} value={c.id}>
-                {getScheduleConfigLabel(c)}
-              </option>
-            ))}
-          </select>
-        )}
-        {selectedConfig && (
-          <div class={`${s.text12} ${s.textMuted} ${s.mt8}`}>
-            {getScheduleConfigSummary(selectedConfig)}
-          </div>
-        )}
-      </div>
-
-      {/* Unavailability section (per config) */}
-      {selectedConfigId && (
-        <div class={`${s.card} ${s.mb24}`}>
-          <div class={`${s.flexBetween} ${s.mb12}`}>
-            <strong>{t('unavailability')}</strong>
-            <Button variant="secondary" onClick={() => setShowUnavailForm(true)}>
-              + {t('addUnavailability')}
-            </Button>
-          </div>
-          {configUnavails.length === 0 ? (
-            <p class={`${s.text14} ${s.textMuted}`}>—</p>
-          ) : (
-            <ResponsiveDataView
-              items={configUnavails}
-              columns={[
-                { header: t('unavailPerson') },
-                { header: t('unavailStart') },
-                { header: t('unavailEnd') },
-              ]}
-              getKey={unavail => unavail.id}
-              renderDesktopRow={unavail => {
-                const person = personMap.get(unavail.personId);
-                return (
-                  <>
-                    <td class={s.td}>{person ? displayName(person) : fallbackEntityId(unavail.personId)}</td>
-                    <td class={s.td}>{unavail.startDate}</td>
-                    <td class={s.td}>{unavail.endDate}</td>
-                  </>
-                );
-              }}
-              renderMobileCard={unavail => {
-                const person = personMap.get(unavail.personId);
-                return (
-                  <>
-                    <div class={dataStyles.mobileHeader}>
-                      <div class={dataStyles.mobileTitle}>
-                        {person ? displayName(person) : fallbackEntityId(unavail.personId)}
-                      </div>
-                    </div>
-                    <div class={dataStyles.mobileFields}>
-                      <ResponsiveDataField label={t('unavailStart')}>
-                        {unavail.startDate}
-                      </ResponsiveDataField>
-                      <ResponsiveDataField label={t('unavailEnd')}>
-                        {unavail.endDate}
-                      </ResponsiveDataField>
-                    </div>
-                  </>
-                );
-              }}
-              renderActions={unavail => (
-                <Button variant="danger" onClick={() => handleDeleteUnavail(unavail.id)}>{t('delete')}</Button>
-              )}
-            />
-          )}
-        </div>
-      )}
-
-      {showUnavailForm && selectedConfigId && (
-        <Dialog open={true} onClose={() => setShowUnavailForm(false)} closeOnOverlayClick={false} title={t('addUnavailability')}>
-          <UnavailForm
-            configId={selectedConfigId}
-            onSave={handleSaveUnavail}
-            onCancel={() => setShowUnavailForm(false)}
-          />
-        </Dialog>
-      )}
-
-      {showConfigForm && (
-        <Dialog
-          open={true}
-          onClose={() => { setShowConfigForm(false); setEditingConfig(null); }}
-          closeOnOverlayClick={false}
-          title={editingConfig ? t('editConfig') : t('newConfig')}
-        >
-          <ConfigForm
-            initial={editingConfig ?? undefined}
-            onSave={handleSaveConfig}
-            onCancel={() => { setShowConfigForm(false); setEditingConfig(null); }}
-          />
-        </Dialog>
-      )}
+      <ConfigPanel
+        configs={configs}
+        selectedConfigId={selectedConfigId}
+        selectedConfig={selectedConfig}
+        configUnavails={configUnavails}
+        personMap={personMap}
+        onSelectConfig={setSelectedConfigId}
+        onNewConfig={() => { setEditingConfig(null); setShowConfigForm(true); }}
+        onEditConfig={(config) => { setEditingConfig(config); setShowConfigForm(true); }}
+        onDeleteConfig={(config) => {
+          confirmDialog(t('confirmDelete'), t('deleteConfigWarning'), async () => {
+            await db.configs.delete(config.id);
+            await loadAllConfigs(db);
+            setSelectedConfigId('');
+          });
+        }}
+        onAddUnavail={() => setShowUnavailForm(true)}
+        onDeleteUnavail={handleDeleteUnavail}
+        showUnavailForm={showUnavailForm}
+        onCloseUnavailForm={() => setShowUnavailForm(false)}
+        onSaveUnavail={handleSaveUnavail}
+        showConfigForm={showConfigForm}
+        onCloseConfigForm={() => { setShowConfigForm(false); setEditingConfig(null); }}
+        onSaveConfig={handleSaveConfig}
+        editingConfig={editingConfig}
+      />
 
       {/* Generate / Incremental row */}
       <div class={`${s.toolbar} ${s.mb8}`}>
@@ -859,82 +765,22 @@ export function SchedulePage() {
 
       {/* History */}
       {selectedConfigId && schedulesForSelectedConfig.length > 0 && (
-        <div class={s.mb24}>
-          <div class={`${s.flexBetween} ${s.mt8}`}>
-            <strong class={s.text14}>{t('historyTitle')}</strong>
-            <div class={s.flexGapSm}>
-              <Button variant="ghost" onClick={selectAllHistory}>{t('selectAll')}</Button>
-              <Button variant="ghost" onClick={clearHistorySelection}>{t('clearSelection')}</Button>
-              <Button variant="ghost" onClick={invertHistorySelection}>{t('invertSelection')}</Button>
-              <Button
-                variant="danger"
-                disabled={selectedHistoryIds.size === 0}
-                onClick={() => void handleDeleteSelectedHistories()}
-              >
-                {t('deleteSelected')}
-              </Button>
-            </div>
-          </div>
-          <div class={`${s.flexGapSm} ${s.flexWrap} ${s.mt8}`}>
-            {sortedHistoryPlans.map(p => (
-              <div key={p.id} class={s.historyItem}>
-                <input
-                  type="checkbox"
-                  checked={selectedHistoryIds.has(p.id)}
-                  onChange={() => toggleHistorySelection(p.id)}
-                />
-                <Menu mode="context">
-                  <MenuTrigger>
-                    <button
-                      class={`${s.badgeButton} ${current?.id === p.id ? '' : s.badgeButtonDimmed}`}
-                      onClick={() => (currentScheduleSignal.value = p)}
-                    >
-                      {new Date(p.createdAt).toLocaleString()}
-                      {p.notes && <span class={`${s.text12} ${s.textMuted}`}> — {p.notes}</span>}
-                    </button>
-                  </MenuTrigger>
-                  <MenuContent>
-                    <MenuItem onSelect={() => {
-                      const txt = `${new Date(p.createdAt).toLocaleString()}${p.notes ? ' — ' + p.notes : ''}`;
-                      navigator.clipboard?.writeText(txt).then(
-                        () => toast.success(t('copyToClipboard')),
-                        () => toast.error(t('importError')),
-                      );
-                    }}>
-                      {t('copySchedule')}
-                    </MenuItem>
-                    <MenuItem onSelect={() => setEditingNotes(p)}>
-                      {t('editNotes')}
-                    </MenuItem>
-                    <MenuItem onSelect={() => void showMetricsForPlan(p)}>
-                      {t('viewMetrics')}
-                    </MenuItem>
-                    <MenuSeparator />
-                    <MenuItem onSelect={() => handleDeleteHistory(p)} danger>
-                      {t('delete')}
-                    </MenuItem>
-                  </MenuContent>
-                </Menu>
-                <button
-                  class={s.historyDeleteButton}
-                  onClick={() => void handleDeleteHistory(p)}
-                  title={t('delete')}
-                  aria-label={t('delete')}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Notes edit dialog */}
-      {editingNotes && (
-        <HistoryNotesDialog
-          plan={editingNotes}
-          onSave={notes => void handleSaveHistoryNotes(editingNotes, notes)}
-          onClose={() => setEditingNotes(null)}
+        <ScheduleHistoryPanel
+          sortedHistoryPlans={sortedHistoryPlans}
+          selectedHistoryIds={selectedHistoryIds}
+          currentSchedule={current}
+          onSelectHistory={(plan) => { currentScheduleSignal.value = plan; }}
+          onToggleHistory={toggleHistorySelection}
+          onSelectAll={selectAllHistory}
+          onClearSelection={clearHistorySelection}
+          onInvertSelection={invertHistorySelection}
+          onDeleteHistory={handleDeleteHistory}
+          onDeleteSelected={() => void handleDeleteSelectedHistories()}
+          onEditNotes={setEditingNotes}
+          onShowMetrics={(plan) => void showMetricsForPlan(plan)}
+          editingNotes={editingNotes}
+          onSaveNotes={(plan, notes) => void handleSaveHistoryNotes(plan, notes)}
+          onCloseNotes={() => setEditingNotes(null)}
         />
       )}
 
@@ -1001,154 +847,15 @@ export function SchedulePage() {
       )}
 
       {/* Schedule tables */}
-      {!selectedConfigId || !current || current.configId !== selectedConfigId ? (
-        <div class={s.cardNoScheduke}>{t('noSchedule')}</div>
-      ) : (
-        current.sessions.map(sess => {
-          const hasMutationRecord = (current.sessionMutations ?? []).some((record) => record.date === sess.date);
-          return (
-          <div key={sess.date} class={`${s.card} ${s.mb16}`}>
-            <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>
-              <span class={s.flexGapXs}>
-                <Calendar size={16} />
-                {sess.date}
-              </span>
-              <div class={s.flexGapXs}>
-                {manualEditMode && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => openSessionMutationDialog('insert', sess.date)}
-                      disabled={hasMutationRecord}
-                    >
-                      {t('mutationInsert')}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      onClick={() => openSessionMutationDialog('delete', sess.date)}
-                      disabled={hasMutationRecord}
-                    >
-                      {t('mutationDelete')}
-                    </Button>
-                  </>
-                )}
-                <Button variant="ghost" onClick={() => void showMetricsForSession(current, sess.date)}>
-                  {t('viewMetrics')}
-                </Button>
-              </div>
-            </h3>
-            <ResponsiveDataView
-              items={sess.presentations}
-              columns={[
-                { header: t('presenter') },
-                { header: t('questioners') },
-              ]}
-              getKey={(_, index) => index}
-              colGroup={
-                <colgroup>
-                  <col style={{ width: '30%' }} />
-                  <col style={{ width: '70%' }} />
-                </colgroup>
-              }
-              renderDesktopRow={(pres, pi) => {
-                const presenter = personMap.get(pres.presenterId);
-                return (
-                  <>
-                    <td class={s.td}>
-                      {manualEditMode ? (
-                        <Menu mode="context">
-                          <MenuTrigger>
-                            <span class={s.editableCell}>
-                              {presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)}
-                            </span>
-                          </MenuTrigger>
-                          <MenuContent>
-                            <MenuItem onSelect={() => setManualEditTarget({ mode: 'presenter', sessionDate: sess.date, presIndex: pi })}>
-                              {t('selectNewPresenter')}
-                            </MenuItem>
-                          </MenuContent>
-                        </Menu>
-                      ) : (
-                        presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)
-                      )}
-                    </td>
-                    <td class={s.td}>
-                      <div class={s.tagList}>
-                        {pres.questionerIds.map((qid, qi) => {
-                          const questioner = personMap.get(qid);
-                          const name = questioner ? displayName(questioner) : fallbackEntityId(qid);
-                          return manualEditMode ? (
-                            <Menu key={`${qid}-${qi}`} mode="context">
-                              <MenuTrigger>
-                                <span class={`${s.badge} ${s.editableCell}`}>{name}</span>
-                              </MenuTrigger>
-                              <MenuContent>
-                                <MenuItem onSelect={() => setManualEditTarget({ mode: 'questioner', sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
-                                  {t('selectNewQuestioner')}
-                                </MenuItem>
-                              </MenuContent>
-                            </Menu>
-                          ) : (
-                            <span key={`${qid}-${qi}`} class={s.badge}>{name}</span>
-                          );
-                        })}
-                      </div>
-                    </td>
-                  </>
-                );
-              }}
-              renderMobileCard={(pres, pi) => {
-                const presenter = personMap.get(pres.presenterId);
-                return (
-                  <>
-                    <div class={dataStyles.mobileHeader}>
-                      <div>
-                        <div class={dataStyles.mobileTitle}>{presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId)}</div>
-                        <div class={dataStyles.mobileSubtitle}>{t('presenter')}</div>
-                      </div>
-                    </div>
-                    <div class={dataStyles.mobileFields}>
-                      <ResponsiveDataField label={t('questioners')}>
-                        <div class={s.tagList}>
-                          {pres.questionerIds.map((qid, qi) => {
-                            const questioner = personMap.get(qid);
-                            const name = questioner ? displayName(questioner) : fallbackEntityId(qid);
-                            return manualEditMode ? (
-                              <Menu key={`${qid}-${qi}`} mode="context">
-                                <MenuTrigger>
-                                  <span class={`${s.badge} ${s.editableCell}`}>{name}</span>
-                                </MenuTrigger>
-                                <MenuContent>
-                                  <MenuItem onSelect={() => setManualEditTarget({ mode: 'questioner', sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
-                                    {t('selectNewQuestioner')}
-                                  </MenuItem>
-                                </MenuContent>
-                              </Menu>
-                            ) : (
-                              <span key={`${qid}-${qi}`} class={s.badge}>{name}</span>
-                            );
-                          })}
-                        </div>
-                      </ResponsiveDataField>
-                    </div>
-                    {manualEditMode && (
-                      <div class={s.flexGapXs}>
-                        <Button
-                          variant="ghost"
-                          onClick={() => setManualEditTarget({ mode: 'presenter', sessionDate: sess.date, presIndex: pi })}
-                        >
-                          {t('selectNewPresenter')}
-                        </Button>
-                      </div>
-                    )}
-                  </>
-                );
-              }}
-            />
-          </div>
-          );
-        })
-      )}
+      <ScheduleView
+        current={current}
+        selectedConfigId={selectedConfigId}
+        personMap={personMap}
+        manualEditMode={manualEditMode}
+        onManualEdit={setManualEditTarget}
+        onShowMetricsForSession={(plan, date) => void showMetricsForSession(plan, date)}
+        onOpenSessionMutation={openSessionMutationDialog}
+      />
     </div>
   );
 }

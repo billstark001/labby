@@ -30,7 +30,7 @@ In scope:
 
 Out of scope:
 
-- scheduling optimization logic in packages/core/src/solver.ts
+- scheduling optimization logic in packages/core/src/schedule/
 
 ## Runtime Path
 
@@ -93,7 +93,7 @@ Adaptive global checks:
 2D projection gates:
 
 - rank margin: 0.02
-- rank loss weight: 0.12
+- rank loss weight: 1.0
 - sampled quantile cap: 512
 - calibration smoothing alpha: 0.18
 

@@ -1098,3 +1098,118 @@ templateVariableDescription:
   en: Description
   zh-CN: 说明
   ja-JP: 説明
+
+deleteConfig:
+  en: Delete Config
+  zh-CN: 删除配置
+  ja-JP: 設定を削除
+
+deleteConfigWarning:
+  en: This will permanently delete the selected schedule config and cannot be undone.
+  zh-CN: 这将永久删除所选排班配置，此操作无法撤销。
+  ja-JP: 選択したスケジュール設定を完全に削除します。この操作は元に戻せません。
+
+aboutTitle:
+  en: About Labby
+  zh-CN: 关于 Labby
+  ja-JP: Labby について
+
+aboutDescription:
+  en: Labby is an open-source academic presentation scheduler with keyword-based similarity optimization.
+  zh-CN: Labby 是一个基于关键词相似度优化的开源学术报告排班系统。
+  ja-JP: Labby はキーワードベースの類似度最適化を採用したオープンソースの学術発表スケジューラです。
+
+unsavedChangesWarning:
+  en: You have unsaved changes. Are you sure you want to leave?
+  zh-CN: 您有未保存的更改，确定要离开吗？
+  ja-JP: 未保存の変更があります。本当にページを離れますか？
+
+navUsers:
+  en: Users
+  zh-CN: 用户
+  ja-JP: ユーザー
+
+usersTab:
+  en: Users
+  zh-CN: 用户
+  ja-JP: ユーザー
+
+createUser:
+  en: Create User
+  zh-CN: 创建用户
+  ja-JP: ユーザーを作成
+
+editUser:
+  en: Edit User
+  zh-CN: 编辑用户
+  ja-JP: ユーザーを編集
+
+deleteUser:
+  en: Delete User
+  zh-CN: 删除用户
+  ja-JP: ユーザーを削除
+
+manageUser:
+  en: Manage User
+  zh-CN: 管理用户
+  ja-JP: ユーザーを管理
+
+linkUser:
+  en: Link User
+  zh-CN: 绑定用户
+  ja-JP: ユーザーをリンク
+
+linkedUserId:
+  en: Linked User ID
+  zh-CN: 绑定的用户 ID
+  ja-JP: リンクされたユーザー ID
+
+userRole:
+  en: Role
+  zh-CN: 角色
+  ja-JP: ロール
+
+userRoleUser:
+  en: User
+  zh-CN: 普通用户
+  ja-JP: ユーザー
+
+userRoleAdmin:
+  en: Admin
+  zh-CN: 管理员
+  ja-JP: 管理者
+
+userRoleRoot:
+  en: Root
+  zh-CN: 根用户
+  ja-JP: ルート
+
+username:
+  en: Username
+  zh-CN: 用户名
+  ja-JP: ユーザー名
+
+password:
+  en: Password
+  zh-CN: 密码
+  ja-JP: パスワード
+
+email:
+  en: Email
+  zh-CN: 邮件地址
+  ja-JP: メールアドレス
+
+userDisabled:
+  en: Disabled
+  zh-CN: 已禁用
+  ja-JP: 無効
+
+deleteUserWarning:
+  en: Are you sure you want to delete this user? This cannot be undone.
+  zh-CN: 确定要删除此用户吗？此操作无法撤销。
+  ja-JP: このユーザーを削除してもよいですか？この操作は元に戻せません。
+
+about:
+  en: About
+  zh-CN: 关于
+  ja-JP: このアプリについて

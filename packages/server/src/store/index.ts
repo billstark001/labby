@@ -966,15 +966,6 @@ export class SqliteStore {
     );
   }
 
-  async createUserIfMissing(user: StoredUser): Promise<StoredUser> {
-    await this.ensureReady();
-    const existing = await this.findUserByIdentity(user.email ?? user.username);
-    if (existing) return existing;
-
-    await this.createUser(user);
-    return user;
-  }
-
   async createUser(user: StoredUser): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`
@@ -995,6 +986,25 @@ export class SqliteStore {
   async listUsers(): Promise<StoredUser[]> {
     await this.ensureReady();
     return this.listPayloads<StoredUser>(sql`SELECT payload FROM users ORDER BY created_at`);
+  }
+
+  async updateUser(user: StoredUser): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`
+      UPDATE users SET
+        username = ${user.username},
+        email = ${user.email ?? null},
+        role = ${user.role},
+        password_hash = ${user.passwordHash},
+        disabled = ${user.disabled ? 1 : 0},
+        payload = ${JSON.stringify(user)}
+      WHERE id = ${user.id}
+    `);
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM users WHERE id = ${id}`);
   }
 
   async saveRefreshToken(record: RefreshTokenRecord): Promise<void> {

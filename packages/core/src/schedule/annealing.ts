@@ -8,10 +8,13 @@
 import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SchedulePlan, SolverInput, SimilarityLookup } from '../types.js';
 import {
   type CostContext,
-  incrementCount,
   personSimilarity,
   computeCost,
   buildCostContext,
+  affinityPairWeight,
+  buildConstraintGuidance,
+  ConstraintGuidance,
+  noOverlapForbidden,
 } from './constraints.js';
 import { generateSessionDates, generateId, buildUnavailMap, replaySessionMutationDates } from './utils.js';
 import { drrInit, drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './wps.js';
@@ -59,110 +62,6 @@ export const ANNEALING_CONFIG = {
 // Internal types
 // ---------------------------------------------------------------------------
 
-interface NoOverlapGuide {
-  group: Set<string>;
-}
-
-interface AffinityGuide {
-  group: Set<string>;
-  boost: number;
-}
-
-interface FrequencyGuide {
-  personIds: Set<string>;
-  baseline: number;
-  multiplier: number;
-  roleScope: 'presenter' | 'questioner' | 'both';
-  weight: number;
-}
-
-interface ConstraintGuidance {
-  noOverlap: NoOverlapGuide[];
-  affinity: AffinityGuide[];
-  frequency: FrequencyGuide[];
-}
-
-// #region Constraint guidance and evaluation
-
-function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
-  const guidance: ConstraintGuidance = {
-    noOverlap: [],
-    affinity: [],
-    frequency: [],
-  };
-
-  for (const c of ctx.constraints ?? []) {
-    if (c.type === 'no-overlap') {
-      guidance.noOverlap.push({
-        group: new Set(c.personIds),
-      });
-      continue;
-    }
-
-    if (c.type === 'affinity-boost') {
-      guidance.affinity.push({
-        group: new Set(c.personIds),
-        boost: c.boost ?? 2,
-      });
-      continue;
-    }
-
-    if (c.type === 'frequency-multiplier') {
-      const baseline = Number.isFinite(c.baseline) ? Math.max(0, c.baseline) : 0;
-      const multiplier = Number.isFinite(c.multiplier) ? c.multiplier : 1;
-      guidance.frequency.push({
-        personIds: new Set(c.personIds),
-        baseline,
-        multiplier,
-        roleScope: c.roleScope ?? 'presenter',
-        weight: c.weight ?? 1,
-      });
-    }
-  }
-
-  return guidance;
-}
-
-function noOverlapForbidden(
-  presenterId: string,
-  questionerId: string,
-  guidance: ConstraintGuidance,
-): boolean {
-  for (const c of guidance.noOverlap) {
-    if (c.group.has(presenterId) && c.group.has(questionerId)) return true;
-  }
-  return false;
-}
-
-
-function affinityPairWeight(
-  presenterId: string,
-  questionerId: string,
-  guidance: ConstraintGuidance,
-): number {
-  let factor = 1;
-  for (const c of guidance.affinity) {
-    if (!c.group.has(presenterId) || !c.group.has(questionerId)) continue;
-    const boost = Number.isFinite(c.boost) ? c.boost : 1;
-    if (boost > 0) factor *= boost;
-  }
-  return factor;
-}
-
-function frequencyRoleWeight(
-  personId: string,
-  role: 'presenter' | 'questioner',
-  guidance: ConstraintGuidance,
-): number {
-  let factor = 1;
-  for (const f of guidance.frequency) {
-    if (!f.personIds.has(personId)) continue;
-    if (f.roleScope !== 'both' && f.roleScope !== role) continue;
-    const m = Number.isFinite(f.multiplier) ? f.multiplier : 1;
-    if (m > 0) factor *= m;
-  }
-  return factor;
-}
 
 // #endregion
 
@@ -287,7 +186,7 @@ export function buildRandomSchedule(
 
   const { presenterNumbers, questionerNumbers } = buildNumberedPersonIds(historicalSessions, personIds);
 
-  const weights = personIds.map(id => frequencyRoleWeight(id, 'presenter', guidance));
+  const weights = personIds.map(id => guidance.presenterWeights?.get(id) ?? 1);
   const drrState = drrRecover(
     presenterNumbers,
     weights,
@@ -295,7 +194,7 @@ export function buildRandomSchedule(
     0.04,
   );
 
-  const weightsQuestioner = personIds.map(id => frequencyRoleWeight(id, 'questioner', guidance));
+  const weightsQuestioner = personIds.map(id => guidance.questionerWeights?.get(id) ?? 1);
   const vftStateQuestioner = vftRecover(
     questionerNumbers,
     weightsQuestioner,
@@ -354,6 +253,7 @@ export function mutate(
   sessions: Session[],
   personIds: string[],
   ctx: CostContext,
+  guidance: ConstraintGuidance,
   historicalSessions: Session[],
   config: ScheduleConfig,
   unavailMap: Map<string, Set<string>> = new Map(),
@@ -362,7 +262,6 @@ export function mutate(
   const clone = deepCloneSessions(sessions);
   if (!personIds.length) return clone;
 
-  const guidance = buildConstraintGuidance(ctx);
   const allSessions = [...historicalSessions, ...clone];
 
   // ── Shared helpers ─────────────────────────────────────────────────────────
@@ -419,7 +318,7 @@ export function mutate(
 
   /** Expected appearances per person derived from frequency-multiplier weights. */
   const expectedCounts = (total: number): Map<string, number> => {
-    const freqWeights = personIds.map(id => frequencyRoleWeight(id, 'presenter', guidance));
+    const freqWeights = personIds.map(id => guidance.presenterWeights?.get(id) ?? 1);
     const totalFreq = freqWeights.reduce((s, w) => s + w, 0);
     return new Map(personIds.map((id, i) => [id, totalFreq > 0 ? total * freqWeights[i] / totalFreq : total / personIds.length]));
   };
@@ -613,9 +512,11 @@ export function simulatedAnnealing(
   unavailMap: Map<string, Set<string>> = new Map(),
   maxIter = ANNEALING_CONFIG.maxIter,
 ): Session[] {
+  const guidance = buildConstraintGuidance(ctx);
+
   const personIds = [...ctx.personKeywords.keys()];
   const totalCost = (s: Session[]) =>
-    computeCost(s, ctx, historicalSessions) +
+    computeCost(s, ctx, guidance, historicalSessions) +
     (hammingRef ? hammingWeight * hammingDistance(s, hammingRef) : 0);
 
   let current = deepCloneSessions(initial);
@@ -625,7 +526,7 @@ export function simulatedAnnealing(
 
   for (let iter = 0; iter < maxIter; iter++) {
     const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
-    const neighbor = mutate(current, personIds, ctx, historicalSessions, config, unavailMap);
+    const neighbor = mutate(current, personIds, ctx, guidance, historicalSessions, config, unavailMap);
     const neighborCost = totalCost(neighbor);
     const delta = neighborCost - currentCost;
 
