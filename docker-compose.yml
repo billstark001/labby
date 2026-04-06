@@ -12,6 +12,7 @@ services:
     environment:
       PORT: 4410
       DB_PATH: /data/labby.db
+      WEB_DIST_DIR: /app/packages/web/dist
 
       # PASETO token signing keys (generate with: openssl rand -base64 32)
       PASETO_SECRET: ${PASETO_SECRET}
@@ -26,11 +27,6 @@ services:
       ROOT_USERNAME: ${ROOT_USERNAME:-root}
       ROOT_PASSWORD: ${ROOT_PASSWORD:?ROOT_PASSWORD is required}
       ROOT_EMAIL: ${ROOT_EMAIL:-}
-
-      # Bootstrap initial admin account (created on first run if no admin exists)
-      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
-      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
 
       # SMTP (optional – for email notifications)
       SMTP_HOST: ${SMTP_HOST:-}

@@ -94,24 +94,6 @@ export class AuthService {
     this.rootEmail = options.rootEmail?.trim() || undefined;
   }
 
-  /** Create a regular user or admin in the DB (used for bootstrapping initial admin). */
-  async bootstrapUser(input: {
-    username: string;
-    password: string;
-    role?: typeof UserRole.Admin | typeof UserRole.User;
-    email?: string;
-  }): Promise<StoredUser> {
-    return this.options.store.createUserIfMissing({
-      id: randomUUID(),
-      username: input.username.trim(),
-      email: input.email?.trim(),
-      role: input.role ?? UserRole.Admin,
-      passwordHash: hashPassword(input.password),
-      disabled: false,
-      createdAt: Date.now(),
-    });
-  }
-
   /** Issue a new user account. Only root can create admins; admin/root can create users. */
   async issueUser(input: {
     username: string;

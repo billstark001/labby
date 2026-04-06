@@ -106,13 +106,13 @@ Important settings:
 
 - `PASETO_SECRET` or `PASETO_ACCESS_KEY` + `PASETO_REFRESH_KEY`
 - `ROOT_USERNAME`, `ROOT_PASSWORD`, `ROOT_EMAIL`
-- `BOOTSTRAP_ADMIN_*` for first-run admin creation
 - `SMTP_*` and `NOTIFY_RECIPIENTS` for email reminders
 - `SMTP_PROVIDER=gmail`, `GMAIL_*`, `GOOGLE_OAUTH_JSON_PATH`, and `GOOGLE_OAUTH_REFRESH_TOKEN` to use Gmail OAuth instead of raw SMTP credentials
 - `BACKUP_*` to schedule whole-database backups
 - `GOOGLE_DRIVE_FOLDER_ID` for Google Drive uploads
 - `ONEDRIVE_*` for OneDrive uploads
 - `DB_PATH` for SQLite storage
+- `WEB_DIST_DIR` to let server mode serve `packages/web/dist` static files
 
 ## Backup Subsystem
 
@@ -137,6 +137,7 @@ The server can maintain periodic full-database backups through the same cron run
 - API-backed deployment can use Docker directly or `docker-compose`.
 - GitHub Pages and Netlify workflows now force the web app into frontend-only deployment mode.
 - Both workflows build Rust wasm artifacts before frontend build.
+- GCP server deployment guidance and Cloud Run workflow are documented in `docs/deploy-gcp.md`.
 
 ## Project Structure
 

@@ -12,6 +12,7 @@
 - Run Rust-backed embedding supervision (triplet, pair, ranked) and persist updated vectors
 - Register cron-based email reminders from schedule configs
 - Register cron-based whole-database backups to email, Google Drive, or OneDrive
+- Optionally serve built frontend static assets (`packages/web/dist`) with SPA fallback
 
 ## Roles
 
@@ -74,7 +75,7 @@ Required or important settings:
 - `DB_PATH`
 - `PASETO_SECRET` or separate access/refresh keys
 - `ROOT_PASSWORD`
-- `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_ADMIN_EMAIL`
+- `WEB_DIST_DIR` (optional, for serving built frontend static files in server mode)
 
 Optional settings:
 

@@ -966,15 +966,6 @@ export class SqliteStore {
     );
   }
 
-  async createUserIfMissing(user: StoredUser): Promise<StoredUser> {
-    await this.ensureReady();
-    const existing = await this.findUserByIdentity(user.email ?? user.username);
-    if (existing) return existing;
-
-    await this.createUser(user);
-    return user;
-  }
-
   async createUser(user: StoredUser): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`

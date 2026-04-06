@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import { logger } from "hono/logger";
 import { z } from "zod";
@@ -61,6 +61,7 @@ import { SqliteStore, type StoreConnectionConfig } from "./store/index.js";
 export interface CreateAppOptions {
   dbPath?: string;
   db?: StoreConnectionConfig;
+  webDistDir?: string;
   enableLogger?: boolean;
   authIssuer?: string;
   authAudience?: string;
@@ -73,17 +74,60 @@ export interface CreateAppOptions {
   rootUsername?: string;
   rootPassword?: string;
   rootEmail?: string;
-  /** Bootstrap admin account (created on first run if no admin exists). */
-  bootstrapUsername?: string;
-  bootstrapPassword?: string;
-  bootstrapEmail?: string;
   enablePublicEmailTaskIcs?: boolean;
   onEmailTasksChanged?: () => Promise<void> | void;
   runEmailTaskNow?: (taskId: string) => Promise<void>;
 }
 
+function resolveWebDistDir(explicitDir?: string): string | null {
+  const candidates = [
+    explicitDir,
+    path.resolve(process.cwd(), 'packages/web/dist'),
+    path.resolve(process.cwd(), '../web/dist'),
+  ].filter((item): item is string => Boolean(item));
+
+  for (const candidate of candidates) {
+    const indexPath = path.resolve(candidate, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return path.resolve(candidate);
+    }
+  }
+
+  return null;
+}
+
+function contentTypeByPath(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case '.html': return 'text/html; charset=utf-8';
+    case '.js': return 'text/javascript; charset=utf-8';
+    case '.mjs': return 'text/javascript; charset=utf-8';
+    case '.css': return 'text/css; charset=utf-8';
+    case '.json': return 'application/json; charset=utf-8';
+    case '.svg': return 'image/svg+xml';
+    case '.png': return 'image/png';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.webp': return 'image/webp';
+    case '.ico': return 'image/x-icon';
+    case '.txt': return 'text/plain; charset=utf-8';
+    case '.wasm': return 'application/wasm';
+    case '.map': return 'application/json; charset=utf-8';
+    default: return 'application/octet-stream';
+  }
+}
+
+async function sendStaticFile(c: Context, filePath: string): Promise<Response> {
+  const body = await fs.promises.readFile(filePath);
+  c.header('Content-Type', contentTypeByPath(filePath));
+  if (filePath.endsWith('.html')) {
+    c.header('Cache-Control', 'no-store');
+  }
+  return c.body(body);
+}
+
 export async function createApp(options: CreateAppOptions): Promise<{ app: Hono; store: SqliteStore; close: () => Promise<void>; }> {
   const dbConfig = options.db ?? { dialect: "sqlite", path: options.dbPath ?? "./run/labby.db" };
+  const webDistDir = resolveWebDistDir(options.webDistDir);
   if (dbConfig.dialect === "sqlite") {
     fs.mkdirSync(path.dirname(dbConfig.path), { recursive: true });
   }
@@ -103,16 +147,6 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     rootPassword: options.rootPassword,
     rootEmail: options.rootEmail,
   });
-
-  // Bootstrap an initial admin account (from env) on first run
-  if (options.bootstrapUsername && options.bootstrapPassword) {
-    void authService.bootstrapUser({
-      username: options.bootstrapUsername,
-      password: options.bootstrapPassword,
-      email: options.bootstrapEmail,
-      role: UserRole.Admin,
-    });
-  }
 
   const app = new Hono();
 
@@ -741,6 +775,32 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       updatedVectors,
     });
   });
+
+  if (webDistDir) {
+    app.get('/', async (c) => {
+      return sendStaticFile(c, path.resolve(webDistDir, 'index.html'));
+    });
+
+    app.get('/*', async (c, next) => {
+      const reqPath = c.req.path;
+      if (reqPath.startsWith('/api/') || reqPath.startsWith('/public/') || reqPath === '/health') {
+        return next();
+      }
+
+      const relativePath = reqPath.replace(/^\/+/, '');
+      const candidatePath = path.resolve(webDistDir, relativePath);
+
+      if (
+        candidatePath.startsWith(webDistDir)
+        && fs.existsSync(candidatePath)
+        && fs.statSync(candidatePath).isFile()
+      ) {
+        return sendStaticFile(c, candidatePath);
+      }
+
+      return sendStaticFile(c, path.resolve(webDistDir, 'index.html'));
+    });
+  }
 
   app.onError((err, c) => {
     if (err instanceof AppError) {

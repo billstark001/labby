@@ -56,6 +56,7 @@ RUN mkdir -p /data
 
 ENV PORT=4410
 ENV DB_PATH=/data/labby.db
+ENV WEB_DIST_DIR=/app/packages/web/dist
 ENV NODE_ENV=production
 
 EXPOSE 4410
