@@ -131,6 +131,13 @@ When `BACKUP_CRON` is configured, the server registers a recurring whole-databas
 
 Gmail delivery can reuse the same Google OAuth client JSON by setting `SMTP_PROVIDER=gmail` and supplying a Gmail-capable refresh token.
 
+For container/server deployment:
+
+- Docker: mount OAuth JSON/token files read-only and set `GOOGLE_OAUTH_JSON_PATH` / `GOOGLE_OAUTH_REFRESH_TOKEN_PATH` to mounted paths.
+- GCP Cloud Run: prefer Secret Manager; mount OAuth JSON as files and bind refresh token via file or env secret.
+
+See `docs/deploy-gcp.md` for concrete CLI examples.
+
 ## Embedding Runtime Notes
 
 - Server boot hydrates Rust embedding runtime from stored vectors.
