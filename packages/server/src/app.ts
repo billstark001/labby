@@ -319,7 +319,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.patch("/api/v1/users/:id", requireMinRole(UserRole.Admin), async (c) => {
     const session = getAuthSession(c);
     const id = c.req.param("id");
-    const target = await store.getUserById(id);
+    const target = id ? await store.getUserById(id) : null;
     if (!target) {
       throw new AppError("VALIDATION_ERROR", "user not found", 404);
     }
@@ -347,11 +347,11 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
   app.delete("/api/v1/users/:id", requireMinRole(UserRole.Root), async (c) => {
     const id = c.req.param("id");
-    const target = await store.getUserById(id);
+    const target = id ? await store.getUserById(id) : null;
     if (!target) {
       throw new AppError("VALIDATION_ERROR", "user not found", 404);
     }
-    await store.deleteUser(id);
+    await store.deleteUser(id!);
     return c.body(null, 204);
   });
 

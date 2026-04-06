@@ -19,6 +19,7 @@ import type {
   IncrementalSolverInput,
 } from '../types.js';
 import {
+  buildConstraintGuidance,
   buildCostContext,
   computeCostBreakdown,
   toScheduleMetrics,
@@ -78,7 +79,8 @@ export function computeScheduleMetrics(
   historicalSessions: Session[] = [],
 ): ScheduleMetrics {
   const ctx = buildCostContext(input);
-  return toScheduleMetrics(computeCostBreakdown(plan.sessions, ctx, historicalSessions));
+  const guidance = buildConstraintGuidance(ctx);
+  return toScheduleMetrics(computeCostBreakdown(plan.sessions, ctx, guidance, historicalSessions));
 }
 
 // ---------------------------------------------------------------------------

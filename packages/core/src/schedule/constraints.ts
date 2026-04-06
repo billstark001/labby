@@ -21,22 +21,22 @@ import type {
  * Increase a weight to penalize that term more heavily during optimization.
  */
 export const COST_WEIGHTS = {
-  /** Interval-uniformity penalty for presenter/questioner appearances. */
-  uniformity: 10,
+  /** Unused */
+  uniformity: 1,
   /** Exponential penalty for repeated (questioner → presenter) pairs. */
   questioner: 1,
   /** |sim(questioner, presenter) − r| summed over all pairs. */
   relevance: 0.8,
-  /** Variance of per-person presenter appearance counts. */
-  presenterLoad: 5,
-  /** Variance of per-person questioner appearance counts. */
-  questionerLoad: 5,
-  /** Variance of each person's total role count (presenter + questioner). */
+  /** Uniformity penalty of per-person presenter appearance counts & gaps. */
+  presenterLoad: 8,
+  /** Uniformity penalty of per-person questioner appearance counts & gaps. */
+  questionerLoad: 8,
+  /** Uniformity penalty of each person's total role count (presenter + questioner). */
   totalRole: 2,
   /** Hard penalty for self-questioning or duplicate questioners within one presentation. */
-  invalidAssignment: 1,
-  /** Multiplier on the aggregate penalty returned by user-defined constraints. */
-  constraint: 2,
+  invalidAssignment: 114514,
+  /** Unused */
+  constraint: 1,
 };
 
 // ---------------------------------------------------------------------------
@@ -62,12 +62,20 @@ export interface CostBreakdown {
   constraintPenalty: number;
 }
 
-interface AffinityGuide {
+
+// #region Constraint guidance and evaluation
+
+
+export interface NoOverlapGuide {
+  group: Set<string>;
+}
+
+export interface AffinityGuide {
   group: Set<string>;
   boost: number;
 }
 
-interface FrequencyGuide {
+export interface FrequencyGuide {
   personIds: Set<string>;
   baseline: number;
   multiplier: number;
@@ -75,18 +83,35 @@ interface FrequencyGuide {
   weight: number;
 }
 
-interface ConstraintGuidance {
+export interface ConstraintGuidance {
+  noOverlap: NoOverlapGuide[];
   affinity: AffinityGuide[];
   frequency: FrequencyGuide[];
+  presenterWeights: Map<string, number>;
+  questionerWeights: Map<string, number>;
 }
 
-function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
+// #region Constraint guidance and evaluation
+
+export function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
   const guidance: ConstraintGuidance = {
+    noOverlap: [],
     affinity: [],
     frequency: [],
+    presenterWeights: new Map(),
+    questionerWeights: new Map(),
   };
 
+  const allPersonIds = new Set<string>();
+
   for (const c of ctx.constraints ?? []) {
+    if (c.type === 'no-overlap') {
+      guidance.noOverlap.push({
+        group: new Set(c.personIds),
+      });
+      continue;
+    }
+
     if (c.type === 'affinity-boost') {
       guidance.affinity.push({
         group: new Set(c.personIds),
@@ -98,6 +123,9 @@ function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
     if (c.type === 'frequency-multiplier') {
       const baseline = Number.isFinite(c.baseline) ? Math.max(0, c.baseline) : 0;
       const multiplier = Number.isFinite(c.multiplier) ? c.multiplier : 1;
+      for (const id of c.personIds) {
+        allPersonIds.add(id);
+      }
       guidance.frequency.push({
         personIds: new Set(c.personIds),
         baseline,
@@ -108,10 +136,28 @@ function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
     }
   }
 
+  for (const id of allPersonIds) {
+    guidance.presenterWeights?.set(id, frequencyRoleWeight(id, 'presenter', guidance));
+    guidance.questionerWeights?.set(id, frequencyRoleWeight(id, 'questioner', guidance));
+  }
+
   return guidance;
 }
 
-function affinityPairFactor(
+
+export function noOverlapForbidden(
+  presenterId: string,
+  questionerId: string,
+  guidance: ConstraintGuidance,
+): boolean {
+  for (const c of guidance.noOverlap) {
+    if (c.group.has(presenterId) && c.group.has(questionerId)) return true;
+  }
+  return false;
+}
+
+
+export function affinityPairWeight(
   presenterId: string,
   questionerId: string,
   guidance: ConstraintGuidance,
@@ -120,12 +166,12 @@ function affinityPairFactor(
   for (const c of guidance.affinity) {
     if (!c.group.has(presenterId) || !c.group.has(questionerId)) continue;
     const boost = Number.isFinite(c.boost) ? c.boost : 1;
-    if (boost > 0) factor = Math.min(factor, 1 / boost);
+    if (boost > 0) factor *= boost;
   }
   return factor;
 }
 
-function frequencyRoleFactor(
+export function frequencyRoleWeight(
   personId: string,
   role: 'presenter' | 'questioner',
   guidance: ConstraintGuidance,
@@ -135,56 +181,17 @@ function frequencyRoleFactor(
     if (!f.personIds.has(personId)) continue;
     if (f.roleScope !== 'both' && f.roleScope !== role) continue;
     const m = Number.isFinite(f.multiplier) ? f.multiplier : 1;
-    if (m > 0) factor = Math.min(factor, 1 / m);
+    if (m > 0) factor *= m;
   }
   return factor;
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers (also consumed by optimizer.ts)
-// ---------------------------------------------------------------------------
-
-export function incrementCount(map: Map<string, number>, key: string, amount = 1): void {
-  map.set(key, (map.get(key) ?? 0) + amount);
-}
-
-const MIN_GAP_TARGET_RATIO = 0.7;
-const MIN_GAP_PENALTY_WEIGHT = 2;
-const MAX_GAP_TARGET_RATIO = 1.3;
-const MAX_GAP_PENALTY_WEIGHT = 1.5;
-
-function intervalUniformityPenalty(indicesByPerson: Map<string, number[]>): number {
-  let penalty = 0;
-  for (const indices of indicesByPerson.values()) {
-    if (indices.length < 2) continue;
-    const gaps = indices.slice(1).map((v, i) => v - indices[i]);
-    const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-    if (mean <= 0) continue;
-    const variancePenalty = gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / (gaps.length * mean * mean);
-    const minGap = Math.min(...gaps);
-    const targetMinGap = mean * MIN_GAP_TARGET_RATIO;
-    const minGapShortfall = Math.max(0, targetMinGap - minGap) / mean;
-    const minGapPenalty = MIN_GAP_PENALTY_WEIGHT * (minGapShortfall ** 2);
-    const maxGap = Math.max(...gaps);
-    const targetMaxGap = mean * MAX_GAP_TARGET_RATIO;
-    const maxGapExcess = Math.max(0, maxGap - targetMaxGap) / mean;
-    const maxGapPenalty = MAX_GAP_PENALTY_WEIGHT * (maxGapExcess ** 2);
-    penalty += variancePenalty + minGapPenalty + maxGapPenalty;
-  }
-  return penalty;
-}
-
-function varianceForPeople(counts: Map<string, number>, personIds: string[]): number {
-  if (personIds.length === 0) return 0;
-  const values = personIds.map(id => counts.get(id) ?? 0);
-  const mean = values.reduce((s, v) => s + v, 0) / values.length;
-  return values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
-}
+// #endregion
 
 export function personSimilarity(
   aKeywords: string[],
   bKeywords: string[],
-  sim: Map<string, number> | SimilarityLookup,
+  sim: SimilarityLookup,
 ): number {
   if (aKeywords.length === 0 || bKeywords.length === 0) return 0;
   let total = 0;
@@ -192,13 +199,88 @@ export function personSimilarity(
   for (const a of aKeywords) {
     for (const b of bKeywords) {
       if (a === b) { total += 1; count++; continue; }
-      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
-      const w = sim instanceof Map ? sim.get(key) : sim.getPairSimilarity(a, b);
+      const w = sim.getPairSimilarity(a, b);
       if (w !== undefined) { total += w; count++; }
     }
   }
   return count === 0 ? 0 : total / count;
 }
+
+// #region Metrics explanation
+
+
+const MIN_GAP_TARGET_RATIO = 0.9;
+const MIN_GAP_PENALTY_WEIGHT = 2;
+const MAX_GAP_TARGET_RATIO = 1;
+const MAX_GAP_PENALTY_WEIGHT = 1.5;
+const VARIANCE_PENALTY_WEIGHT = 2;
+
+interface UniformityPenaltyOptions {
+  minGapTargetRatio?: number;
+  maxGapTargetRatio?: number;
+
+  variancePenaltyWeight?: number;
+  minGapPenaltyWeight?: number;
+  maxGapPenaltyWeight?: number;
+
+  meanOverride?: number;
+}
+
+function uniformityPenalty(
+  numbers: number[],
+  options: UniformityPenaltyOptions = {},
+): number {
+  if (numbers.length === 0) return 0;
+
+  const {
+    minGapTargetRatio = MIN_GAP_TARGET_RATIO,
+    maxGapTargetRatio = MAX_GAP_TARGET_RATIO,
+    variancePenaltyWeight = VARIANCE_PENALTY_WEIGHT,
+    minGapPenaltyWeight = MIN_GAP_PENALTY_WEIGHT,
+    maxGapPenaltyWeight = MAX_GAP_PENALTY_WEIGHT,
+    meanOverride,
+  } = options;
+
+  const mean = meanOverride ?? numbers.reduce((s, v) => s + v, 0) / numbers.length;
+  if (mean <= 0) return 0;
+
+  const variance = numbers.reduce((s, v) => s + (v - mean) ** 2, 0) / numbers.length;
+
+  const minGap = Math.min(...numbers);
+  const targetMinGap = mean * minGapTargetRatio;
+  const minGapShortfall = Math.max(0, targetMinGap - minGap) / mean;
+  const minGapPenalty = minGapShortfall ** 2;
+
+  const maxGap = Math.max(...numbers);
+  const targetMaxGap = mean * maxGapTargetRatio;
+  const maxGapExcess = Math.max(0, maxGap - targetMaxGap) / mean;
+  const maxGapPenalty = maxGapExcess ** 2;
+
+  return (
+    variancePenaltyWeight * variance +
+    minGapPenaltyWeight * minGapPenalty +
+    maxGapPenaltyWeight * maxGapPenalty
+  );
+}
+
+function buildAllCountsAndAllGaps(indicesByPerson: Map<string, number[]>, weights: Map<string, number>, personIds?: string[]): { allCounts: number[]; allGaps: number[] } {
+  const allCounts: number[] = [];
+  const allGaps: number[] = [];
+
+  for (const personId of personIds ?? indicesByPerson.keys()) {
+    const indices = indicesByPerson.get(personId) ?? [];
+    const factor = weights.get(personId) || 1;
+    allCounts.push(indices.length / factor);
+    if (indices.length < 2) continue;
+    const gaps = indices.slice(1).map((v, i) => v - indices[i]);
+    allGaps.push(...gaps);
+  }
+  return {
+    allCounts,
+    allGaps,
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Cost computation
@@ -207,43 +289,30 @@ export function personSimilarity(
 export function computeCostBreakdown(
   sessions: Session[],
   ctx: CostContext,
+  guidance: ConstraintGuidance,
   historicalSessions: Session[] = [],
 ): CostBreakdown {
   const allSessions = [...historicalSessions, ...sessions];
   const personIds = [...ctx.personKeywords.keys()];
-  const guidance = buildConstraintGuidance(ctx);
 
   const presenterIndices = new Map<string, number[]>();
   const questionerIndices = new Map<string, number[]>();
-  const presenterCounts = new Map<string, number>();
-  const questionerCounts = new Map<string, number>();
-  const totalRoleCounts = new Map<string, number>();
 
-  allSessions.forEach((sess, idx) => {
-    for (const p of sess.presentations) {
-      const arr = presenterIndices.get(p.presenterId) ?? [];
-      arr.push(idx);
-      presenterIndices.set(p.presenterId, arr);
-      const presenterInc = frequencyRoleFactor(p.presenterId, 'presenter', guidance);
-      incrementCount(presenterCounts, p.presenterId, presenterInc);
-      incrementCount(totalRoleCounts, p.presenterId, presenterInc);
-    }
-  });
-
-  // 1. Uniformity – interval penalty for presenter/questioner appearances.
-  // Dividing by mean² normalises for frequency-multiplier constraints: a person
-  // scheduled twice as often has naturally half the gap, so their absolute
-  // variance is inherently ~4× smaller – using CV² makes all persons comparable.
-  // Add an extra term for extremely short minimum gaps to avoid schedules that
-  // have acceptable variance but still contain a near-back-to-back presentation.
-  let uniformityPenalty = intervalUniformityPenalty(presenterIndices);
-
-  // 2. Questioner frequency + hard invalidity
-  const questionerFreq = new Map<string, number>();
-  let questionerPenalty = 0;
+  // 1. Invalid assignments
   let invalidAssignmentPenalty = 0;
+
+  // 2. Questioner frequency
+  let questionerPenalty = 0;
+  const questionerFreq = new Map<string, number>();
+
   allSessions.forEach((sess, idx) => {
     for (const pres of sess.presentations) {
+      // Record presenter indices for uniformity penalty calculation.
+      const arr = presenterIndices.get(pres.presenterId) ?? [];
+      arr.push(idx);
+      presenterIndices.set(pres.presenterId, arr);
+
+      // Record questioner indices and frequencies for uniformity and questioner
       const seen = new Set<string>();
       for (const q of pres.questionerIds) {
         if (!seen.has(q)) {
@@ -251,13 +320,9 @@ export function computeCostBreakdown(
           arr.push(idx);
           questionerIndices.set(q, arr);
         }
-        const questionerInc =
-          frequencyRoleFactor(q, 'questioner', guidance)
-          * affinityPairFactor(pres.presenterId, q, guidance);
-        incrementCount(questionerCounts, q, questionerInc);
-        incrementCount(totalRoleCounts, q, questionerInc);
-        if (q === pres.presenterId) invalidAssignmentPenalty += 1000;
-        if (seen.has(q)) invalidAssignmentPenalty += 250;
+
+        if (q === pres.presenterId) invalidAssignmentPenalty += 1;
+        if (seen.has(q)) invalidAssignmentPenalty += 0.5;
         seen.add(q);
         const key = `${q}→${pres.presenterId}`;
         const freq = (questionerFreq.get(key) ?? 0) + 1;
@@ -266,9 +331,28 @@ export function computeCostBreakdown(
       }
     }
   });
-  uniformityPenalty += intervalUniformityPenalty(questionerIndices);
 
-  // 3. Domain relevance – |sim(q, presenter) − r|
+  const {
+    allCounts: presenterAllCounts,
+    allGaps: presenterAllGaps,
+  } = buildAllCountsAndAllGaps(presenterIndices, guidance.presenterWeights, personIds);
+
+  const {
+    allCounts: questionerAllCounts,
+    allGaps: questionerAllGaps,
+  } = buildAllCountsAndAllGaps(questionerIndices, guidance.questionerWeights, personIds);
+
+  const gapOptions: UniformityPenaltyOptions = {
+    minGapTargetRatio: 0.9,
+    maxGapTargetRatio: 1.1,
+    variancePenaltyWeight: 5,
+  };
+
+  // 3. Uniformity penalty
+  const presenterLoadPenalty = uniformityPenalty(presenterAllCounts) + uniformityPenalty(presenterAllGaps, gapOptions);
+  const questionerLoadPenalty = uniformityPenalty(questionerAllCounts) + uniformityPenalty(questionerAllGaps, gapOptions);
+
+  // 4. Domain relevance – |sim(q, presenter) − r|
   let relevancePenalty = 0;
   for (const sess of allSessions) {
     for (const pres of sess.presentations) {
@@ -281,23 +365,19 @@ export function computeCostBreakdown(
     }
   }
 
-  // 4. Load balance
-  const presenterLoadPenalty = varianceForPeople(presenterCounts, personIds);
-  const questionerLoadPenalty = varianceForPeople(questionerCounts, personIds);
-  const totalRolePenalty = varianceForPeople(totalRoleCounts, personIds);
-
-  // 5. User-defined constraints
-  const constraintPenalty = 0;
+  // 5. Total role
+  const totalRoleAllCounts = presenterAllCounts.map((c, i) => c + questionerAllCounts[i]);
+  const totalRolePenalty = uniformityPenalty(totalRoleAllCounts);
 
   return {
-    uniformityPenalty,
+    uniformityPenalty: 0,
     questionerPenalty,
     relevancePenalty,
     presenterLoadPenalty,
     questionerLoadPenalty,
     totalRolePenalty,
     invalidAssignmentPenalty,
-    constraintPenalty,
+    constraintPenalty: 0,
   };
 }
 
@@ -341,7 +421,8 @@ export function buildCostContext(input: SolverInput): CostContext {
 export function computeCost(
   sessions: Session[],
   ctx: CostContext,
+  guidance: ConstraintGuidance,
   historicalSessions: Session[] = [],
 ): number {
-  return weightedTotalCost(computeCostBreakdown(sessions, ctx, historicalSessions));
+  return weightedTotalCost(computeCostBreakdown(sessions, ctx, guidance, historicalSessions));
 }
