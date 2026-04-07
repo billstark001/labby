@@ -32,6 +32,8 @@ type NativeEngineLike = {
   flushDirtyNodes(): Buffer | Uint8Array;
 };
 
+type RawEngineLike = Record<string, unknown>;
+
 interface DirtyNode {
   id: number;
   coords64d: number[];
@@ -82,6 +84,66 @@ function parseDirtyBuffer(buffer: Buffer | Uint8Array): DirtyNode[] {
   return nodes;
 }
 
+function pickMethod<T extends (...args: any[]) => any>(
+  engine: RawEngineLike,
+  names: string[],
+): T | null {
+  for (const name of names) {
+    const value = engine[name];
+    if (typeof value === 'function') {
+      return value.bind(engine) as T;
+    }
+  }
+  return null;
+}
+
+function normalizeEngineApi(engine: RawEngineLike): NativeEngineLike {
+  const hydrate = pickMethod<NativeEngineLike['hydrate']>(engine, ['hydrate']);
+  const recommendTriplet = pickMethod<NativeEngineLike['recommendTriplet']>(engine, [
+    'recommendTriplet',
+    'recommend_triplet',
+  ]);
+  const updateTriplet = pickMethod<NativeEngineLike['updateTriplet']>(engine, [
+    'updateTriplet',
+    'update_triplet',
+  ]);
+  const updatePair = pickMethod<NativeEngineLike['updatePair']>(engine, ['updatePair', 'update_pair']);
+  const updateTripletsBatchFlush = pickMethod<NativeEngineLike['updateTripletsBatchFlush']>(engine, [
+    'updateTripletsBatchFlush',
+    'update_triplets_batch_flush',
+  ]);
+  const updatePairsBatchFlush = pickMethod<NativeEngineLike['updatePairsBatchFlush']>(engine, [
+    'updatePairsBatchFlush',
+    'update_pairs_batch_flush',
+  ]);
+  const flushDirtyNodes = pickMethod<NativeEngineLike['flushDirtyNodes']>(engine, [
+    'flushDirtyNodes',
+    'flush_dirty_nodes',
+  ]);
+
+  if (
+    !hydrate
+    || !recommendTriplet
+    || !updateTriplet
+    || !updatePair
+    || !updateTripletsBatchFlush
+    || !updatePairsBatchFlush
+    || !flushDirtyNodes
+  ) {
+    throw new Error(`Engine API mismatch. Available exports: ${Object.keys(engine).sort().join(', ')}`);
+  }
+
+  return {
+    hydrate,
+    recommendTriplet,
+    updateTriplet,
+    updatePair,
+    updateTripletsBatchFlush,
+    updatePairsBatchFlush,
+    flushDirtyNodes,
+  };
+}
+
 async function loadNapiEngine(capacity: number): Promise<NativeEngineLike> {
   const req = createRequire(import.meta.url);
   const napiPath = process.env.LABBY_CORE_NAPI_PATH
@@ -90,7 +152,7 @@ async function loadNapiEngine(capacity: number): Promise<NativeEngineLike> {
   if (!mod.JsEmbeddingEngine) {
     throw new Error(`Invalid napi module exports: ${napiPath}`);
   }
-  return new mod.JsEmbeddingEngine(capacity);
+  return normalizeEngineApi(new mod.JsEmbeddingEngine(capacity) as RawEngineLike);
 }
 
 async function loadWasmEngine(capacity: number): Promise<NativeEngineLike> {
@@ -107,7 +169,7 @@ async function loadWasmEngine(capacity: number): Promise<NativeEngineLike> {
   if (!mod.WasmEmbeddingEngine) {
     throw new Error(`Invalid wasm module exports: ${wasmEntryPath}`);
   }
-  return new mod.WasmEmbeddingEngine(capacity);
+  return normalizeEngineApi(new mod.WasmEmbeddingEngine(capacity) as RawEngineLike);
 }
 
 export class EmbeddingEngineAdapter {
