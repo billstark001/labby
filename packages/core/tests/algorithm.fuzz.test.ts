@@ -133,22 +133,32 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
         const baseVectors = initKeywordVectors(keywordPool);
         const similarities = keywordVectorsToSimilarityMap(baseVectors);
 
-        const full = solveFull({ persons, similarities, config });
+        const fullSessions = solveFull({ persons, similarities, config });
+        const fullPlan: SchedulePlan = {
+          id: `plan-full-${seed}`,
+          createdAt: Date.now(),
+          configId: config.id,
+          sessions: fullSessions,
+        };
         const changeDate = '2026-05-01';
-        const incremental: SchedulePlan = solveIncremental({
+        const incrementalSessions = solveIncremental({
           persons,
           similarities,
           config,
-          previousPlan: full,
+          sessions: fullPlan.sessions,
           changeDate,
         });
+        const incrementalPlan: SchedulePlan = {
+          ...fullPlan,
+          sessions: incrementalSessions,
+        };
 
         const activeIds = new Set(persons.filter(p => !p.disabled).map(p => p.id));
-        assertBasicScheduleInvariants(full.sessions, activeIds);
-        assertBasicScheduleInvariants(incremental.sessions, activeIds);
+        assertBasicScheduleInvariants(fullPlan.sessions, activeIds);
+        assertBasicScheduleInvariants(incrementalPlan.sessions, activeIds);
 
-        const prevFrozen = full.sessions.filter(s => s.date < changeDate);
-        const incFrozen = incremental.sessions.filter(s => s.date < changeDate);
+        const prevFrozen = fullPlan.sessions.filter((s: Session) => s.date < changeDate);
+        const incFrozen = incrementalPlan.sessions.filter((s: Session) => s.date < changeDate);
         expect(incFrozen).toEqual(prevFrozen);
 
         return true;

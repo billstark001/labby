@@ -403,10 +403,20 @@ export function buildCostContext(input: SolverInput): CostContext {
   const similarities: SimilarityLookup = input.similarities instanceof Map
     ? {
       getPairSimilarity(leftKeywordId: string, rightKeywordId: string): number | undefined {
-        const key = leftKeywordId < rightKeywordId
-          ? `${leftKeywordId}|${rightKeywordId}`
-          : `${rightKeywordId}|${leftKeywordId}`;
-        return (input.similarities as Map<string, number>).get(key) || 0;
+        if (leftKeywordId === rightKeywordId) return 1;
+
+        const similarityMap = input.similarities as Map<string, number>;
+        const directKey = `${leftKeywordId}|${rightKeywordId}`;
+        if (similarityMap.has(directKey)) {
+          return similarityMap.get(directKey);
+        }
+
+        const reverseKey = `${rightKeywordId}|${leftKeywordId}`;
+        if (similarityMap.has(reverseKey)) {
+          return similarityMap.get(reverseKey);
+        }
+
+        return undefined;
       },
     }
     : input.similarities;

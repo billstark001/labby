@@ -284,12 +284,10 @@ export interface PresentationMutationDialogProps {
   state: PresentationMutationDialogState | null;
   operation: 'insert' | 'delete';
   count: number;
-  tactic: 'shift' | 'keep';
-  changeSessionLength: boolean;
+  mode: 'session-resize' | 'shift-chain' | 'session-refill';
   onOperationChange: (operation: 'insert' | 'delete') => void;
   onCountChange: (count: number) => void;
-  onTacticChange: (tactic: 'shift' | 'keep') => void;
-  onChangeSessionLengthChange: (value: boolean) => void;
+  onModeChange: (mode: 'session-resize' | 'shift-chain' | 'session-refill') => void;
   onApply: () => void;
   onClose: () => void;
 }
@@ -298,12 +296,10 @@ export function PresentationMutationDialog({
   state,
   operation,
   count,
-  tactic,
-  changeSessionLength,
+  mode,
   onOperationChange,
   onCountChange,
-  onTacticChange,
-  onChangeSessionLengthChange,
+  onModeChange,
   onApply,
   onClose,
 }: PresentationMutationDialogProps) {
@@ -347,23 +343,16 @@ export function PresentationMutationDialog({
         />
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>Strategy</label>
+        <label class={s.label}>Mode</label>
         <select
           class={s.input}
-          value={tactic}
-          onChange={e => onTacticChange((e.target as HTMLSelectElement).value as 'shift' | 'keep')}
+          value={mode}
+          onChange={e => onModeChange((e.target as HTMLSelectElement).value as 'session-resize' | 'shift-chain' | 'session-refill')}
         >
-          <option value="keep">{t('mutationStrategyInPlace')}</option>
-          <option value="shift">{t('mutationStrategyShift')}</option>
+          <option value="session-resize">Resize Current Session</option>
+          <option value="shift-chain">Shift Across Sessions</option>
+          <option value="session-refill">Refill Current Session</option>
         </select>
-      </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>Change Session Length</label>
-        <input
-          type="checkbox"
-          checked={changeSessionLength}
-          onInput={e => onChangeSessionLengthChange((e.target as HTMLInputElement).checked)}
-        />
       </div>
       <div class={s.flexGapSm}>
         <Button variant="primary" onClick={onApply}>{t('applyMutation')}</Button>

@@ -131,8 +131,7 @@ export function SchedulePage() {
   const [presentationMutationDialog, setPresentationMutationDialog] = useState<PresentationMutationDialogState | null>(null);
   const [presentationMutationOperation, setPresentationMutationOperation] = useState<'insert' | 'delete'>('insert');
   const [presentationMutationCount, setPresentationMutationCount] = useState(1);
-  const [presentationMutationTactic, setPresentationMutationTactic] = useState<'shift' | 'keep'>('keep');
-  const [presentationMutationChangeSessionLength, setPresentationMutationChangeSessionLength] = useState(true);
+  const [presentationMutationMode, setPresentationMutationMode] = useState<'session-resize' | 'shift-chain' | 'session-refill'>('session-resize');
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
   const activePersonCount = persons.filter(p => !p.disabled).length;
@@ -506,8 +505,7 @@ export function SchedulePage() {
     setPresentationMutationDialog({ sessionDate, presentationIndex });
     setPresentationMutationOperation('insert');
     setPresentationMutationCount(1);
-    setPresentationMutationTactic('keep');
-    setPresentationMutationChangeSessionLength(true);
+    setPresentationMutationMode('session-resize');
   }
 
   async function handleApplySessionMutation(): Promise<void> {
@@ -614,11 +612,7 @@ export function SchedulePage() {
     const count = Math.max(1, Math.floor(presentationMutationCount));
     const currentLen = current.sessions[sessionIndex]?.presentations.length ?? 0;
     if (presentationMutationOperation === 'delete') {
-      if (presentationMutationTactic === 'keep' && presentationIndex + count > currentLen) {
-        toast.error('delete range exceeds available presentations');
-        return;
-      }
-      if (presentationMutationTactic === 'shift' && count > currentLen) {
+      if (presentationIndex + count > currentLen) {
         toast.error('delete count exceeds available presentations');
         return;
       }
@@ -640,8 +634,7 @@ export function SchedulePage() {
           index: presentationIndex,
           operation: presentationMutationOperation,
           count,
-          tactic: presentationMutationTactic,
-          changeSessionLength: presentationMutationChangeSessionLength,
+          mode: presentationMutationMode,
         },
       );
     } catch (err) {
@@ -795,12 +788,10 @@ export function SchedulePage() {
         state={presentationMutationDialog}
         operation={presentationMutationOperation}
         count={presentationMutationCount}
-        tactic={presentationMutationTactic}
-        changeSessionLength={presentationMutationChangeSessionLength}
+        mode={presentationMutationMode}
         onOperationChange={setPresentationMutationOperation}
         onCountChange={setPresentationMutationCount}
-        onTacticChange={setPresentationMutationTactic}
-        onChangeSessionLengthChange={setPresentationMutationChangeSessionLength}
+        onModeChange={setPresentationMutationMode}
         onApply={() => void handleApplyPresentationMutation()}
         onClose={() => setPresentationMutationDialog(null)}
       />

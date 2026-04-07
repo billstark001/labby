@@ -283,15 +283,21 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
       unavailabilities: unavailable,
     };
 
-    const plan = withSeed(7, () => solveFull(input));
+    const sessions = withSeed(7, () => solveFull(input));
+    const plan: SchedulePlan = {
+      id: 'test-plan',
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions,
+    };
     const activePersonIds = new Set(persons.filter(p => !p.disabled).map(p => p.id));
     const unavailableByDate = collectUnavailable(config.id);
 
     assertSessionValidity(plan.sessions, activePersonIds, unavailableByDate);
 
-    const target = plan.sessions.find(s => s.date === '2026-04-03');
+    const target = plan.sessions.find((s: Session) => s.date === '2026-04-03');
     expect(target).toBeDefined();
-    expect(target?.presentations.some(p => p.presenterId === 'p2' || p.presenterId === 'p3' || p.presenterId === 'p4')).toBe(false);
+    expect(target?.presentations.some((p: any) => p.presenterId === 'p2' || p.presenterId === 'p3' || p.presenterId === 'p4')).toBe(false);
   });
 
   test('incremental solver keeps sessions before changeDate unchanged', () => {
@@ -307,19 +313,29 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
       config,
     };
 
-    const previousPlan: SchedulePlan = withSeed(11, () => solveFull(baseInput));
+    const prevSessions = withSeed(11, () => solveFull(baseInput));
+    const previousPlan: SchedulePlan = {
+      id: 'test-plan',
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions: prevSessions,
+    };
     const changeDate = '2026-04-13';
 
-    const next = withSeed(12, () =>
+    const nextSessions = withSeed(12, () =>
       solveIncremental({
         ...baseInput,
-        previousPlan,
+        sessions: previousPlan.sessions,
         changeDate,
       }),
     );
+    const nextPlan: SchedulePlan = {
+      ...previousPlan,
+      sessions: nextSessions,
+    };
 
-    const frozenPrev = previousPlan.sessions.filter(s => s.date < changeDate);
-    const frozenNext = next.sessions.filter(s => s.date < changeDate);
+    const frozenPrev = previousPlan.sessions.filter((s: Session) => s.date < changeDate);
+    const frozenNext = nextPlan.sessions.filter((s: Session) => s.date < changeDate);
     expect(frozenNext).toEqual(frozenPrev);
   });
 
@@ -346,12 +362,18 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
       },
     ];
 
-    const plan = withSeed(42, () => solveFull({
+    const sessions = withSeed(42, () => solveFull({
       persons,
       similarities: makeSimilarities(),
       config,
       constraints,
     }));
+    const plan: SchedulePlan = {
+      id: 'test-plan',
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions,
+    };
 
     expect(plan.sessions.length).toBeGreaterThan(0);
     const appearances = new Map<string, number>();
@@ -427,12 +449,18 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
       },
     ];
 
-    const plan = withSeed(2026, () => solveFull({
+    const sessions = withSeed(2026, () => solveFull({
       persons,
       similarities: similarityLookup,
       config,
       constraints,
     }));
+    const plan: SchedulePlan = {
+      id: 'test-plan',
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions,
+    };
 
     let noOverlapViolations = 0;
     let affinityPairings = 0;

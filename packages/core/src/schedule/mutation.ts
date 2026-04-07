@@ -25,8 +25,7 @@ export type MutatePresentationsOptions = {
   sessionIndex: number;
   operation: 'insert' | 'delete';
   count: number;
-  tactic?: 'shift' | 'keep';
-  changeSessionLength?: boolean;
+  mode?: 'session-resize' | 'shift-chain' | 'session-refill';
 }
 
 function assertPositiveCount(count: number): void {
@@ -227,6 +226,74 @@ function generatePresentationsForSession(
   return generator.generate(target.date, count);
 }
 
+function cascadeOverflowForward(
+  sessions: Session[],
+  startIndex: number,
+  baselineLengths: number[],
+): void {
+  for (let i = startIndex; i < sessions.length - 1; i++) {
+    const current = sessions[i]?.presentations;
+    const next = sessions[i + 1]?.presentations;
+    if (!current || !next) continue;
+
+    const expectedLength = baselineLengths[i] ?? current.length;
+    const overflowCount = current.length - expectedLength;
+    if (overflowCount <= 0) continue;
+
+    const overflow = current.splice(expectedLength, overflowCount);
+    next.splice(0, 0, ...overflow);
+  }
+
+  const lastIndex = sessions.length - 1;
+  if (lastIndex < 0) return;
+  const lastExpected = baselineLengths[lastIndex] ?? sessions[lastIndex].presentations.length;
+  const lastOverflow = sessions[lastIndex].presentations.length - lastExpected;
+  if (lastOverflow > 0) {
+    sessions[lastIndex].presentations.splice(lastExpected, lastOverflow);
+  }
+}
+
+function cascadeDeficitBackward(
+  sessions: Session[],
+  startIndex: number,
+  baselineLengths: number[],
+): void {
+  for (let i = startIndex; i < sessions.length - 1; i++) {
+    const current = sessions[i]?.presentations;
+    const next = sessions[i + 1]?.presentations;
+    if (!current || !next) continue;
+
+    const expectedLength = baselineLengths[i] ?? current.length;
+    const deficit = expectedLength - current.length;
+    if (deficit <= 0) continue;
+
+    const moved = next.splice(0, deficit);
+    current.push(...moved);
+  }
+}
+
+function refillSessionTail(
+  sessions: Session[],
+  sessionIndex: number,
+  count: number,
+  solverInput: Omit<SolverInput, 'similarities'> & { similarities?: SimilarityLookup },
+): void {
+  if (count <= 0) return;
+
+  const target = sessions[sessionIndex];
+  const generated = generatePresentationsForSession(
+    sessions,
+    sessionIndex,
+    count,
+    solverInput,
+    target.presentations,
+  );
+  if (generated.length < count) {
+    throw new Error('Insufficient eligible people to regenerate deleted presentations');
+  }
+  target.presentations.push(...generated);
+}
+
 export function mutatePresentations(
   sessions: Session[],
   solverInput: Omit<SolverInput, 'similarities'> & { similarities?: SimilarityLookup },
@@ -237,8 +304,7 @@ export function mutatePresentations(
     index,
     operation,
     count,
-    tactic = 'keep',
-    changeSessionLength = true,
+    mode = 'session-resize',
   } = options;
 
   if (!Number.isInteger(sessionIndex) || sessionIndex < 0 || sessionIndex >= sessions.length) {
@@ -250,24 +316,27 @@ export function mutatePresentations(
   assertPositiveCount(count);
 
   const isInsert = operation === 'insert';
-  const isKeep = tactic === 'keep';
+  const baselineLengths = sessions.map(s => s.presentations.length);
 
   const nextSessions = structuredClone(sessions);
   const target = nextSessions[sessionIndex];
   const presentations = target.presentations;
 
-  if ((isInsert && isKeep && index > presentations.length) || (!isInsert && isKeep && index >= presentations.length)) {
+  if (isInsert && index > presentations.length) {
+    throw new Error('Presentation index out of bounds');
+  }
+  if (!isInsert && index >= presentations.length) {
     throw new Error('Presentation index out of bounds');
   }
   if (!isInsert && count > presentations.length) {
     throw new Error('Count exceeds presentation length');
   }
-  if (!isInsert && isKeep && index + count > presentations.length) {
+  if (!isInsert && index + count > presentations.length) {
     throw new Error('Count exceeds removable range');
   }
 
-  const deleteStart = isKeep ? index : Math.max(0, presentations.length - count);
-  const insertAt = isKeep ? index : presentations.length;
+  const deleteStart = index;
+  const insertAt = index;
 
   if (isInsert) {
     const generated = generatePresentationsForSession(nextSessions, sessionIndex, count, solverInput, presentations);
@@ -276,9 +345,11 @@ export function mutatePresentations(
     }
 
     presentations.splice(insertAt, 0, ...generated);
-    if (!changeSessionLength) {
-      presentations.splice(Math.max(0, presentations.length - count), count);
+
+    if (mode !== 'session-resize') {
+      cascadeOverflowForward(nextSessions, sessionIndex, baselineLengths);
     }
+
     return nextSessions;
   }
 
@@ -287,14 +358,16 @@ export function mutatePresentations(
     throw new Error('Failed to remove requested number of presentations');
   }
 
-  if (!changeSessionLength) {
-    const generated = generatePresentationsForSession(nextSessions, sessionIndex, count, solverInput, presentations);
-    if (generated.length < count) {
-      throw new Error('Insufficient eligible people to regenerate deleted presentations');
+  if (mode === 'shift-chain') {
+      cascadeDeficitBackward(nextSessions, sessionIndex, baselineLengths);
+      const lastIndex = nextSessions.length - 1;
+      if (lastIndex >= 0) {
+        const expectedLength = baselineLengths[lastIndex] ?? nextSessions[lastIndex].presentations.length;
+        const deficit = expectedLength - nextSessions[lastIndex].presentations.length;
+        refillSessionTail(nextSessions, lastIndex, deficit, solverInput);
     }
-
-    const refillAt = isKeep ? deleteStart : presentations.length;
-    presentations.splice(refillAt, 0, ...generated);
+  } else if (mode === 'session-refill') {
+    refillSessionTail(nextSessions, sessionIndex, count, solverInput);
   }
 
   return nextSessions;
