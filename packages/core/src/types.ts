@@ -78,6 +78,8 @@ export interface EmailTask {
   emails: string[];
   /** 0 means unlimited sends for each recipient. */
   recentTimes: number;
+  /** Optional subject template source text for email title rendering. */
+  subjectTemplate?: string;
   /** Template source text, parsed by the template module. */
   templateText: string;
   /** Per-recipient successful send count. */

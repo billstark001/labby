@@ -86,6 +86,23 @@ const SQLITE_COMMON_SQL = `
   );
   CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens (user_id);
   CREATE INDEX IF NOT EXISTS refresh_tokens_expires_idx ON refresh_tokens (expires_at);
+
+  CREATE TABLE IF NOT EXISTS auth_verification_codes (
+    token_id TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL,
+    user_id TEXT,
+    target_email TEXT NOT NULL,
+    pending_email TEXT,
+    code_hash TEXT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    consumed_at BIGINT,
+    payload TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS auth_verification_codes_user_idx ON auth_verification_codes (user_id, purpose, created_at DESC);
+  CREATE INDEX IF NOT EXISTS auth_verification_codes_email_idx ON auth_verification_codes (target_email, purpose, created_at DESC);
+  CREATE INDEX IF NOT EXISTS auth_verification_codes_expires_idx ON auth_verification_codes (expires_at);
 `;
 
 export function migrateSqlite(rawDb: Database.Database): { sqliteVecEnabled: boolean } {

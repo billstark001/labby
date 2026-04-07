@@ -1,5 +1,5 @@
 import type { EmailTask, ScheduleConfig } from '@labby/core';
-import { buildEmailTemplateScheduleVariables, renderTemplateToHtml, type ScheduleDateGranularity } from '@labby/core';
+import { buildEmailTemplateScheduleVariables, renderTemplate, renderTemplateToHtml, type ScheduleDateGranularity } from '@labby/core';
 
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
@@ -192,9 +192,16 @@ export class EmailTaskNotifier {
         continue;
       }
 
+      const renderedSubject = task.subjectTemplate
+        ? renderTemplate(task.subjectTemplate, context)
+        : { output: '', errors: [] };
+      if (renderedSubject.errors.length > 0) {
+        console.warn(`[email-task] subject template render errors for task ${task.id}:`, renderedSubject.errors);
+      }
+
       await this.options.mailer.send({
         to: [recipient],
-        subject: `[Labby] Scheduled Email ${task.id}`,
+        subject: renderedSubject.output.trim() || `[Labby] Scheduled Email ${task.id}`,
         text: rendered.output,
         html: rendered.html,
       });

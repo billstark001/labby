@@ -8,6 +8,7 @@ import {
   DEFAULT_TEMPLATE_PRESETS,
   EMAIL_TEMPLATE_VARIABLE_DOCS,
   buildEmailTemplateScheduleVariables,
+  renderTemplate,
   renderTemplateToHtml,
   type EmailTask,
   type ScheduleDateGranularity,
@@ -121,6 +122,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [taskTimezone, setTaskTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   const [emailsText, setEmailsText] = useState('');
   const [recentTimes, setRecentTimes] = useState(0);
+  const [subjectTemplate, setSubjectTemplate] = useState('');
   const [templateText, setTemplateText] = useState('');
   const [templateFormat, setTemplateFormat] = useState<TemplateFormat>('markdown');
   const [injectionLanguage, setInjectionLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
@@ -179,6 +181,11 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     [templateText, previewContext, templateFormat],
   );
 
+  const previewSubject = useMemo(
+    () => renderTemplate(subjectTemplate || t('emailTaskDefaultSubject'), previewContext),
+    [subjectTemplate, previewContext, t],
+  );
+
   function applyTaskToForm(task: EmailTask): void {
     setSelectedTaskId(task.id);
     setConfigId(task.configId);
@@ -187,6 +194,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setTaskTimezone(task.timezone ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : 'UTC'));
     setEmailsText(task.emails.join(', '));
     setRecentTimes(task.recentTimes);
+    setSubjectTemplate(task.subjectTemplate ?? '');
     setTemplateText(task.templateText);
     setTemplateFormat(((task.metadata?.format as TemplateFormat | undefined) ?? 'markdown'));
     setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
@@ -203,6 +211,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setTaskTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     setEmailsText('');
     setRecentTimes(0);
+    setSubjectTemplate('');
     setTemplateText(DEFAULT_TEMPLATE_PRESETS[0]?.content ?? '');
     setTemplateFormat(DEFAULT_TEMPLATE_PRESETS[0]?.format ?? 'markdown');
     setInjectionLanguage(i18n.lang.value);
@@ -276,6 +285,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       timezone: taskTimezone || 'UTC',
       emails: parseEmails(emailsText),
       recentTimes,
+      subjectTemplate,
       templateText,
       modifiedAt: Date.now(),
       metadata: {
@@ -439,6 +449,25 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             value={recentTimes}
             onInput={(e) => { setIsDirty(true); setRecentTimes(Number.parseInt((e.target as HTMLInputElement).value || '0', 10)); }}
           />
+        </div>
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('emailTaskSubjectTemplate')}</label>
+          <input
+            class={s.input}
+            value={subjectTemplate}
+            onInput={(e) => { setIsDirty(true); setSubjectTemplate((e.target as HTMLInputElement).value); }}
+            placeholder={t('emailTaskDefaultSubject')}
+          />
+          <div class={`${s.text12} ${s.textMuted}`}>{t('emailTaskSubjectTemplateHint')}</div>
+          <div class={`${s.text12} ${s.textMuted}`}>{t('emailSubjectPreview')}: {previewSubject.output}</div>
+          {previewSubject.errors.length > 0 && (
+            <div class={s.textDanger}>
+              {previewSubject.errors.map((err) => (
+                <div key={`${err.start}-${err.end}-${err.message}`}>{err.kind}: {err.message}</div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div class={s.formGroup}>

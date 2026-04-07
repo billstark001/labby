@@ -1,4 +1,5 @@
 import { apiFetch } from './auth';
+import { notifyHttpError } from './api-error-toast';
 import { isServerDeployment } from './runtime';
 
 function redirectToLoginOnUnauthorized(status: number): void {
@@ -55,8 +56,11 @@ export class ApiClient {
     const body = await response.json().catch(() => undefined) as ApiEnvelope<T> | ApiErrorEnvelope | T | undefined;
     if (!response.ok) {
       if (body && typeof body === 'object' && ('message' in body || 'error' in body)) {
-        throw new Error((body as ApiErrorEnvelope).message ?? (body as ApiErrorEnvelope).error ?? 'Request failed');
+        const message = (body as ApiErrorEnvelope).message ?? (body as ApiErrorEnvelope).error ?? 'Request failed';
+        notifyHttpError(response.status, message);
+        throw new Error(message);
       }
+      notifyHttpError(response.status, `Request failed with status ${response.status}`);
       throw new Error(`Request failed with status ${response.status}`);
     }
 
@@ -72,7 +76,9 @@ export class ApiClient {
     redirectToLoginOnUnauthorized(response.status);
     if (!response.ok) {
       const body = await response.json().catch(() => undefined) as ApiErrorEnvelope | undefined;
-      throw new Error(body?.message ?? body?.error ?? `Request failed with status ${response.status}`);
+      const message = body?.message ?? body?.error ?? `Request failed with status ${response.status}`;
+      notifyHttpError(response.status, message);
+      throw new Error(message);
     }
     return response;
   }

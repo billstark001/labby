@@ -1,10 +1,18 @@
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 
 import { V4 } from '@mpoonuru/paseto';
 
 import { AppError } from './errors.js';
 import { hashPassword, verifyPassword } from './password.js';
-import { UserRole, type AuthRole, type RefreshTokenRecord, type SqliteStore, type StoredUser } from '../store/index.js';
+import {
+  UserRole,
+  type AuthRole,
+  type AuthVerificationCodeRecord,
+  type AuthVerificationPurpose,
+  type RefreshTokenRecord,
+  type SqliteStore,
+  type StoredUser,
+} from '../store/index.js';
 
 export { UserRole };
 export type { AuthRole };
@@ -49,6 +57,8 @@ export interface AuthServiceOptions {
   rootUsername?: string;
   rootPassword?: string;
   rootEmail?: string;
+  authCodeTtl?: string;
+  sendSecurityMail?: (input: { to: string; subject: string; text: string; html?: string }) => Promise<void>;
 }
 
 function parseDurationMs(input: string): number {
@@ -82,13 +92,16 @@ export function resolvePasetoKey(secret: string | undefined, purpose: string): B
 }
 
 export class AuthService {
+  private static readonly AUTH_CODE_COOLDOWN_MS = 60_000;
   private readonly refreshTtlMs: number;
+  private readonly authCodeTtlMs: number;
   private readonly rootUsername: string | undefined;
   private readonly rootPassword: string | undefined;
   private readonly rootEmail: string | undefined;
 
   constructor(private readonly options: AuthServiceOptions) {
     this.refreshTtlMs = parseDurationMs(options.refreshTtl);
+    this.authCodeTtlMs = parseDurationMs(options.authCodeTtl ?? '15m');
     this.rootUsername = options.rootUsername?.trim() || undefined;
     this.rootPassword = options.rootPassword?.trim() || undefined;
     this.rootEmail = options.rootEmail?.trim() || undefined;
@@ -123,6 +136,248 @@ export class AuthService {
     };
     await this.options.store.createUser(user);
     return user;
+  }
+
+  async getAccountProfile(userId: string): Promise<{ userId: string; username: string; email?: string; emailVerified: boolean; role: AuthRole; }> {
+    if (userId === 'root') {
+      return {
+        userId: 'root',
+        username: this.rootUsername ?? 'root',
+        email: this.rootEmail,
+        emailVerified: Boolean(this.rootEmail),
+        role: UserRole.Root,
+      };
+    }
+
+    const user = await this.options.store.getUserById(userId);
+    if (!user || user.disabled) {
+      throw new AppError('AUTH_INVALID', 'user is unavailable', 401);
+    }
+    return {
+      userId: user.id,
+      username: user.username,
+      email: user.email,
+      emailVerified: Boolean(user.email && user.emailVerifiedAt),
+      role: user.role,
+    };
+  }
+
+  async requestEmailVerification(userId: string): Promise<void> {
+    const user = await this.requireNonRootUser(userId);
+    if (!user.email) {
+      throw new AppError('VALIDATION_ERROR', 'email is not set for this account', 400);
+    }
+    const code = this.createVerificationCode();
+    await this.issueSecurityCode({
+      purpose: 'verify-email',
+      userId: user.id,
+      targetEmail: user.email,
+      pendingEmail: null,
+      code,
+    });
+    await this.sendSecurityMail(user.email, '[Labby] Verify your email', [
+      `Verification code: ${code}`,
+      `This code expires in ${Math.floor(this.authCodeTtlMs / 60_000)} minutes.`,
+    ]);
+  }
+
+  async confirmEmailVerification(userId: string, code: string): Promise<void> {
+    const user = await this.requireNonRootUser(userId);
+    const record = await this.options.store.getLatestActiveAuthVerificationCode({
+      purpose: 'verify-email',
+      userId: user.id,
+    });
+    this.assertCodeValid(record, code);
+    await this.options.store.consumeAuthVerificationCode(record!.tokenId);
+
+    await this.options.store.updateUser({
+      ...user,
+      emailVerifiedAt: Date.now(),
+    });
+  }
+
+  async requestPasswordReset(identity: string): Promise<void> {
+    const user = await this.options.store.findUserByIdentity(identity);
+    if (!user || user.disabled || !user.email) {
+      return;
+    }
+
+    const code = this.createVerificationCode();
+    await this.issueSecurityCode({
+      purpose: 'reset-password',
+      userId: user.id,
+      targetEmail: user.email,
+      pendingEmail: null,
+      code,
+    });
+    await this.sendSecurityMail(user.email, '[Labby] Reset your password', [
+      `Password reset code: ${code}`,
+      `If you did not request this, you can ignore this email.`,
+    ]);
+  }
+
+  async confirmPasswordReset(identity: string, code: string, newPassword: string): Promise<void> {
+    const user = await this.options.store.findUserByIdentity(identity);
+    if (!user || user.disabled) {
+      throw new AppError('AUTH_INVALID', 'user is unavailable', 401);
+    }
+    const record = await this.options.store.getLatestActiveAuthVerificationCode({
+      purpose: 'reset-password',
+      userId: user.id,
+    });
+    this.assertCodeValid(record, code);
+    await this.options.store.consumeAuthVerificationCode(record!.tokenId);
+
+    await this.options.store.updateUser({
+      ...user,
+      passwordHash: hashPassword(newPassword),
+    });
+    await this.options.store.revokeAllRefreshTokensForUser(user.id);
+    await this.options.store.pruneExpiredRefreshTokens();
+  }
+
+  async requestEmailChange(userId: string, currentPassword: string, newEmail: string): Promise<void> {
+    const user = await this.requireNonRootUser(userId);
+    const normalizedNewEmail = newEmail.trim().toLowerCase();
+    if (!verifyPassword(currentPassword, user.passwordHash)) {
+      throw new AppError('AUTH_INVALID', 'current password is invalid', 401);
+    }
+    if (!normalizedNewEmail || !normalizedNewEmail.includes('@')) {
+      throw new AppError('VALIDATION_ERROR', 'new email is invalid', 400);
+    }
+    const existed = await this.options.store.findUserByIdentity(normalizedNewEmail);
+    if (existed && existed.id !== user.id) {
+      throw new AppError('VALIDATION_ERROR', 'email is already in use', 409);
+    }
+
+    const code = this.createVerificationCode();
+    await this.issueSecurityCode({
+      purpose: 'change-email',
+      userId: user.id,
+      targetEmail: normalizedNewEmail,
+      pendingEmail: normalizedNewEmail,
+      code,
+    });
+    await this.sendSecurityMail(normalizedNewEmail, '[Labby] Confirm email change', [
+      `Email change code: ${code}`,
+      `Enter this code in Labby to complete the email update.`,
+    ]);
+  }
+
+  async confirmEmailChange(userId: string, code: string): Promise<void> {
+    const user = await this.requireNonRootUser(userId);
+    const record = await this.options.store.getLatestActiveAuthVerificationCode({
+      purpose: 'change-email',
+      userId: user.id,
+    });
+    this.assertCodeValid(record, code);
+    await this.options.store.consumeAuthVerificationCode(record!.tokenId);
+
+    const nextEmail = record!.pendingEmail ?? record!.targetEmail;
+    await this.options.store.updateUser({
+      ...user,
+      email: nextEmail,
+      emailVerifiedAt: Date.now(),
+    });
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.requireNonRootUser(userId);
+    if (!verifyPassword(currentPassword, user.passwordHash)) {
+      throw new AppError('AUTH_INVALID', 'current password is invalid', 401);
+    }
+    await this.options.store.updateUser({
+      ...user,
+      passwordHash: hashPassword(newPassword),
+    });
+    await this.options.store.revokeAllRefreshTokensForUser(user.id);
+    await this.options.store.pruneExpiredRefreshTokens();
+  }
+
+  private async requireNonRootUser(userId: string): Promise<StoredUser> {
+    if (userId === 'root') {
+      throw new AppError('AUTH_FORBIDDEN', 'root account does not support this operation', 403);
+    }
+    const user = await this.options.store.getUserById(userId);
+    if (!user || user.disabled) {
+      throw new AppError('AUTH_INVALID', 'user is unavailable', 401);
+    }
+    return user;
+  }
+
+  private createVerificationCode(): string {
+    return `${Math.floor(100000 + Math.random() * 900000)}`;
+  }
+
+  private hashVerificationCode(purpose: AuthVerificationPurpose, code: string, tokenId: string): string {
+    return createHash('sha256')
+      .update(`${purpose}:${tokenId}:${code.trim()}:${this.options.issuer}`)
+      .digest('hex');
+  }
+
+  private constantTimeEqual(left: string, right: string): boolean {
+    const l = Buffer.from(left, 'utf8');
+    const r = Buffer.from(right, 'utf8');
+    if (l.length !== r.length) return false;
+    return timingSafeEqual(l, r);
+  }
+
+  private assertCodeValid(record: AuthVerificationCodeRecord | undefined, code: string): asserts record is AuthVerificationCodeRecord {
+    if (!record) {
+      throw new AppError('AUTH_INVALID', 'verification code is invalid or expired', 401);
+    }
+    const expected = this.hashVerificationCode(record.purpose, code, record.tokenId);
+    if (!this.constantTimeEqual(record.codeHash, expected)) {
+      throw new AppError('AUTH_INVALID', 'verification code is invalid or expired', 401);
+    }
+  }
+
+  private async sendSecurityMail(to: string, subject: string, lines: string[]): Promise<void> {
+    if (!this.options.sendSecurityMail) {
+      throw new AppError('INTERNAL_ERROR', 'email delivery is unavailable; server SMTP is required', 503);
+    }
+    await this.options.sendSecurityMail({
+      to,
+      subject,
+      text: lines.join('\n'),
+      html: `<p>${lines.join('</p><p>')}</p>`,
+    });
+  }
+
+  private async issueSecurityCode(input: {
+    purpose: AuthVerificationPurpose;
+    userId: string;
+    targetEmail: string;
+    pendingEmail: string | null;
+    code: string;
+  }): Promise<AuthVerificationCodeRecord> {
+    const latest = await this.options.store.getLatestAuthVerificationCode({
+      purpose: input.purpose,
+      userId: input.userId,
+      targetEmail: input.targetEmail,
+    });
+    const now = Date.now();
+    if (latest && now - latest.createdAt < AuthService.AUTH_CODE_COOLDOWN_MS) {
+      const waitMs = AuthService.AUTH_CODE_COOLDOWN_MS - (now - latest.createdAt);
+      const waitSec = Math.max(1, Math.ceil(waitMs / 1000));
+      throw new AppError('RATE_LIMITED', `please wait ${waitSec}s before requesting another verification code`, 429);
+    }
+
+    const tokenId = randomUUID();
+    const createdAt = now;
+    const record: AuthVerificationCodeRecord = {
+      tokenId,
+      purpose: input.purpose,
+      userId: input.userId,
+      targetEmail: input.targetEmail,
+      pendingEmail: input.pendingEmail,
+      codeHash: this.hashVerificationCode(input.purpose, input.code, tokenId),
+      expiresAt: createdAt + this.authCodeTtlMs,
+      createdAt,
+      consumedAt: null,
+    };
+    await this.options.store.saveAuthVerificationCode(record);
+    return record;
   }
 
   async login(identity: string, password: string): Promise<AuthTokens> {

@@ -34,6 +34,7 @@ export interface StoredUser {
   id: string;
   username: string;
   email?: string;
+  emailVerifiedAt?: number;
   role: AuthRole;
   passwordHash: string;
   disabled: boolean;
@@ -47,6 +48,20 @@ export interface RefreshTokenRecord {
   createdAt: number;
   revokedAt: number | null;
   replacedByTokenId: string | null;
+}
+
+export type AuthVerificationPurpose = 'verify-email' | 'reset-password' | 'change-email';
+
+export interface AuthVerificationCodeRecord {
+  tokenId: string;
+  purpose: AuthVerificationPurpose;
+  userId: string | null;
+  targetEmail: string;
+  pendingEmail: string | null;
+  codeHash: string;
+  expiresAt: number;
+  createdAt: number;
+  consumedAt: number | null;
 }
 
 export interface DatabaseBackupSnapshot {
@@ -63,6 +78,7 @@ export interface DatabaseBackupSnapshot {
     emailTasks: Array<Record<string, string | number | null>>;
     users: Array<Record<string, string | number | null>>;
     refreshTokens: Array<Record<string, string | number | null>>;
+    authVerificationCodes: Array<Record<string, string | number | null>>;
   };
 }
 
@@ -1006,6 +1022,144 @@ export class SqliteStore {
     await this.executeCommand(sql`DELETE FROM refresh_tokens WHERE expires_at < ${now} OR revoked_at IS NOT NULL`);
   }
 
+  async saveAuthVerificationCode(record: AuthVerificationCodeRecord): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`
+      INSERT INTO auth_verification_codes (
+        token_id,
+        purpose,
+        user_id,
+        target_email,
+        pending_email,
+        code_hash,
+        expires_at,
+        created_at,
+        consumed_at,
+        payload
+      )
+      VALUES (
+        ${record.tokenId},
+        ${record.purpose},
+        ${record.userId},
+        ${record.targetEmail},
+        ${record.pendingEmail},
+        ${record.codeHash},
+        ${record.expiresAt},
+        ${record.createdAt},
+        ${record.consumedAt},
+        ${JSON.stringify(record)}
+      )
+      ON CONFLICT(token_id) DO UPDATE SET
+        purpose = excluded.purpose,
+        user_id = excluded.user_id,
+        target_email = excluded.target_email,
+        pending_email = excluded.pending_email,
+        code_hash = excluded.code_hash,
+        expires_at = excluded.expires_at,
+        created_at = excluded.created_at,
+        consumed_at = excluded.consumed_at,
+        payload = excluded.payload
+    `);
+  }
+
+  async getLatestActiveAuthVerificationCode(input: {
+    purpose: AuthVerificationPurpose;
+    userId?: string;
+    targetEmail?: string;
+    now?: number;
+  }): Promise<AuthVerificationCodeRecord | undefined> {
+    await this.ensureReady();
+    const now = input.now ?? Date.now();
+
+    if (input.userId) {
+      return this.getPayload<AuthVerificationCodeRecord>(sql`
+        SELECT payload
+        FROM auth_verification_codes
+        WHERE purpose = ${input.purpose}
+          AND user_id = ${input.userId}
+          AND consumed_at IS NULL
+          AND expires_at > ${now}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+    }
+
+    if (input.targetEmail) {
+      return this.getPayload<AuthVerificationCodeRecord>(sql`
+        SELECT payload
+        FROM auth_verification_codes
+        WHERE purpose = ${input.purpose}
+          AND lower(target_email) = ${normalizeIdentity(input.targetEmail)}
+          AND consumed_at IS NULL
+          AND expires_at > ${now}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+    }
+
+    return undefined;
+  }
+
+  async getLatestAuthVerificationCode(input: {
+    purpose: AuthVerificationPurpose;
+    userId?: string;
+    targetEmail?: string;
+  }): Promise<AuthVerificationCodeRecord | undefined> {
+    await this.ensureReady();
+
+    if (input.userId) {
+      return this.getPayload<AuthVerificationCodeRecord>(sql`
+        SELECT payload
+        FROM auth_verification_codes
+        WHERE purpose = ${input.purpose}
+          AND user_id = ${input.userId}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+    }
+
+    if (input.targetEmail) {
+      return this.getPayload<AuthVerificationCodeRecord>(sql`
+        SELECT payload
+        FROM auth_verification_codes
+        WHERE purpose = ${input.purpose}
+          AND lower(target_email) = ${normalizeIdentity(input.targetEmail)}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+    }
+
+    return undefined;
+  }
+
+  async consumeAuthVerificationCode(tokenId: string, consumedAt = Date.now()): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`
+      UPDATE auth_verification_codes
+      SET consumed_at = coalesce(consumed_at, ${consumedAt})
+      WHERE token_id = ${tokenId}
+    `);
+  }
+
+  async pruneAuthVerificationCodes(input?: {
+    now?: number;
+    consumedRetentionMs?: number;
+    expiredRetentionMs?: number;
+  }): Promise<void> {
+    await this.ensureReady();
+    const now = input?.now ?? Date.now();
+    const consumedRetentionMs = input?.consumedRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
+    const expiredRetentionMs = input?.expiredRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
+    const consumedBefore = now - consumedRetentionMs;
+    const expiredCreatedBefore = now - expiredRetentionMs;
+
+    await this.executeCommand(sql`
+      DELETE FROM auth_verification_codes
+      WHERE (consumed_at IS NOT NULL AND consumed_at < ${consumedBefore})
+         OR (expires_at < ${now} AND created_at < ${expiredCreatedBefore})
+    `);
+  }
+
   async exportBackupSnapshot(): Promise<DatabaseBackupSnapshot> {
     await this.ensureReady();
     return {
@@ -1022,6 +1176,7 @@ export class SqliteStore {
         emailTasks: await this.exportTable('email_tasks'),
         users: await this.exportTable('users'),
         refreshTokens: await this.exportTable('refresh_tokens'),
+        authVerificationCodes: await this.exportTable('auth_verification_codes'),
       },
     };
   }
@@ -1058,10 +1213,15 @@ export class SqliteStore {
       email_tasks: this.validateTableRows('email_tasks', snapshotObject.tables.emailTasks),
       users: this.validateTableRows('users', snapshotObject.tables.users),
       refresh_tokens: this.validateTableRows('refresh_tokens', snapshotObject.tables.refreshTokens),
+      auth_verification_codes: this.validateTableRows(
+        'auth_verification_codes',
+        snapshotObject.tables.authVerificationCodes ?? [],
+      ),
     };
 
     await this.run(`
       DELETE FROM refresh_tokens;
+      DELETE FROM auth_verification_codes;
       DELETE FROM users;
       DELETE FROM keyword_vectors;
       DELETE FROM email_tasks;
@@ -1083,6 +1243,7 @@ export class SqliteStore {
     await this.restoreTableRows('email_tasks', tables.email_tasks);
     await this.restoreTableRows('users', tables.users);
     await this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
+    await this.restoreTableRows('auth_verification_codes', tables.auth_verification_codes);
   }
 
   async restoreEntityDump(dump: unknown): Promise<void> {
@@ -1170,10 +1331,16 @@ export class SqliteStore {
     const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
     try {
       let constraintsRows: unknown[] = [];
+      let authVerificationCodeRows: unknown[] = [];
       try {
         constraintsRows = source.prepare('SELECT * FROM constraints').all();
       } catch {
         constraintsRows = [];
+      }
+      try {
+        authVerificationCodeRows = source.prepare('SELECT * FROM auth_verification_codes').all();
+      } catch {
+        authVerificationCodeRows = [];
       }
       const snapshot = {
         version: 1,
@@ -1188,6 +1355,7 @@ export class SqliteStore {
           emailTasks: source.prepare('SELECT * FROM email_tasks').all(),
           users: source.prepare('SELECT * FROM users').all(),
           refreshTokens: source.prepare('SELECT * FROM refresh_tokens').all(),
+          authVerificationCodes: authVerificationCodeRows,
         },
       };
       await this.restoreBackupSnapshot(snapshot);

@@ -20,6 +20,30 @@ export const issueUserBodySchema = z.object({
   role: z.number().int().min(0).max(1),
 });
 
+export const authCodeConfirmSchema = z.object({
+  code: z.string().min(4).max(16),
+});
+
+export const requestPasswordResetSchema = z.object({
+  identity: z.string().min(1),
+});
+
+export const confirmPasswordResetSchema = z.object({
+  identity: z.string().min(1),
+  code: z.string().min(4).max(16),
+  newPassword: z.string().min(8),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+export const requestChangeEmailSchema = z.object({
+  currentPassword: z.string().min(1),
+  newEmail: z.string().email(),
+});
+
 export const backupActionSchema = z.object({
   format: z.enum(['sqlite', 'msgpack']).optional(),
   target: z.enum(['email', 'google-drive', 'onedrive']).optional(),

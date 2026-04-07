@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createBackupServiceFromEnv, setActiveBackupService } from "./backup/service.js";
 import { createApp } from "./app.js";
+import { createAuthMaintenanceServiceFromEnv } from "./cron/auth-maintenance.js";
 import { scheduler } from "./cron/scheduler.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
 import type { StoreConnectionConfig } from "./store/index.js";
@@ -32,6 +33,7 @@ if (dbConfig.dialect === "postgres" && !dbConfig.connectionString) {
 }
 
 let emailTaskNotifier: EmailTaskNotifierType | null = null;
+const mailer = createMailerFromEnv();
 
 const { app, store, close } = await createApp({
   db: dbConfig,
@@ -48,6 +50,7 @@ const { app, store, close } = await createApp({
   rootPassword: process.env.ROOT_PASSWORD,
   rootEmail: process.env.ROOT_EMAIL,
   enablePublicEmailTaskIcs,
+  mailer,
   onEmailTasksChanged: async () => {
     await emailTaskNotifier?.syncJobs();
   },
@@ -60,7 +63,6 @@ const { app, store, close } = await createApp({
 });
 
 // Email / cron subsystem (optional – only starts if SMTP is configured)
-const mailer = createMailerFromEnv();
 if (mailer) {
   const mailerOk = await mailer.verify();
   if (!mailerOk) {
@@ -90,6 +92,13 @@ if (mailer) {
 } else {
   console.info("[cron] SMTP not configured; email notifications disabled.");
 }
+
+const authMaintenanceService = createAuthMaintenanceServiceFromEnv({
+  scheduler,
+  store,
+});
+authMaintenanceService.syncJobs();
+console.info(`[auth] Cleanup scheduler ready. Registered ${scheduler.registeredJobs.length} job(s).`);
 
 const backupService = createBackupServiceFromEnv({
   scheduler,

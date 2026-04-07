@@ -3,6 +3,31 @@ appTitle:
   zh-CN: Labby 排班系统
   ja-JP: Labby スケジューラ
 
+loginIdentity:
+  en: Username or Email
+  zh-CN: 用户名或邮箱
+  ja-JP: ユーザー名またはメール
+
+loginPassword:
+  en: Password
+  zh-CN: 密码
+  ja-JP: パスワード
+
+loginSubmit:
+  en: Sign In
+  zh-CN: 登录
+  ja-JP: ログイン
+
+loggingIn:
+  en: Signing in...
+  zh-CN: 登录中...
+  ja-JP: ログイン中...
+
+logout:
+  en: Log Out
+  zh-CN: 退出登录
+  ja-JP: ログアウト
+
 navPersons:
   en: Persons
   zh-CN: 人员
@@ -918,6 +943,151 @@ mutationInsertPosition:
   en: Position
   zh-CN: 插入位置
   ja-JP: 位置
+
+accountSecurityTitle:
+  en: Account Security
+  zh-CN: 账户安全
+  ja-JP: アカウントセキュリティ
+
+emailNotSet:
+  en: Email not set
+  zh-CN: 邮箱未设置
+  ja-JP: メール未設定
+
+verificationCode:
+  en: Verification Code
+  zh-CN: 验证码
+  ja-JP: 確認コード
+
+requestEmailVerification:
+  en: Send Verification Code
+  zh-CN: 发送验证邮件
+  ja-JP: 確認コードを送信
+
+confirmEmailVerification:
+  en: Confirm Email Verification
+  zh-CN: 确认邮箱验证
+  ja-JP: メール確認を完了
+
+emailVerificationRequested:
+  en: Verification email sent
+  zh-CN: 验证邮件已发送
+  ja-JP: 確認メールを送信しました
+
+emailVerificationConfirmed:
+  en: Email verified successfully
+  zh-CN: 邮箱验证成功
+  ja-JP: メール確認が完了しました
+
+passwordResetIdentity:
+  en: Identity (username or email)
+  zh-CN: 账号标识（用户名或邮箱）
+  ja-JP: アカウント識別子（ユーザー名またはメール）
+
+passwordResetTitle:
+  en: Forgot Password
+  zh-CN: 忘记密码
+  ja-JP: パスワードを忘れた場合
+
+passwordResetHint:
+  en: Request a reset code, then set a new password.
+  zh-CN: 先发送重置码，再使用验证码设置新密码。
+  ja-JP: リセットコードを送信してから、新しいパスワードを設定します。
+
+requestPasswordReset:
+  en: Send Reset Code
+  zh-CN: 发送重置码
+  ja-JP: リセットコード送信
+
+confirmPasswordReset:
+  en: Confirm Password Reset
+  zh-CN: 确认重置密码
+  ja-JP: パスワード再設定を確定
+
+passwordResetRequested:
+  en: If the account exists, a reset code has been sent
+  zh-CN: 若账号存在，重置码已发送
+  ja-JP: アカウントが存在する場合、リセットコードを送信しました
+
+passwordResetConfirmed:
+  en: Password has been reset
+  zh-CN: 密码已重置
+  ja-JP: パスワードを再設定しました
+
+currentPassword:
+  en: Current Password
+  zh-CN: 当前密码
+  ja-JP: 現在のパスワード
+
+newPassword:
+  en: New Password
+  zh-CN: 新密码
+  ja-JP: 新しいパスワード
+
+changePasswordAction:
+  en: Change Password
+  zh-CN: 修改密码
+  ja-JP: パスワード変更
+
+passwordChanged:
+  en: Password changed successfully
+  zh-CN: 密码修改成功
+  ja-JP: パスワードを変更しました
+
+newEmail:
+  en: New Email
+  zh-CN: 新邮箱
+  ja-JP: 新しいメール
+
+requestEmailChange:
+  en: Send Email Change Code
+  zh-CN: 发送改邮箱验证码
+  ja-JP: メール変更コード送信
+
+confirmEmailChange:
+  en: Confirm Email Change
+  zh-CN: 确认修改邮箱
+  ja-JP: メール変更を確定
+
+emailChangeRequested:
+  en: Email change code has been sent to new address
+  zh-CN: 改邮箱验证码已发送到新邮箱
+  ja-JP: 新しいメール宛に変更コードを送信しました
+
+emailChangeConfirmed:
+  en: Email updated successfully
+  zh-CN: 邮箱修改成功
+  ja-JP: メールを更新しました
+
+emailTaskSubjectTemplate:
+  en: Subject Template
+  zh-CN: 邮件标题模板
+  ja-JP: 件名テンプレート
+
+emailTaskSubjectTemplateHint:
+  en: Optional. Supports same template variables as body.
+  zh-CN: 可选，支持与正文相同的模板变量。
+  ja-JP: 任意。本文と同じテンプレート変数を利用できます。
+
+emailTaskDefaultSubject:
+  en: '[Labby] Scheduled Email'
+  zh-CN: '[Labby] 定时邮件'
+  ja-JP: '[Labby] 定期メール'
+
+emailSubjectPreview:
+  en: Subject Preview
+  zh-CN: 标题预览
+  ja-JP: 件名プレビュー
+
+verificationCooldownHint:
+  en: Verification code requests are rate-limited to once per minute.
+  zh-CN: 验证码请求有冷却限制：每分钟最多一次。
+  ja-JP: 確認コードの送信は1分に1回までです。
+
+rootSecurityReadonlyHint:
+  en: Root account cannot change email or password from this panel.
+  zh-CN: Root 账号不支持在此面板修改邮箱或密码。
+  ja-JP: Root アカウントはこの画面でメールやパスワードを変更できません。
 
 mutationBefore:
   en: Before this session

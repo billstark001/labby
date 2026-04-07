@@ -28,6 +28,7 @@ import {
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
 import { EmbeddingService } from "./lib/embedding-service.js";
+import type { Mailer } from "./lib/mailer.js";
 import { getActiveBackupService } from "./backup/service.js";
 import { AppError } from "./lib/errors.js";
 import { fail, ok } from "./lib/http.js";
@@ -45,9 +46,14 @@ import {
 } from "./lib/app-helpers.js";
 import {
   backupActionSchema,
+  changePasswordSchema,
+  confirmPasswordResetSchema,
+  authCodeConfirmSchema,
   issueUserBodySchema,
   loginBodySchema,
   pairUpdateSchema,
+  requestChangeEmailSchema,
+  requestPasswordResetSchema,
   refreshBodySchema,
   solverIncrementalInputSchema,
   solverInputSchema,
@@ -76,6 +82,7 @@ export interface CreateAppOptions {
   rootPassword?: string;
   rootEmail?: string;
   enablePublicEmailTaskIcs?: boolean;
+  mailer?: Mailer | null;
   onEmailTasksChanged?: () => Promise<void> | void;
   runEmailTaskNow?: (taskId: string) => Promise<void>;
 }
@@ -147,6 +154,15 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     rootUsername: options.rootUsername,
     rootPassword: options.rootPassword,
     rootEmail: options.rootEmail,
+    authCodeTtl: process.env.AUTH_CODE_TTL,
+    sendSecurityMail: options.mailer
+      ? (input) => options.mailer!.send({
+        to: input.to,
+        subject: input.subject,
+        text: input.text,
+        html: input.html,
+      })
+      : undefined,
   });
 
   const app = new Hono();
@@ -162,6 +178,11 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.use("/api/v1/users/*", requireClientAuth(authService));
   app.use("/api/v1/system/*", requireClientAuth(authService));
   app.use("/api/v1/auth/logout", requireClientAuth(authService));
+  app.use("/api/v1/auth/me", requireClientAuth(authService));
+  app.use("/api/v1/auth/account", requireClientAuth(authService));
+  app.use("/api/v1/auth/email-verification/*", requireClientAuth(authService));
+  app.use("/api/v1/auth/change-email/*", requireClientAuth(authService));
+  app.use("/api/v1/auth/change-password", requireClientAuth(authService));
 
   // Write operations require at least admin role
   app.use("/api/v1/db/*", async (c, next) => {
@@ -324,8 +345,61 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return c.body(null, 204);
   });
 
-  app.get("/api/v1/auth/me", requireClientAuth(authService), (c) => {
+  app.get("/api/v1/auth/me", (c) => {
     return ok(c, getAuthSession(c));
+  });
+
+  app.get('/api/v1/auth/account', async (c) => {
+    const session = getAuthSession(c);
+    const account = await authService.getAccountProfile(session.userId);
+    return ok(c, account);
+  });
+
+  app.post('/api/v1/auth/email-verification/request', async (c) => {
+    const session = getAuthSession(c);
+    await authService.requestEmailVerification(session.userId);
+    return ok(c, { ok: true });
+  });
+
+  app.post('/api/v1/auth/email-verification/confirm', async (c) => {
+    const session = getAuthSession(c);
+    const body = authCodeConfirmSchema.parse(await c.req.json());
+    await authService.confirmEmailVerification(session.userId, body.code);
+    return ok(c, { ok: true });
+  });
+
+  app.post('/api/v1/auth/password-reset/request', async (c) => {
+    const body = requestPasswordResetSchema.parse(await c.req.json());
+    await authService.requestPasswordReset(body.identity);
+    // Always return success to avoid exposing whether identity exists.
+    return ok(c, { ok: true });
+  });
+
+  app.post('/api/v1/auth/password-reset/confirm', async (c) => {
+    const body = confirmPasswordResetSchema.parse(await c.req.json());
+    await authService.confirmPasswordReset(body.identity, body.code, body.newPassword);
+    return ok(c, { ok: true });
+  });
+
+  app.post('/api/v1/auth/change-email/request', async (c) => {
+    const session = getAuthSession(c);
+    const body = requestChangeEmailSchema.parse(await c.req.json());
+    await authService.requestEmailChange(session.userId, body.currentPassword, body.newEmail);
+    return ok(c, { ok: true });
+  });
+
+  app.post('/api/v1/auth/change-email/confirm', async (c) => {
+    const session = getAuthSession(c);
+    const body = authCodeConfirmSchema.parse(await c.req.json());
+    await authService.confirmEmailChange(session.userId, body.code);
+    return ok(c, { ok: true });
+  });
+
+  app.post('/api/v1/auth/change-password', async (c) => {
+    const session = getAuthSession(c);
+    const body = changePasswordSchema.parse(await c.req.json());
+    await authService.changePassword(session.userId, body.currentPassword, body.newPassword);
+    return ok(c, { ok: true });
   });
 
   // ---------------------------------------------------------------------------
@@ -380,11 +454,15 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return ok(c, safeUser);
   });
 
-  app.delete("/api/v1/users/:id", requireMinRole(UserRole.Root), async (c) => {
+  app.delete("/api/v1/users/:id", requireMinRole(UserRole.Admin), async (c) => {
     const id = c.req.param("id");
     const target = id ? await store.getUserById(id) : null;
     if (!target) {
       throw new AppError("VALIDATION_ERROR", "user not found", 404);
+    }
+    const session = getAuthSession(c);
+    if (session.role < UserRole.Root && target.role >= UserRole.Admin) {
+      throw new AppError("AUTH_FORBIDDEN", "insufficient permissions to delete this user", 403);
     }
     await store.deleteUser(id!);
     return c.body(null, 204);

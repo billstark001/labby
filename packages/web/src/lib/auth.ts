@@ -5,6 +5,7 @@
  * See docs/auth-state.md for the full spec.
  */
 import { signal, computed } from '@preact/signals';
+import { notifyHttpError } from './api-error-toast';
 
 const BASE = '/api/v1';
 const STORAGE_KEY = 'labby_auth_state_v1';
@@ -20,6 +21,13 @@ function withRequestHeaders(headers?: HeadersInit): Headers {
     next.set('X-Request-Id', createRequestId());
   }
   return next;
+}
+
+async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => ({})) as { message?: string; error?: string };
+  const message = body.message ?? body.error ?? fallback;
+  notifyHttpError(response.status, message);
+  return message;
 }
 
 // #region Signals
@@ -275,6 +283,14 @@ export interface AuthResponse {
   token_type: string;
 }
 
+export interface AuthAccountProfile {
+  userId: string;
+  username: string;
+  email?: string;
+  emailVerified: boolean;
+  role: number;
+}
+
 // #endregion
 
 // #region Auth actions
@@ -288,8 +304,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(err.error ?? 'Login failed');
+    throw new Error(await parseErrorMessage(res, 'Login failed'));
   }
   const data = await res.json() as AuthResponse;
   _setTokens(data.access_token, data.refresh_token, { role: 'user', sessionKey });
@@ -308,7 +323,7 @@ export async function silentRefresh(): Promise<AuthResponse> {
   });
   if (!res.ok) {
     _invalidateSession(_activeSessionKey, _activeRole, 'refresh_401');
-    throw new Error('Session expired');
+    throw new Error(await parseErrorMessage(res, 'Session expired'));
   }
   const data = await res.json() as AuthResponse;
   _setTokens(data.access_token, data.refresh_token);
@@ -323,6 +338,98 @@ export async function logout(): Promise<void> {
     await apiFetch(url, { method: 'POST' });
   } catch { /* best-effort */ }
   _clearTokens({ reason: 'logout' });
+}
+
+export async function getAccountProfile(): Promise<AuthAccountProfile> {
+  const res = await apiFetch(`${BASE}/auth/account`, {
+    method: 'GET',
+    headers: withRequestHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to load account profile'));
+  }
+  const body = await res.json().catch(() => undefined) as { data?: AuthAccountProfile } | undefined;
+  if (!body?.data) {
+    throw new Error('Invalid account profile response');
+  }
+  return body.data;
+}
+
+export async function requestEmailVerification(): Promise<void> {
+  const res = await apiFetch(`${BASE}/auth/email-verification/request`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to request email verification'));
+  }
+}
+
+export async function confirmEmailVerification(code: string): Promise<void> {
+  const res = await apiFetch(`${BASE}/auth/email-verification/confirm`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to confirm email verification'));
+  }
+}
+
+export async function requestPasswordReset(identity: string): Promise<void> {
+  const res = await fetch(`${BASE}/auth/password-reset/request`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ identity }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to request password reset'));
+  }
+}
+
+export async function confirmPasswordReset(identity: string, code: string, newPassword: string): Promise<void> {
+  const res = await fetch(`${BASE}/auth/password-reset/confirm`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ identity, code, newPassword }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to reset password'));
+  }
+}
+
+export async function requestEmailChange(currentPassword: string, newEmail: string): Promise<void> {
+  const res = await apiFetch(`${BASE}/auth/change-email/request`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ currentPassword, newEmail }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to request email change'));
+  }
+}
+
+export async function confirmEmailChange(code: string): Promise<void> {
+  const res = await apiFetch(`${BASE}/auth/change-email/confirm`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to confirm email change'));
+  }
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await apiFetch(`${BASE}/auth/change-password`, {
+    method: 'POST',
+    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res, 'Failed to change password'));
+  }
 }
 
 function _hydrateFromStorage(): void {
