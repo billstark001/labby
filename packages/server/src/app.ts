@@ -19,6 +19,7 @@ import {
   buildScheduleIcs,
   computeScheduleMetrics,
   explainScheduleMetrics,
+  generateId,
   renderTemplate,
   solveFull,
   solveIncremental,
@@ -572,13 +573,19 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
-    const plan = solveFull({
+    const sessions = solveFull({
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
       constraints,
     });
+    const plan: SchedulePlan = {
+      id: generateId(),
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions,
+    };
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityLookup,
@@ -613,19 +620,33 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
     const warnings: string[] = [];
     const suggestedDate = defaultIncrementalDate();
-    if (body.changeDate < suggestedDate) {
+    if (body.index != null && (body.index < 0 || body.index >= previousPlan.sessions.length)) {
+      throw new AppError("VALIDATION_ERROR", "index out of range for previous plan sessions", 400);
+    }
+    const resolvedChangeDate = body.changeDate
+      ?? ((body.index != null && previousPlan.sessions[body.index]) ? previousPlan.sessions[body.index].date : undefined);
+    if (body.changeDate && body.changeDate < suggestedDate) {
       warnings.push(`changeDate ${body.changeDate} is earlier than suggested default ${suggestedDate}`);
     }
 
-    const plan = solveIncremental({
+    const sessions = solveIncremental({
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
-      previousPlan,
-      changeDate: body.changeDate,
+      sessions: previousPlan.sessions,
+      mutations: previousPlan.sessionMutations,
+      index: body.index,
+      changeDate: resolvedChangeDate,
       constraints,
     });
+    const plan: SchedulePlan = {
+      id: generateId(),
+      createdAt: Date.now(),
+      configId: config.id,
+      sessions,
+      sessionMutations: previousPlan.sessionMutations,
+    };
     const metrics = computeScheduleMetrics(plan, {
       persons,
       similarities: similarityLookup,

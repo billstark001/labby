@@ -33,9 +33,13 @@ export const solverInputSchema = z.object({
 export const solverIncrementalInputSchema = z.object({
   configId: z.string().min(1),
   previousPlanId: z.string().min(1),
-  changeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  changeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  index: z.number().int().nonnegative().optional(),
   personIds: z.array(z.string()).optional(),
-});
+}).refine(
+  value => value.changeDate !== undefined || value.index !== undefined,
+  { message: 'changeDate or index is required' },
+);
 
 export const solverMetricsInputSchema = z.object({
   scheduleId: z.string().min(1),

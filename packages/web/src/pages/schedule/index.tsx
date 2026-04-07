@@ -23,8 +23,8 @@ import {
   loadAllUnavailabilities,
   useDatabase,
 } from '@/db/index';
-import { computeScheduleMetrics, explainScheduleMetrics, solveFull, solveIncremental } from '@labby/core';
-import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, MetricExplanation, ScheduleMetrics } from '@labby/core';
+import { computeScheduleMetrics, explainScheduleMetrics, mutatePresentations, mutateSessions, solveFull, solveIncremental } from '@labby/core';
+import type { ScheduleConfig, SchedulePlan, PersonUnavailability, MetricExplanation, ScheduleMetrics } from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import {
@@ -46,8 +46,10 @@ import { ScheduleView } from './ScheduleView';
 import {
   ManualEditDialog,
   MetricsDialog,
+  PresentationMutationDialog,
   SessionMutationDialog,
   type MetricsDialogState,
+  type PresentationMutationDialogState,
   type SessionMutationDialogState,
 } from './dialogs';
 
@@ -69,6 +71,29 @@ function normalizeSolveResponse(result: unknown): {
     return result as { plan: SchedulePlan; metrics?: ScheduleMetrics; explanations?: MetricExplanation[]; warnings?: string[] };
   }
   return { plan: result as SchedulePlan };
+}
+
+function buildSessionDateMeta(
+  sessions: SchedulePlan['sessions'],
+  mutations: SchedulePlan['sessionMutations'],
+  existing: SchedulePlan['sessionDateMeta'],
+): NonNullable<SchedulePlan['sessionDateMeta']> {
+  const existingMap = existing ?? {};
+  const insertMap = new Map<string, { action: 'insert' | 'delete'; createdAt: number }>();
+  for (const m of mutations ?? []) {
+    if (m.action === 'insert') {
+      insertMap.set(m.date, { action: m.action, createdAt: m.createdAt });
+    }
+  }
+
+  const out: NonNullable<SchedulePlan['sessionDateMeta']> = {};
+  for (const session of sessions) {
+    const meta = existingMap[session.date] ?? insertMap.get(session.date);
+    if (meta) {
+      out[session.date] = meta;
+    }
+  }
+  return out;
 }
 
 export function SchedulePage() {
@@ -101,6 +126,13 @@ export function SchedulePage() {
   const [sessionMutationDialog, setSessionMutationDialog] = useState<SessionMutationDialogState | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
   const [insertPosition, setInsertPosition] = useState<'before' | 'after'>('after');
+  const [sessionMutationTactic, setSessionMutationTactic] = useState<'shift' | 'keep'>('keep');
+  const [sessionMutationCount, setSessionMutationCount] = useState(1);
+  const [presentationMutationDialog, setPresentationMutationDialog] = useState<PresentationMutationDialogState | null>(null);
+  const [presentationMutationOperation, setPresentationMutationOperation] = useState<'insert' | 'delete'>('insert');
+  const [presentationMutationCount, setPresentationMutationCount] = useState(1);
+  const [presentationMutationTactic, setPresentationMutationTactic] = useState<'shift' | 'keep'>('keep');
+  const [presentationMutationChangeSessionLength, setPresentationMutationChangeSessionLength] = useState(true);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
   const activePersonCount = persons.filter(p => !p.disabled).length;
@@ -203,14 +235,21 @@ export function SchedulePage() {
 
   async function handleSolveResult(result: unknown) {
     const normalized = normalizeSolveResponse(result);
-    const plan = normalized.plan;
-    await db.schedules.put({ ...plan, modifiedAt: Date.now() });
+    const planWithMeta: SchedulePlan = {
+      ...normalized.plan,
+      sessionDateMeta: buildSessionDateMeta(
+        normalized.plan.sessions,
+        normalized.plan.sessionMutations,
+        normalized.plan.sessionDateMeta,
+      ),
+    };
+    await db.schedules.put({ ...planWithMeta, modifiedAt: Date.now() });
     await loadAllSchedules(db);
-    currentScheduleSignal.value = { ...plan, modifiedAt: Date.now() };
+    currentScheduleSignal.value = { ...planWithMeta, modifiedAt: Date.now() };
     if (normalized.metrics && normalized.explanations) {
       openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
     } else {
-      maybeShowLocalMetrics(plan, t('metricsAfterComputeTitle'));
+      maybeShowLocalMetrics(planWithMeta, t('metricsAfterComputeTitle'));
     }
     if (normalized.warnings?.length) window.alert(normalized.warnings.join('\n'));
   }
@@ -282,7 +321,20 @@ export function SchedulePage() {
           method: 'POST',
           body: JSON.stringify({ configId: config.id, personIds: persons.map(p => p.id) }),
         })
-        : solveFull({ persons, similarities: similarityMapSignal.value, config, unavailabilities, constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id) });
+        : {
+          plan: {
+            id: nanoid(),
+            createdAt: Date.now(),
+            configId: config.id,
+            sessions: solveFull({
+              persons,
+              similarities: similarityMapSignal.value,
+              config,
+              unavailabilities,
+              constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id),
+            }),
+          } satisfies SchedulePlan,
+        };
       await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -308,7 +360,24 @@ export function SchedulePage() {
           method: 'POST',
           body: JSON.stringify({ configId: config.id, previousPlanId: current.id, changeDate, personIds: persons.map(p => p.id) }),
         })
-        : solveIncremental({ persons, similarities: similarityMapSignal.value, config, previousPlan: current, changeDate, unavailabilities, constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id) });
+        : {
+          plan: {
+            id: nanoid(),
+            createdAt: Date.now(),
+            configId: config.id,
+            sessions: solveIncremental({
+              persons,
+              similarities: similarityMapSignal.value,
+              config,
+              sessions: current.sessions,
+              mutations: current.sessionMutations,
+              changeDate,
+              unavailabilities,
+              constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id),
+            }),
+            sessionMutations: current.sessionMutations,
+          } satisfies SchedulePlan,
+        };
       await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -429,53 +498,99 @@ export function SchedulePage() {
     setSessionMutationDialog({ mode, sessionDate });
     setInsertedSessionDate(sessionDate);
     setInsertPosition('after');
+    setSessionMutationTactic('keep');
+    setSessionMutationCount(1);
+  }
+
+  function openPresentationMutationDialog(sessionDate: string, presentationIndex: number) {
+    setPresentationMutationDialog({ sessionDate, presentationIndex });
+    setPresentationMutationOperation('insert');
+    setPresentationMutationCount(1);
+    setPresentationMutationTactic('keep');
+    setPresentationMutationChangeSessionLength(true);
   }
 
   async function handleApplySessionMutation(): Promise<void> {
     if (!current || !sessionMutationDialog) return;
-    const { mode, sessionDate } = sessionMutationDialog;
-    const existingMutations = current.sessionMutations ?? [];
-    if (existingMutations.some(r => r.date === sessionDate)) {
-      toast.error(t('mutationAlreadyExistsForDate'));
+    if (!selectedConfig) {
+      toast.error(t('computeError'));
       return;
     }
-
-    const baseSessions = current.sessions.map(session => ({
-      date: session.date,
-      presentations: session.presentations.map(p => ({ presenterId: p.presenterId, questionerIds: [...p.questionerIds] })),
-    }));
-    const targetIndex = baseSessions.findIndex(item => item.date === sessionDate);
+    const { mode, sessionDate } = sessionMutationDialog;
+    const targetIndex = current.sessions.findIndex(item => item.date === sessionDate);
     if (targetIndex < 0) { toast.error(t('mutationTargetNotFound')); return; }
 
-    const createdAt = Date.now();
-    const nextMutations = [...existingMutations];
-    let nextSessions = baseSessions;
-    let mutationNote = '';
+    const existingMutations = current.sessionMutations ?? [];
+    const count = Math.max(1, Math.floor(sessionMutationCount));
+    let mutationDate = sessionDate;
+    if (mode === 'insert') {
+      if (!insertedSessionDate) { toast.error(t('mutationInsertedDateRequired')); return; }
+      mutationDate = insertedSessionDate;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(mutationDate)) {
+        toast.error(t('mutationInsertedDateRequired'));
+        return;
+      }
+      if (mutationDate < selectedConfig.startDate || mutationDate > selectedConfig.endDate) {
+        toast.error(`date must be within ${selectedConfig.startDate} ~ ${selectedConfig.endDate}`);
+        return;
+      }
+    }
 
     if (mode === 'delete') {
-      nextSessions = baseSessions.filter(item => item.date !== sessionDate);
-      nextMutations.push({ date: sessionDate, action: 'delete', createdAt });
-      mutationNote = `[temporary-delete] date=${sessionDate}`;
-    } else {
-      if (!insertedSessionDate) { toast.error(t('mutationInsertedDateRequired')); return; }
-      const template = baseSessions[targetIndex];
-      const insertedSession: Session = {
-        date: insertedSessionDate,
-        presentations: template.presentations.map(p => ({ presenterId: p.presenterId, questionerIds: [...p.questionerIds] })),
-      };
-      const insertIndex = insertPosition === 'before' ? targetIndex : targetIndex + 1;
-      nextSessions = [...baseSessions.slice(0, insertIndex), insertedSession, ...baseSessions.slice(insertIndex)];
-      nextMutations.push({ date: sessionDate, action: 'insert', insertedDate: insertedSessionDate, position: insertPosition, createdAt });
-      mutationNote = `[temporary-insert-${insertPosition}] date=${sessionDate} inserted=${insertedSessionDate}`;
+      if (sessionMutationTactic === 'keep' && targetIndex + count > current.sessions.length) {
+        toast.error('delete range exceeds available sessions');
+        return;
+      }
+      if (sessionMutationTactic === 'shift' && count > current.sessions.length) {
+        toast.error('delete count exceeds available sessions');
+        return;
+      }
     }
+
+    const next = mode === 'delete'
+      ? mutateSessions(
+        current.sessions,
+        {
+          config: selectedConfig,
+          persons,
+          mutations: existingMutations,
+          unavailabilities,
+          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
+        },
+        { operation: 'delete', index: targetIndex, count, tactic: sessionMutationTactic },
+      )
+      : mutateSessions(
+        current.sessions,
+        {
+          config: selectedConfig,
+          persons,
+          mutations: existingMutations,
+          unavailabilities,
+          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
+        },
+        {
+          operation: 'insert',
+          index: sessionMutationTactic === 'shift'
+            ? 0
+            : (insertPosition === 'before' ? targetIndex : targetIndex + 1),
+          dates: [mutationDate],
+          tactic: sessionMutationTactic,
+        },
+      );
+
+    const createdAt = Date.now();
+    const mutationNote = mode === 'delete'
+      ? `[temporary-delete] date=${sessionDate}`
+      : `[temporary-insert-${insertPosition}] date=${sessionDate} inserted=${mutationDate}`;
 
     const mutated: SchedulePlan = {
       ...current,
       id: nanoid(),
       createdAt,
       modifiedAt: createdAt,
-      sessions: nextSessions,
-      sessionMutations: nextMutations,
+      sessions: next.sessions,
+      sessionMutations: next.mutations,
+      sessionDateMeta: buildSessionDateMeta(next.sessions, next.mutations, current.sessionDateMeta),
       notes: `${current.notes ?? ''}\n${mutationNote}`.trim(),
     };
 
@@ -484,6 +599,70 @@ export function SchedulePage() {
     currentScheduleSignal.value = mutated;
     setSessionMutationDialog(null);
     setInsertedSessionDate('');
+    maybeShowLocalMetrics(mutated, t('metricsAfterMutationTitle'));
+  }
+
+  async function handleApplyPresentationMutation(): Promise<void> {
+    if (!current || !presentationMutationDialog || !selectedConfig) return;
+    const { sessionDate, presentationIndex } = presentationMutationDialog;
+    const sessionIndex = current.sessions.findIndex(item => item.date === sessionDate);
+    if (sessionIndex < 0) {
+      toast.error(t('mutationTargetNotFound'));
+      return;
+    }
+
+    const count = Math.max(1, Math.floor(presentationMutationCount));
+    const currentLen = current.sessions[sessionIndex]?.presentations.length ?? 0;
+    if (presentationMutationOperation === 'delete') {
+      if (presentationMutationTactic === 'keep' && presentationIndex + count > currentLen) {
+        toast.error('delete range exceeds available presentations');
+        return;
+      }
+      if (presentationMutationTactic === 'shift' && count > currentLen) {
+        toast.error('delete count exceeds available presentations');
+        return;
+      }
+    }
+
+    let nextSessions: SchedulePlan['sessions'];
+    try {
+      nextSessions = mutatePresentations(
+        current.sessions,
+        {
+          config: selectedConfig,
+          persons,
+          mutations: current.sessionMutations,
+          unavailabilities,
+          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
+        },
+        {
+          sessionIndex,
+          index: presentationIndex,
+          operation: presentationMutationOperation,
+          count,
+          tactic: presentationMutationTactic,
+          changeSessionLength: presentationMutationChangeSessionLength,
+        },
+      );
+    } catch (err) {
+      toast.error(String(err));
+      return;
+    }
+
+    const createdAt = Date.now();
+    const mutated: SchedulePlan = {
+      ...current,
+      id: nanoid(),
+      createdAt,
+      modifiedAt: createdAt,
+      sessions: nextSessions,
+      notes: `${current.notes ?? ''}\n[presentation-mutation] session=${sessionDate} index=${presentationIndex + 1}`.trim(),
+    };
+
+    await db.schedules.put(mutated);
+    await loadAllSchedules(db);
+    currentScheduleSignal.value = mutated;
+    setPresentationMutationDialog(null);
     maybeShowLocalMetrics(mutated, t('metricsAfterMutationTitle'));
   }
 
@@ -601,10 +780,29 @@ export function SchedulePage() {
         state={sessionMutationDialog}
         insertedSessionDate={insertedSessionDate}
         insertPosition={insertPosition}
+        tactic={sessionMutationTactic}
+        count={sessionMutationCount}
+        minDate={selectedConfig?.startDate}
+        maxDate={selectedConfig?.endDate}
         onInsertedDateChange={setInsertedSessionDate}
         onInsertPositionChange={setInsertPosition}
+        onTacticChange={setSessionMutationTactic}
+        onCountChange={setSessionMutationCount}
         onApply={() => void handleApplySessionMutation()}
         onClose={() => setSessionMutationDialog(null)}
+      />
+      <PresentationMutationDialog
+        state={presentationMutationDialog}
+        operation={presentationMutationOperation}
+        count={presentationMutationCount}
+        tactic={presentationMutationTactic}
+        changeSessionLength={presentationMutationChangeSessionLength}
+        onOperationChange={setPresentationMutationOperation}
+        onCountChange={setPresentationMutationCount}
+        onTacticChange={setPresentationMutationTactic}
+        onChangeSessionLengthChange={setPresentationMutationChangeSessionLength}
+        onApply={() => void handleApplyPresentationMutation()}
+        onClose={() => setPresentationMutationDialog(null)}
       />
 
       {/* Schedule tables */}
@@ -616,6 +814,7 @@ export function SchedulePage() {
         onManualEdit={setManualEditTarget}
         onShowMetricsForSession={(plan, date) => void showMetricsForSession(plan, date)}
         onOpenSessionMutation={openSessionMutationDialog}
+        onOpenPresentationMutation={openPresentationMutationDialog}
       />
     </div>
   );

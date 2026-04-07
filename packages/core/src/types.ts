@@ -144,14 +144,17 @@ export interface SchedulePlan {
   sessions: Session[];
   notes?: string; // user-written notes for this history entry
   sessionMutations?: ScheduleSessionMutationRecord[];
+  /** Optional per-date marker used by UI to distinguish mutated sessions from naturally generated sessions. */
+  sessionDateMeta?: Record<string, {
+    action: 'insert' | 'delete';
+    createdAt: number;
+  }>;
 }
 
 /** Mutation event stored by date so it can be replayed across config date changes. */
 export interface ScheduleSessionMutationRecord {
   date: string;
   action: 'insert' | 'delete';
-  insertedDate?: string;
-  position?: 'before' | 'after';
   createdAt: number;
 }
 
@@ -178,10 +181,11 @@ export interface Presentation {
 
 /** Input bundle for the full solver. */
 export interface SolverInput {
+  config: ScheduleConfig;
   persons: Person[];
   /** Flat similarity map: key = `${sourceId}|${targetId}`, value = weight */
   similarities: Map<string, number> | SimilarityLookup;
-  config: ScheduleConfig;
+  mutations?: ScheduleSessionMutationRecord[];
   /** Optional: persons unavailable on certain date ranges */
   unavailabilities?: PersonUnavailability[];
   /** Optional: additional scheduling constraints */
@@ -190,8 +194,10 @@ export interface SolverInput {
 
 /** Input bundle for the incremental solver. */
 export interface IncrementalSolverInput extends SolverInput {
-  previousPlan: SchedulePlan;
-  changeDate: string; // ISO date – sessions on or after this date are re-scheduled
+  sessions: Session[]; // current sessions to be mutated
+  index?: number; // session index to change (0-based)
+  changeDate?: string; // ISO date – sessions on or after this date are re-scheduled
+  useHamming?: boolean; // whether to apply Hamming penalty to changes from previousPlan
 }
 
 /** Triplet comparison query presented to the user. */
@@ -307,6 +313,6 @@ export type ScheduleConstraint =
 
 
 export interface ScheduleSolver {
-  solveFull(input: SolverInput): SchedulePlan;
-  solveIncremental(input: IncrementalSolverInput): SchedulePlan;
+  solveFull(input: SolverInput): Session[];
+  solveIncremental(input: IncrementalSolverInput): Session[];
 }

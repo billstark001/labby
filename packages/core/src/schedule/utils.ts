@@ -1,4 +1,4 @@
-import { ScheduleConfig, PersonUnavailability, SchedulePlan } from "../types.js";
+import { ScheduleConfig, PersonUnavailability } from "../types.js";
 
 /** Generate a UUID-like string (not cryptographically strong). */
 export function generateId(): string {
@@ -12,13 +12,23 @@ function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+export function isISO8601(str: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return false;
+  }
+  const date = new Date(`${str}T00:00:00.000Z`);
+  return !isNaN(date.getTime()) && date.toISOString().slice(0, 10) === str;
+};
+
 /** Return all ISO dates in [startDate, endDate] that fall on the configured days of week. */
-export function generateSessionDates(config: ScheduleConfig): string[] {
+export function generateSessionDates(config: Pick<ScheduleConfig, 'startDate' | 'endDate' | 'daysOfWeek'>): string[] {
   const dates: string[] = [];
   const end = new Date(config.endDate + 'T00:00:00Z');
   const cur = new Date(config.startDate + 'T00:00:00Z');
   while (cur <= end) {
-    if (config.daysOfWeek.includes(cur.getUTCDay())) dates.push(isoDate(cur));
+    if (config.daysOfWeek.includes(cur.getUTCDay())) {
+      dates.push(isoDate(cur));
+    }
     cur.setUTCDate(cur.getUTCDate() + 1);
   }
   return dates;
@@ -44,19 +54,4 @@ export function buildUnavailMap(
     }
   }
   return map;
-}
-
-export function replaySessionMutationDates(baseDates: string[], plan: SchedulePlan): string[] {
-  const records = [...(plan.sessionMutations ?? [])].sort((a, b) => a.createdAt - b.createdAt);
-  const dates = [...baseDates];
-  for (const rec of records) {
-    const idx = dates.findIndex(d => d === rec.date);
-    if (rec.action === 'delete') {
-      if (idx >= 0) dates.splice(idx, 1);
-      continue;
-    }
-    if (!rec.insertedDate || idx < 0) continue;
-    dates.splice(rec.position === 'before' ? idx : idx + 1, 0, rec.insertedDate);
-  }
-  return dates;
 }

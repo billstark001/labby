@@ -5,7 +5,7 @@
  * MUTATION_WEIGHTS and ANNEALING_CONFIG.
  */
 
-import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SchedulePlan, SolverInput, SimilarityLookup } from '../types.js';
+import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SolverInput } from '../types.js';
 import {
   type CostContext,
   personSimilarity,
@@ -16,8 +16,9 @@ import {
   ConstraintGuidance,
   noOverlapForbidden,
 } from './constraints.js';
-import { generateSessionDates, generateId, buildUnavailMap, replaySessionMutationDates } from './utils.js';
-import { drrInit, drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './wps.js';
+import { replaySessionMutations } from './mutation.js';
+import { generateSessionDates, buildUnavailMap, isISO8601 } from './utils.js';
+import { drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './wps.js';
 
 // ---------------------------------------------------------------------------
 // Configurable hyperparameters
@@ -74,7 +75,7 @@ function buildNumberedPersonIds(
 
   const personReverseMap = new Map<string, number>(personIds.map((id, i) => [id, i]));
 
-  const presenterNumbers =  sessions.flatMap(s => s.presentations.map(p => personReverseMap.get(p.presenterId)!));
+  const presenterNumbers = sessions.flatMap(s => s.presentations.map(p => personReverseMap.get(p.presenterId)!));
   const presenterIndices = sessions.map(s => s.presentations.length).reduce((acc, len) => [...acc, acc[acc.length - 1] + len], [0]).slice(0, -1);
 
   const questionerNumbers = sessions.flatMap(s => s.presentations.flatMap(p => p.questionerIds.map(q => personReverseMap.get(q)!)));
@@ -117,20 +118,20 @@ function chooseQuestioners(
   isUnavailable?: (id: string) => boolean,
 ) {
   const isVetoed = (i: number) => {
-      const id = personIds[i];
-      return (
-        id === presenterId
-        || noOverlapForbidden(presenterId, id, guidance)
-        || isUnavailable?.(id)
-        || questionerIds.includes(id)
-      );
-    };
-    const weightAdjust = (i: number) => {
-      const id = personIds[i];
-      return vftState.weights[i]
-        * affinityPairWeight(presenterId, id, guidance)
-        * similarityFactor(presenterId, id);
-    };
+    const id = personIds[i];
+    return (
+      id === presenterId
+      || noOverlapForbidden(presenterId, id, guidance)
+      || isUnavailable?.(id)
+      || questionerIds.includes(id)
+    );
+  };
+  const weightAdjust = (i: number) => {
+    const id = personIds[i];
+    return vftState.weights[i]
+      * affinityPairWeight(presenterId, id, guidance)
+      * similarityFactor(presenterId, id);
+  };
 
   const questionerIds: string[] = [];
   for (let j = 0; j < count; j++) {
@@ -165,10 +166,92 @@ export function hammingDistance(a: Session[], b: Session[]): number {
   }
   return diff;
 }
-  
+
 // #endregion
 
 // #region Schedule builder
+export class RandomScheduleGenerator {
+
+  private readonly maxPresenters: number;
+  private readonly guidance: ReturnType<typeof buildConstraintGuidance>;
+  private readonly presenterNumbers: ReturnType<typeof buildNumberedPersonIds>["presenterNumbers"];
+  private readonly questionerNumbers: ReturnType<typeof buildNumberedPersonIds>["questionerNumbers"];
+  private readonly drrState: ReturnType<typeof drrRecover>;
+  private readonly vftStateQuestioner: ReturnType<typeof vftRecover>;
+
+  constructor(
+    private readonly personIds: string[],
+    private readonly config: ScheduleConfig,
+    private readonly ctx: CostContext,
+    historicalSessions: Session[] = [],
+    private readonly unavailMap: Map<string, Set<string>> = new Map(),
+  ) {
+    this.maxPresenters = Math.min(config.presentersPerSession, personIds.length);
+    this.guidance = buildConstraintGuidance(ctx);
+
+    const { presenterNumbers, questionerNumbers } = buildNumberedPersonIds(historicalSessions, personIds);
+    this.presenterNumbers = presenterNumbers;
+    this.questionerNumbers = questionerNumbers;
+
+    const weights = personIds.map(id => this.guidance.presenterWeights?.get(id) ?? 1);
+    this.drrState = drrRecover(
+      this.presenterNumbers,
+      weights,
+      undefined,
+      0.04,
+    );
+
+    const weightsQuestioner = personIds.map(id => this.guidance.questionerWeights?.get(id) ?? 1);
+    this.vftStateQuestioner = vftRecover(
+      this.questionerNumbers,
+      weightsQuestioner,
+      undefined,
+      0.1,
+    );
+  }
+
+  similarityFactor(presenterId: string, questionerId: string): number {
+    const similarityFactorScaleBottom = 0.2;
+    const similarityFactorScaleTop = 0.6;
+
+    const rawSimilarity = personSimilarity(
+      this.ctx.personKeywords.get(presenterId) ?? [],
+      this.ctx.personKeywords.get(questionerId) ?? [],
+      this.ctx.similarities,
+    );
+    const diff = Math.abs(rawSimilarity - this.ctx.r);
+    const scaledDiff = (diff - similarityFactorScaleBottom) / (similarityFactorScaleTop - similarityFactorScaleBottom);
+    return Math.min(Math.max(0, 1 - scaledDiff), 1);
+  }
+
+  generate(date: string, maxPresentersOverride?: number): Presentation[] {
+    const unavail = this.unavailMap.get(date) ?? new Set<string>();
+    const n = Math.min(maxPresentersOverride ?? this.maxPresenters, this.personIds.length - unavail.size);
+    if (n === 0) {
+      return [];
+    }
+
+    const presenters = choosePresenters(this.personIds, n, this.drrState, id => unavail.has(id));
+
+    const presentations: Presentation[] = [];
+
+    for (const presenterId of presenters) {
+      const questionerIds = chooseQuestioners(
+        presenterId,
+        this.personIds,
+        this.config.questionersPerPresenter,
+        (presenterId, questionerId) => this.similarityFactor(presenterId, questionerId),
+        this.vftStateQuestioner,
+        this.guidance,
+        id => unavail.has(id),
+      );
+
+      presentations.push({ presenterId, questionerIds });
+    }
+
+    return presentations;
+  }
+}
 
 export function buildRandomSchedule(
   personIds: string[],
@@ -178,70 +261,18 @@ export function buildRandomSchedule(
   historicalSessions: Session[] = [],
   unavailMap: Map<string, Set<string>> = new Map(),
 ): Session[] {
-  if (personIds.length === 0) return dates.map(date => ({ date, presentations: [] }));
+  if (personIds.length === 0) {
+    return dates.map(date => ({ date, presentations: [] }));
+  }
 
-  const maxPresenters = Math.min(config.presentersPerSession, personIds.length);
+  const builder = new RandomScheduleGenerator(personIds, config, ctx, historicalSessions, unavailMap);
   const sessions: Session[] = [];
-  const guidance = buildConstraintGuidance(ctx);
-
-  const { presenterNumbers, questionerNumbers } = buildNumberedPersonIds(historicalSessions, personIds);
-
-  const weights = personIds.map(id => guidance.presenterWeights?.get(id) ?? 1);
-  const drrState = drrRecover(
-    presenterNumbers,
-    weights,
-    undefined,
-    0.04,
-  );
-
-  const weightsQuestioner = personIds.map(id => guidance.questionerWeights?.get(id) ?? 1);
-  const vftStateQuestioner = vftRecover(
-    questionerNumbers,
-    weightsQuestioner,
-    undefined,
-    0.1,
-  );
-  
-  const similarityFactorScaleBottom = 0.2;
-  const similarityFactorScaleTop = 0.6;
-  const similarityFactor = (presenterId: string, questionerId: string) => {
-    const rawSimilarity = personSimilarity(
-      ctx.personKeywords.get(presenterId) ?? [],
-      ctx.personKeywords.get(questionerId) ?? [],
-      ctx.similarities,
-    );
-    const diff = Math.abs(rawSimilarity - ctx.r);
-    const scaledDiff = (diff - similarityFactorScaleBottom) / (similarityFactorScaleTop - similarityFactorScaleBottom);
-    return Math.min(Math.max(0, 1 - scaledDiff), 1);
-  };
 
   for (let si = 0; si < dates.length; si++) {
     const date = dates[si];
-    const unavail = unavailMap.get(date) ?? new Set<string>();
-    const n = Math.min(maxPresenters, personIds.length - unavail.size);
-    if (n === 0) { sessions.push({ date, presentations: [] }); continue; }
-
-    // choose presenters
-    const presenters = choosePresenters(personIds, n, drrState, id => unavail.has(id));
-
-    const presentations: Presentation[] = [];
-
-    for (const presenterId of presenters) {
-
-      const questionerIds = chooseQuestioners(
-        presenterId,
-        personIds,
-        config.questionersPerPresenter,
-        similarityFactor,
-        vftStateQuestioner,
-        guidance,
-        id => unavail.has(id),
-      );
-
-      presentations.push({ presenterId, questionerIds });
-    }
-    sessions.push({ date, presentations });
+    sessions.push({ date, presentations: builder.generate(date) });
   }
+
   return sessions;
 }
 
@@ -543,52 +574,63 @@ export function simulatedAnnealing(
 }
 
 export const annealingSolver: ScheduleSolver = {
-  solveFull(input: SolverInput): SchedulePlan {
-    const { config, unavailabilities = [] } = input;
+  solveFull(input: SolverInput): Session[] {
+    const { config, unavailabilities = [], mutations } = input;
     const ctx = buildCostContext(input);
     const personIds = [...ctx.personKeywords.keys()];
     const dates = generateSessionDates(config);
+    if (mutations?.length) {
+      replaySessionMutations(dates, mutations, { inPlace: true });
+    }
+
     const unavailMap = buildUnavailMap(unavailabilities, config.id);
-  
+
     const initial = buildRandomSchedule(personIds, dates, config, ctx, [], unavailMap);
     const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap);
-  
-    return {
-      id: generateId(),
-      createdAt: Date.now(),
-      configId: config.id,
-      sessions: optimized,
-    };
+
+    return optimized;
   },
-  
+
   /**
    * Re-schedule sessions from changeDate onward, minimizing divergence from the
    * previous plan via a Hamming penalty.
    */
-  solveIncremental(input: IncrementalSolverInput): SchedulePlan {
-    const { config, previousPlan, changeDate, unavailabilities = [] } = input;
-  
-    const frozenSessions = previousPlan.sessions.filter(s => s.date < changeDate);
-    const replayedDates = replaySessionMutationDates(generateSessionDates(config), previousPlan);
-    const mutableDates = replayedDates.filter(d => d >= changeDate);
-  
+  solveIncremental(input: IncrementalSolverInput): Session[] {
+    const {
+      config, sessions, mutations,
+      index: _index, changeDate: _changeDate, unavailabilities = [],
+      useHamming = true,
+    } = input;
+
+    if (_index == null && (_changeDate == null || !isISO8601(_changeDate))) {
+      throw new Error('Invalid incremental input: must provide either index or valid changeDate');
+    }
+    const changeDate = _changeDate ?? sessions[_index!].date;
+    const index = _index ?? sessions.findIndex(s => s.date >= changeDate);
+    if (index === -1) {
+      // No sessions on or after changeDate; return previous plan unchanged.
+      return sessions;
+    }
+
+    const frozenSessions = sessions.slice(0, index);
+    const activeSessions = sessions.slice(index);
+    const mutableDates = generateSessionDates({ ...config, startDate: changeDate });
+    if (mutations?.length) {
+      replaySessionMutations(mutableDates, mutations, { inPlace: true, startDate: changeDate });
+    }
+
     const ctx = buildCostContext(input);
     const personIds = [...ctx.personKeywords.keys()];
     const unavailMap = buildUnavailMap(unavailabilities, config.id);
-    const hammingRef = previousPlan.sessions.filter(s => s.date >= changeDate);
-  
+    const hammingRef = useHamming ? activeSessions : null;
+
     const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
     const optimized = simulatedAnnealing(
       initial, ctx, frozenSessions, config,
       hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap,
     );
-  
-    return {
-      id: generateId(),
-      createdAt: Date.now(),
-      configId: config.id,
-      sessions: [...frozenSessions, ...optimized],
-    };
+
+    return frozenSessions.concat(optimized);
   },
 }
 

@@ -28,6 +28,13 @@ import {
   annealingSolver,
 } from './annealing.js';
 
+export {
+  replaySessionMutations,
+  mergeMutationRecords,
+  mutateSessions,
+  mutatePresentations,
+} from './mutation.js';
+
 export { COST_WEIGHTS } from './constraints.js';
 export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing.js';
 
@@ -90,7 +97,7 @@ export function computeScheduleMetrics(
 const solver = annealingSolver;
 
 /** Generate a complete schedule from scratch. */
-export function solveFull(input: SolverInput): SchedulePlan {
+export function solveFull(input: SolverInput): Session[] {
   return solver.solveFull(input);
 }
 
@@ -98,6 +105,6 @@ export function solveFull(input: SolverInput): SchedulePlan {
  * Re-schedule sessions from changeDate onward, minimizing divergence from the
  * previous plan via a Hamming penalty.
  */
-export function solveIncremental(input: IncrementalSolverInput): SchedulePlan {
+export function solveIncremental(input: IncrementalSolverInput): Session[] {
   return solver.solveIncremental(input);
 }

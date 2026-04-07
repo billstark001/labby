@@ -159,8 +159,14 @@ export interface SessionMutationDialogProps {
   state: SessionMutationDialogState | null;
   insertedSessionDate: string;
   insertPosition: 'before' | 'after';
+  tactic: 'shift' | 'keep';
+  count: number;
+  minDate?: string;
+  maxDate?: string;
   onInsertedDateChange: (date: string) => void;
   onInsertPositionChange: (pos: 'before' | 'after') => void;
+  onTacticChange: (tactic: 'shift' | 'keep') => void;
+  onCountChange: (count: number) => void;
   onApply: () => void;
   onClose: () => void;
 }
@@ -169,8 +175,14 @@ export function SessionMutationDialog({
   state,
   insertedSessionDate,
   insertPosition,
+  tactic,
+  count,
+  minDate,
+  maxDate,
   onInsertedDateChange,
   onInsertPositionChange,
+  onTacticChange,
+  onCountChange,
   onApply,
   onClose,
 }: SessionMutationDialogProps) {
@@ -195,14 +207,28 @@ export function SessionMutationDialog({
               class={s.input}
               type="date"
               value={insertedSessionDate}
+              min={minDate}
+              max={maxDate}
               onInput={e => onInsertedDateChange((e.target as HTMLInputElement).value)}
             />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>Strategy</label>
+            <select
+              class={s.input}
+              value={tactic}
+              onChange={e => onTacticChange((e.target as HTMLSelectElement).value as 'shift' | 'keep')}
+            >
+              <option value="keep">{t('mutationStrategyInPlace')}</option>
+              <option value="shift">{t('mutationStrategyShift')}</option>
+            </select>
           </div>
           <div class={s.formGroup}>
             <label class={s.label}>{t('mutationInsertPosition')}</label>
             <select
               class={s.input}
               value={insertPosition}
+              disabled={tactic === 'shift'}
               onChange={e => onInsertPositionChange((e.target as HTMLSelectElement).value as 'before' | 'after')}
             >
               <option value="before">{t('mutationBefore')}</option>
@@ -211,6 +237,134 @@ export function SessionMutationDialog({
           </div>
         </>
       )}
+      {state.mode === 'delete' && (
+        <>
+          <div class={s.formGroup}>
+            <label class={s.label}>Count</label>
+            <input
+              class={s.input}
+              type="number"
+              min={1}
+              step={1}
+              value={count}
+              onInput={e => onCountChange(Math.max(1, Number((e.target as HTMLInputElement).value || 1)))}
+            />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>Strategy</label>
+            <select
+              class={s.input}
+              value={tactic}
+              onChange={e => onTacticChange((e.target as HTMLSelectElement).value as 'shift' | 'keep')}
+            >
+              <option value="keep">{t('mutationStrategyInPlace')}</option>
+              <option value="shift">{t('mutationStrategyShift')}</option>
+            </select>
+          </div>
+        </>
+      )}
+      <div class={s.flexGapSm}>
+        <Button variant="primary" onClick={onApply}>{t('applyMutation')}</Button>
+        <Button variant="secondary" onClick={onClose}>{t('cancel')}</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+// #endregion
+
+// #region PresentationMutationDialog
+
+export interface PresentationMutationDialogState {
+  sessionDate: string;
+  presentationIndex: number;
+}
+
+export interface PresentationMutationDialogProps {
+  state: PresentationMutationDialogState | null;
+  operation: 'insert' | 'delete';
+  count: number;
+  tactic: 'shift' | 'keep';
+  changeSessionLength: boolean;
+  onOperationChange: (operation: 'insert' | 'delete') => void;
+  onCountChange: (count: number) => void;
+  onTacticChange: (tactic: 'shift' | 'keep') => void;
+  onChangeSessionLengthChange: (value: boolean) => void;
+  onApply: () => void;
+  onClose: () => void;
+}
+
+export function PresentationMutationDialog({
+  state,
+  operation,
+  count,
+  tactic,
+  changeSessionLength,
+  onOperationChange,
+  onCountChange,
+  onTacticChange,
+  onChangeSessionLengthChange,
+  onApply,
+  onClose,
+}: PresentationMutationDialogProps) {
+  const { t } = i18n;
+  if (!state) return null;
+
+  return (
+    <Dialog
+      open={true}
+      onClose={onClose}
+      title="Edit Presentation Mutation"
+    >
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('sessionDate')}</label>
+        <input class={s.input} value={state.sessionDate} disabled />
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>Presentation Index</label>
+        <input class={s.input} value={String(state.presentationIndex + 1)} disabled />
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>Operation</label>
+        <select
+          class={s.input}
+          value={operation}
+          onChange={e => onOperationChange((e.target as HTMLSelectElement).value as 'insert' | 'delete')}
+        >
+          <option value="insert">{t('mutationInsert')}</option>
+          <option value="delete">{t('mutationDelete')}</option>
+        </select>
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>Count</label>
+        <input
+          class={s.input}
+          type="number"
+          min={1}
+          step={1}
+          value={count}
+          onInput={e => onCountChange(Math.max(1, Number((e.target as HTMLInputElement).value || 1)))}
+        />
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>Strategy</label>
+        <select
+          class={s.input}
+          value={tactic}
+          onChange={e => onTacticChange((e.target as HTMLSelectElement).value as 'shift' | 'keep')}
+        >
+          <option value="keep">{t('mutationStrategyInPlace')}</option>
+          <option value="shift">{t('mutationStrategyShift')}</option>
+        </select>
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>Change Session Length</label>
+        <input
+          type="checkbox"
+          checked={changeSessionLength}
+          onInput={e => onChangeSessionLengthChange((e.target as HTMLInputElement).checked)}
+        />
+      </div>
       <div class={s.flexGapSm}>
         <Button variant="primary" onClick={onApply}>{t('applyMutation')}</Button>
         <Button variant="secondary" onClick={onClose}>{t('cancel')}</Button>

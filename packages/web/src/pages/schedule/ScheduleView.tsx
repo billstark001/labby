@@ -19,6 +19,7 @@ interface ScheduleViewProps {
   onManualEdit: (target: { mode: 'presenter' | 'questioner'; sessionDate: string; presIndex: number; questIndex?: number }) => void;
   onShowMetricsForSession: (plan: SchedulePlan, date: string) => void;
   onOpenSessionMutation: (mode: 'insert' | 'delete', date: string) => void;
+  onOpenPresentationMutation: (sessionDate: string, presentationIndex: number) => void;
 }
 
 export function ScheduleView({
@@ -29,6 +30,7 @@ export function ScheduleView({
   onManualEdit,
   onShowMetricsForSession,
   onOpenSessionMutation,
+  onOpenPresentationMutation,
 }: ScheduleViewProps) {
   const { t } = i18n;
 
@@ -39,33 +41,37 @@ export function ScheduleView({
   return (
     <>
       {current.sessions.map((sess: Session) => {
-        const hasMutationRecord = (current.sessionMutations ?? []).some((record) => record.date === sess.date);
+        const dateMeta = current.sessionDateMeta?.[sess.date]
+          ?? (current.sessionMutations ?? []).find(record => record.action === 'insert' && record.date === sess.date);
         return (
           <div key={sess.date} class={`${s.card} ${s.mb16}`}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>
-              <span class={s.flexGapXs}>
-                <Calendar size={16} />
-                {sess.date}
-              </span>
-              <div class={s.flexGapXs}>
-                {manualEditMode && (
-                  <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => onOpenSessionMutation('insert', sess.date)}
-                      disabled={hasMutationRecord}
-                    >
+              {manualEditMode ? (
+                <Menu mode="context">
+                  <MenuTrigger>
+                    <span class={s.flexGapXs}>
+                      <Calendar size={16} />
+                      {sess.date}
+                      {dateMeta ? <span class={s.badge} title="Mutated session">M</span> : null}
+                    </span>
+                  </MenuTrigger>
+                  <MenuContent>
+                    <MenuItem onSelect={() => onOpenSessionMutation('insert', sess.date)}>
                       {t('mutationInsert')}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      onClick={() => onOpenSessionMutation('delete', sess.date)}
-                      disabled={hasMutationRecord}
-                    >
+                    </MenuItem>
+                    <MenuItem onSelect={() => onOpenSessionMutation('delete', sess.date)}>
                       {t('mutationDelete')}
-                    </Button>
-                  </>
-                )}
+                    </MenuItem>
+                  </MenuContent>
+                </Menu>
+              ) : (
+                <span class={s.flexGapXs}>
+                  <Calendar size={16} />
+                  {sess.date}
+                  {dateMeta ? <span class={s.badge} title="Mutated session">M</span> : null}
+                </span>
+              )}
+              <div class={s.flexGapXs}>
                 <Button variant="ghost" onClick={() => onShowMetricsForSession(current, sess.date)}>
                   {t('viewMetrics')}
                 </Button>
@@ -99,6 +105,9 @@ export function ScheduleView({
                           <MenuContent>
                             <MenuItem onSelect={() => onManualEdit({ mode: 'presenter', sessionDate: sess.date, presIndex: pi })}>
                               {t('selectNewPresenter')}
+                            </MenuItem>
+                            <MenuItem onSelect={() => onOpenPresentationMutation(sess.date, pi)}>
+                              Edit Presentation Mutation
                             </MenuItem>
                           </MenuContent>
                         </Menu>
