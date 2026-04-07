@@ -1,4 +1,3 @@
-/** Schedule configuration form and schedule view. */
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import { Pencil } from 'lucide-preact';
@@ -25,7 +24,7 @@ import {
   useDatabase,
 } from '@/db/index';
 import { computeScheduleMetrics, explainScheduleMetrics, solveFull, solveIncremental } from '@labby/core';
-import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, Presentation, MetricExplanation, ScheduleMetrics } from '@labby/core';
+import type { ScheduleConfig, SchedulePlan, PersonUnavailability, Session, MetricExplanation, ScheduleMetrics } from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import {
@@ -36,7 +35,7 @@ import {
   downloadScheduleHtml,
   downloadScheduleIcs,
 } from '@/lib/scheduleExport';
-import { Dialog, confirmDialog } from '@/components/ui/Dialog';
+import { confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
@@ -44,30 +43,15 @@ import { i18n } from '@/i18n';
 import { ConfigPanel } from './ConfigPanel';
 import { ScheduleHistoryPanel } from './ScheduleHistoryPanel';
 import { ScheduleView } from './ScheduleView';
+import {
+  ManualEditDialog,
+  MetricsDialog,
+  SessionMutationDialog,
+  type MetricsDialogState,
+  type SessionMutationDialogState,
+} from './dialogs';
 
 const LAST_SELECTED_CONFIG_STORAGE_KEY = 'schedule.lastSelectedConfigId';
-// ---------------------------------------------------------------------------
-// ManualEditDialog - select replacement presenter or questioner
-// ---------------------------------------------------------------------------
-
-interface ManualEditDialogProps {
-  mode: 'presenter' | 'questioner';
-  sessionDate: string;
-  presIndex: number;
-  questIndex?: number; // only for questioner mode
-  onClose: () => void;
-}
-
-interface MetricsDialogState {
-  title: string;
-  metrics: ScheduleMetrics;
-  explanations: MetricExplanation[];
-}
-
-interface SessionMutationDialogState {
-  mode: 'insert' | 'delete';
-  sessionDate: string;
-}
 
 function defaultIncrementalDate(): string {
   const nextWeek = new Date();
@@ -82,109 +66,10 @@ function normalizeSolveResponse(result: unknown): {
   warnings?: string[];
 } {
   if (result && typeof result === 'object' && 'plan' in (result as Record<string, unknown>)) {
-    const wrapped = result as {
-      plan: SchedulePlan;
-      metrics?: ScheduleMetrics;
-      explanations?: MetricExplanation[];
-      warnings?: string[];
-    };
-    return wrapped;
+    return result as { plan: SchedulePlan; metrics?: ScheduleMetrics; explanations?: MetricExplanation[]; warnings?: string[] };
   }
   return { plan: result as SchedulePlan };
 }
-
-function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }: ManualEditDialogProps) {
-  const { t } = i18n;
-  const persons = personsSignal.value.filter(p => !p.disabled);
-  const current = currentScheduleSignal.value;
-  const simMap = similarityMapSignal.value;
-  const personMap = personMapSignal.value;
-  const db = useDatabase();
-
-  if (!current) return null;
-
-  const session = current.sessions.find(s => s.date === sessionDate);
-  if (!session) return null;
-  const pres = session.presentations[presIndex];
-  if (!pres) return null;
-
-  const currentId = mode === 'presenter' ? pres.presenterId : pres.questionerIds[questIndex ?? 0];
-
-  function similarity(aId: string, bId: string): number {
-    if (aId === bId) return 1;
-    const [a, b] = aId < bId ? [aId, bId] : [bId, aId];
-    return simMap.get(`${a}|${b}`) ?? 0;
-  }
-
-  const presenterPerson = personMap.get(pres.presenterId);
-
-  function handleSelect(newId: string) {
-    if (!current) return;
-    const newSessions: Session[] = current.sessions.map(sess => {
-      if (sess.date !== sessionDate) return sess;
-      const newPresentations: Presentation[] = sess.presentations.map((p, pi) => {
-        if (pi !== presIndex) return p;
-        if (mode === 'presenter') {
-          return { ...p, presenterId: newId };
-        } else {
-          const newQIds = [...p.questionerIds];
-          newQIds[questIndex ?? 0] = newId;
-          return { ...p, questionerIds: newQIds };
-        }
-      });
-      return { ...sess, presentations: newPresentations };
-    });
-    const updated: SchedulePlan = { ...current, sessions: newSessions, modifiedAt: Date.now() };
-    db.schedules.put(updated).then(async () => {
-      await loadAllSchedules(db);
-      currentScheduleSignal.value = updated;
-    });
-    onClose();
-  }
-
-  return (
-    <Dialog
-      open={true}
-      onClose={onClose}
-      title={mode === 'presenter' ? t('selectNewPresenter') : t('selectNewQuestioner')}
-    >
-      <table class={s.table}>
-        <thead>
-          <tr>
-            <th class={s.th}>{t('name')}</th>
-            {mode === 'questioner' && presenterPerson && (
-              <th class={s.th}>{t('similarity')}</th>
-            )}
-            <th class={s.th}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {persons.map(p => (
-            <tr key={p.id} style={{ opacity: p.id === currentId ? 0.4 : 1 }}>
-              <td class={s.td}>{displayName(p)}</td>
-              {mode === 'questioner' && presenterPerson && (
-                <td class={s.td}>{similarity(p.id, pres.presenterId).toFixed(3)}</td>
-              )}
-              <td class={s.td}>
-                <Button
-                  variant={p.id === currentId ? 'ghost' : 'primary'}
-                  onClick={() => handleSelect(p.id)}
-                  disabled={p.id === currentId}
-                >
-                  {t('confirm')}
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Dialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SchedulePage
-// ---------------------------------------------------------------------------
 
 export function SchedulePage() {
   const { t } = i18n;
@@ -221,7 +106,7 @@ export function SchedulePage() {
   const activePersonCount = persons.filter(p => !p.disabled).length;
   const selectedConfig = configs.find(c => c.id === selectedConfigId);
   const schedulesForSelectedConfig = useMemo(
-    () => (selectedConfigId ? schedules.filter((item) => item.configId === selectedConfigId) : []),
+    () => (selectedConfigId ? schedules.filter(item => item.configId === selectedConfigId) : []),
     [schedules, selectedConfigId],
   );
   const sortedHistoryPlans = useMemo(
@@ -229,9 +114,10 @@ export function SchedulePage() {
     [schedulesForSelectedConfig],
   );
   const personMap = personMapSignal.value;
-
-  // Unavailabilities scoped to the selected config
   const configUnavails = unavailabilities.filter(u => u.configId === selectedConfigId);
+
+
+  // #region Effects
 
   useEffect(() => {
     let cancelled = false;
@@ -247,18 +133,16 @@ export function SchedulePage() {
       ]);
       if (cancelled) return;
       const remembered = localStorage.getItem(LAST_SELECTED_CONFIG_STORAGE_KEY) ?? '';
-      if (remembered && configsSignal.value.some((item) => item.id === remembered)) {
+      if (remembered && configsSignal.value.some(item => item.id === remembered)) {
         setSelectedConfigId(remembered);
       }
     };
     void run();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [db]);
 
   useEffect(() => {
-    if (selectedConfigId && !configs.some((item) => item.id === selectedConfigId)) {
+    if (selectedConfigId && !configs.some(item => item.id === selectedConfigId)) {
       setSelectedConfigId('');
       localStorage.removeItem(LAST_SELECTED_CONFIG_STORAGE_KEY);
     }
@@ -275,30 +159,26 @@ export function SchedulePage() {
   }, [selectedConfigId]);
 
   useEffect(() => {
-    if (!selectedConfigId) {
-      return;
-    }
+    if (!selectedConfigId) return;
     const currentPlan = currentScheduleSignal.value;
     if (!currentPlan || currentPlan.configId !== selectedConfigId) {
-      const latest = schedulesForSelectedConfig.reduce<SchedulePlan | null>((acc, item) => {
-        if (!acc || item.createdAt > acc.createdAt) return item;
-        return acc;
-      }, null);
+      const latest = schedulesForSelectedConfig.reduce<SchedulePlan | null>(
+        (acc, item) => (!acc || item.createdAt > acc.createdAt ? item : acc),
+        null,
+      );
       currentScheduleSignal.value = latest;
     }
   }, [selectedConfigId, schedulesForSelectedConfig]);
 
   useEffect(() => {
-    if (!changeDate) {
-      setChangeDate(defaultIncrementalDate());
-    }
+    if (!changeDate) setChangeDate(defaultIncrementalDate());
   }, [changeDate]);
 
-  function openMetricsDialog(title: string, metrics: ScheduleMetrics, explanations: MetricExplanation[]) {
-    setMetricsDialog({ title, metrics, explanations });
-  }
+  // #endregion
 
-  function localMetricsForPlan(plan: SchedulePlan): { metrics: ScheduleMetrics; explanations: MetricExplanation[] } | null {
+  // #region Helpers
+
+  function localMetricsForPlan(plan: SchedulePlan) {
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return null;
     const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
@@ -312,6 +192,33 @@ export function SchedulePage() {
     return { metrics, explanations: explainScheduleMetrics(metrics) };
   }
 
+  function openMetricsDialog(title: string, metrics: ScheduleMetrics, explanations: MetricExplanation[]) {
+    setMetricsDialog({ title, metrics, explanations });
+  }
+
+  function maybeShowLocalMetrics(plan: SchedulePlan, title: string) {
+    const local = localMetricsForPlan(plan);
+    if (local) openMetricsDialog(title, local.metrics, local.explanations);
+  }
+
+  async function handleSolveResult(result: unknown) {
+    const normalized = normalizeSolveResponse(result);
+    const plan = normalized.plan;
+    await db.schedules.put({ ...plan, modifiedAt: Date.now() });
+    await loadAllSchedules(db);
+    currentScheduleSignal.value = { ...plan, modifiedAt: Date.now() };
+    if (normalized.metrics && normalized.explanations) {
+      openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
+    } else {
+      maybeShowLocalMetrics(plan, t('metricsAfterComputeTitle'));
+    }
+    if (normalized.warnings?.length) window.alert(normalized.warnings.join('\n'));
+  }
+
+  // #endregion
+
+  // #region Metrics
+
   async function showMetricsForPlan(plan: SchedulePlan): Promise<void> {
     if (isServerDeployment) {
       const data = await apiClient.request<{ metrics: ScheduleMetrics; explanations: MetricExplanation[] }>('/solver/metrics', {
@@ -321,10 +228,7 @@ export function SchedulePage() {
       openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, data.metrics, data.explanations);
       return;
     }
-    const local = localMetricsForPlan(plan);
-    if (local) {
-      openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, local.metrics, local.explanations);
-    }
+    maybeShowLocalMetrics(plan, `${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`);
   }
 
   async function showMetricsForSession(plan: SchedulePlan, sessionDate: string): Promise<void> {
@@ -336,21 +240,22 @@ export function SchedulePage() {
       openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, data.metrics, data.explanations);
       return;
     }
-
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return;
     const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
-    const sessionIndex = plan.sessions.findIndex((session) => session.date === sessionDate);
+    const sessionIndex = plan.sessions.findIndex(session => session.date === sessionDate);
     if (sessionIndex < 0) return;
-    const metrics = computeScheduleMetrics({ ...plan, sessions: [plan.sessions[sessionIndex]] }, {
-      persons,
-      similarities: similarityMapSignal.value,
-      config,
-      unavailabilities,
-      constraints,
-    }, plan.sessions.slice(0, sessionIndex));
+    const metrics = computeScheduleMetrics(
+      { ...plan, sessions: [plan.sessions[sessionIndex]] },
+      { persons, similarities: similarityMapSignal.value, config, unavailabilities, constraints },
+      plan.sessions.slice(0, sessionIndex),
+    );
     openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, metrics, explainScheduleMetrics(metrics));
   }
+
+  // #endregion
+
+  // #region Config
 
   async function handleSaveConfig(c: ScheduleConfig) {
     await db.configs.put({ ...c, modifiedAt: Date.now() });
@@ -360,15 +265,14 @@ export function SchedulePage() {
     if (!selectedConfigId) setSelectedConfigId(c.id);
   }
 
+  // #endregion
+
+  // #region Solve
+
   async function handleGenerate() {
     const config = configs.find(c => c.id === selectedConfigId);
     if (!config || activePersonCount === 0) return;
-    const suggested = defaultIncrementalDate();
-    if (config.startDate < suggested) {
-      const proceed = window.confirm(t('rescheduleDateEarlyWarning'));
-      if (!proceed) return;
-    }
-    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
+    if (config.startDate < defaultIncrementalDate() && !window.confirm(t('rescheduleDateEarlyWarning'))) return;
     isComputingSignal.value = true;
     const tid = toast.loading(t('computing'));
     try {
@@ -376,29 +280,10 @@ export function SchedulePage() {
       const result = isServerDeployment
         ? await apiClient.request<unknown>('/solver/run', {
           method: 'POST',
-          body: JSON.stringify({
-            configId: config.id,
-            personIds: persons.map((p) => p.id),
-          }),
+          body: JSON.stringify({ configId: config.id, personIds: persons.map(p => p.id) }),
         })
-        : solveFull({
-          persons,
-          similarities: similarityMapSignal.value,
-          config,
-          unavailabilities,
-          constraints,
-        });
-      const normalized = normalizeSolveResponse(result);
-      const plan = normalized.plan;
-      await db.schedules.put({ ...plan, modifiedAt: Date.now() });
-      await loadAllSchedules(db);
-      currentScheduleSignal.value = { ...plan, modifiedAt: Date.now() };
-      if (normalized.metrics && normalized.explanations) {
-        openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
-      } else {
-        const local = localMetricsForPlan(plan);
-        if (local) openMetricsDialog(t('metricsAfterComputeTitle'), local.metrics, local.explanations);
-      }
+        : solveFull({ persons, similarities: similarityMapSignal.value, config, unavailabilities, constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id) });
+      await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
     } catch (err) {
@@ -413,12 +298,7 @@ export function SchedulePage() {
     if (!current || !changeDate) return;
     const config = configs.find(c => c.id === current.configId);
     if (!config) return;
-    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
-    const suggested = defaultIncrementalDate();
-    if (changeDate < suggested) {
-      const proceed = window.confirm(t('rescheduleDateEarlyWarning'));
-      if (!proceed) return;
-    }
+    if (changeDate < defaultIncrementalDate() && !window.confirm(t('rescheduleDateEarlyWarning'))) return;
     isComputingSignal.value = true;
     const tid = toast.loading(t('computing'));
     try {
@@ -426,36 +306,10 @@ export function SchedulePage() {
       const result = isServerDeployment
         ? await apiClient.request<unknown>('/solver/run-incremental', {
           method: 'POST',
-          body: JSON.stringify({
-            configId: config.id,
-            previousPlanId: current.id,
-            changeDate,
-            personIds: persons.map((p) => p.id),
-          }),
+          body: JSON.stringify({ configId: config.id, previousPlanId: current.id, changeDate, personIds: persons.map(p => p.id) }),
         })
-        : solveIncremental({
-          persons,
-          similarities: similarityMapSignal.value,
-          config,
-          previousPlan: current,
-          changeDate,
-          unavailabilities,
-          constraints,
-        });
-      const normalized = normalizeSolveResponse(result);
-      const plan = normalized.plan;
-      await db.schedules.put({ ...plan, modifiedAt: Date.now() });
-      await loadAllSchedules(db);
-      currentScheduleSignal.value = { ...plan, modifiedAt: Date.now() };
-      if (normalized.warnings?.length) {
-        window.alert(normalized.warnings.join('\n'));
-      }
-      if (normalized.metrics && normalized.explanations) {
-        openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
-      } else {
-        const local = localMetricsForPlan(plan);
-        if (local) openMetricsDialog(t('metricsAfterComputeTitle'), local.metrics, local.explanations);
-      }
+        : solveIncremental({ persons, similarities: similarityMapSignal.value, config, previousPlan: current, changeDate, unavailabilities, constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id) });
+      await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
     } catch (err) {
@@ -465,6 +319,10 @@ export function SchedulePage() {
       isComputingSignal.value = false;
     }
   }
+
+  // #endregion
+
+  // #region Copy / Export
 
   async function handleCopyTsv() {
     if (!current) return;
@@ -496,15 +354,17 @@ export function SchedulePage() {
     });
   }
 
+  // #endregion
+
+  // #region History
+
   async function handleDeleteHistory(plan: SchedulePlan) {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       await db.schedules.delete(plan.id);
       await loadAllSchedules(db);
       const next = schedulesSignal.value;
-      schedulesSignal.value = next;
       if (currentScheduleSignal.value?.id === plan.id) {
-        const latest = next.length > 0 ? next.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)) : null;
-        currentScheduleSignal.value = latest;
+        currentScheduleSignal.value = next.length > 0 ? next.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)) : null;
       }
     });
   }
@@ -513,50 +373,22 @@ export function SchedulePage() {
     if (selectedHistoryIds.size === 0) return;
     const ids = [...selectedHistoryIds];
     confirmDialog(t('confirmDelete'), t('deleteSelectedHistories', String(ids.length)), async () => {
-      await Promise.all(ids.map((id) => db.schedules.delete(id)));
+      await Promise.all(ids.map(id => db.schedules.delete(id)));
       await loadAllSchedules(db);
       const nextCurrent = currentScheduleSignal.value;
-      if (nextCurrent && !schedulesSignal.value.some((item) => item.id === nextCurrent.id)) {
-        const nextLatest = schedulesSignal.value
-          .filter((item) => item.configId === selectedConfigId)
-          .reduce<SchedulePlan | null>((acc, item) => {
-            if (!acc || item.createdAt > acc.createdAt) return item;
-            return acc;
-          }, null);
-        currentScheduleSignal.value = nextLatest;
+      if (nextCurrent && !schedulesSignal.value.some(item => item.id === nextCurrent.id)) {
+        currentScheduleSignal.value = schedulesSignal.value
+          .filter(item => item.configId === selectedConfigId)
+          .reduce<SchedulePlan | null>((acc, item) => (!acc || item.createdAt > acc.createdAt ? item : acc), null);
       }
       setSelectedHistoryIds(new Set());
     });
   }
 
-  function toggleHistorySelection(planId: string): void {
-    setSelectedHistoryIds((prev) => {
+  function toggleHistorySelection(planId: string) {
+    setSelectedHistoryIds(prev => {
       const next = new Set(prev);
-      if (next.has(planId)) {
-        next.delete(planId);
-      } else {
-        next.add(planId);
-      }
-      return next;
-    });
-  }
-
-  function selectAllHistory(): void {
-    setSelectedHistoryIds(new Set(sortedHistoryPlans.map((plan) => plan.id)));
-  }
-
-  function clearHistorySelection(): void {
-    setSelectedHistoryIds(new Set());
-  }
-
-  function invertHistorySelection(): void {
-    setSelectedHistoryIds((prev) => {
-      const next = new Set<string>();
-      for (const plan of sortedHistoryPlans) {
-        if (!prev.has(plan.id)) {
-          next.add(plan.id);
-        }
-      }
+      next.has(planId) ? next.delete(planId) : next.add(planId);
       return next;
     });
   }
@@ -565,10 +397,12 @@ export function SchedulePage() {
     const updated = { ...plan, notes, modifiedAt: Date.now() };
     await db.schedules.put(updated);
     await loadAllSchedules(db);
-    if (currentScheduleSignal.value?.id === plan.id) {
-      currentScheduleSignal.value = updated;
-    }
+    if (currentScheduleSignal.value?.id === plan.id) currentScheduleSignal.value = updated;
   }
+
+  // #endregion
+
+  // #region Unavailabilities
 
   async function handleSaveUnavail(u: PersonUnavailability) {
     await db.unavailabilities.put(u);
@@ -587,63 +421,51 @@ export function SchedulePage() {
     });
   }
 
+  // #endregion
+
+  // #region Session mutations
+
+  function openSessionMutationDialog(mode: 'insert' | 'delete', sessionDate: string) {
+    setSessionMutationDialog({ mode, sessionDate });
+    setInsertedSessionDate(sessionDate);
+    setInsertPosition('after');
+  }
+
   async function handleApplySessionMutation(): Promise<void> {
     if (!current || !sessionMutationDialog) return;
     const { mode, sessionDate } = sessionMutationDialog;
-    const baseSessions = current.sessions.map((session) => ({
-      date: session.date,
-      presentations: session.presentations.map((presentation) => ({
-        presenterId: presentation.presenterId,
-        questionerIds: [...presentation.questionerIds],
-      })),
-    }));
     const existingMutations = current.sessionMutations ?? [];
-    if (existingMutations.some((record) => record.date === sessionDate)) {
+    if (existingMutations.some(r => r.date === sessionDate)) {
       toast.error(t('mutationAlreadyExistsForDate'));
       return;
     }
 
-    const targetIndex = baseSessions.findIndex((item) => item.date === sessionDate);
-    if (targetIndex < 0) {
-      toast.error(t('mutationTargetNotFound'));
-      return;
-    }
+    const baseSessions = current.sessions.map(session => ({
+      date: session.date,
+      presentations: session.presentations.map(p => ({ presenterId: p.presenterId, questionerIds: [...p.questionerIds] })),
+    }));
+    const targetIndex = baseSessions.findIndex(item => item.date === sessionDate);
+    if (targetIndex < 0) { toast.error(t('mutationTargetNotFound')); return; }
 
-    let nextSessions = baseSessions;
-    let mutationNote = '';
     const createdAt = Date.now();
     const nextMutations = [...existingMutations];
+    let nextSessions = baseSessions;
+    let mutationNote = '';
 
     if (mode === 'delete') {
-      nextSessions = baseSessions.filter((item) => item.date !== sessionDate);
-      nextMutations.push({
-        date: sessionDate,
-        action: 'delete',
-        createdAt,
-      });
+      nextSessions = baseSessions.filter(item => item.date !== sessionDate);
+      nextMutations.push({ date: sessionDate, action: 'delete', createdAt });
       mutationNote = `[temporary-delete] date=${sessionDate}`;
     } else {
-      if (!insertedSessionDate) {
-        toast.error(t('mutationInsertedDateRequired'));
-        return;
-      }
+      if (!insertedSessionDate) { toast.error(t('mutationInsertedDateRequired')); return; }
       const template = baseSessions[targetIndex];
       const insertedSession: Session = {
         date: insertedSessionDate,
-        presentations: template.presentations.map((presentation) => ({
-          presenterId: presentation.presenterId,
-          questionerIds: [...presentation.questionerIds],
-        })),
+        presentations: template.presentations.map(p => ({ presenterId: p.presenterId, questionerIds: [...p.questionerIds] })),
       };
       const insertIndex = insertPosition === 'before' ? targetIndex : targetIndex + 1;
       nextSessions = [...baseSessions.slice(0, insertIndex), insertedSession, ...baseSessions.slice(insertIndex)];
-      nextMutations.push({
-        date: sessionDate,
-        action: 'insert',
-        insertedDate: insertedSessionDate,
-        position: insertPosition,
-        createdAt,
-      });
+      nextMutations.push({ date: sessionDate, action: 'insert', insertedDate: insertedSessionDate, position: insertPosition, createdAt });
       mutationNote = `[temporary-insert-${insertPosition}] date=${sessionDate} inserted=${insertedSessionDate}`;
     }
 
@@ -662,26 +484,18 @@ export function SchedulePage() {
     currentScheduleSignal.value = mutated;
     setSessionMutationDialog(null);
     setInsertedSessionDate('');
-    const local = localMetricsForPlan(mutated);
-    if (local) {
-      openMetricsDialog(t('metricsAfterMutationTitle'), local.metrics, local.explanations);
-    }
+    maybeShowLocalMetrics(mutated, t('metricsAfterMutationTitle'));
   }
 
-  function openSessionMutationDialog(mode: 'insert' | 'delete', sessionDate: string): void {
-    setSessionMutationDialog({ mode, sessionDate });
-    setInsertedSessionDate(sessionDate);
-    setInsertPosition('after');
-  }
+  // #endregion
+
+  // #region Render
 
   return (
     <div>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navSchedule')}</h2>
-        <Button
-          variant={manualEditMode ? 'primary' : 'ghost'}
-          onClick={() => setManualEditMode(m => !m)}
-        >
+        <Button variant={manualEditMode ? 'primary' : 'ghost'} onClick={() => setManualEditMode(m => !m)}>
           <Pencil size={14} />
           {manualEditMode ? t('manualEditMode') : t('manualEdit')}
         </Button>
@@ -695,8 +509,8 @@ export function SchedulePage() {
         personMap={personMap}
         onSelectConfig={setSelectedConfigId}
         onNewConfig={() => { setEditingConfig(null); setShowConfigForm(true); }}
-        onEditConfig={(config) => { setEditingConfig(config); setShowConfigForm(true); }}
-        onDeleteConfig={(config) => {
+        onEditConfig={config => { setEditingConfig(config); setShowConfigForm(true); }}
+        onDeleteConfig={config => {
           confirmDialog(t('confirmDelete'), t('deleteConfigWarning'), async () => {
             await db.configs.delete(config.id);
             await loadAllConfigs(db);
@@ -748,15 +562,9 @@ export function SchedulePage() {
       {/* Copy / Export row */}
       {current && (
         <div class={`${s.toolbar} ${s.mb24}`}>
-          <Button variant="secondary" onClick={handleCopyTsv}>
-            {copiedTsv ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}
-          </Button>
-          <Button variant="secondary" onClick={handleCopyHtml}>
-            {copiedHtml ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}
-          </Button>
-          <Button variant="secondary" onClick={handleCopyCsv}>
-            {copiedCsv ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}
-          </Button>
+          <Button variant="secondary" onClick={handleCopyTsv}>{copiedTsv ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}</Button>
+          <Button variant="secondary" onClick={handleCopyHtml}>{copiedHtml ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}</Button>
+          <Button variant="secondary" onClick={handleCopyCsv}>{copiedCsv ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>{t('exportHtml')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>{t('exportCsv')}</Button>
           <Button variant="secondary" onClick={handleExportIcs}>{t('exportIcs')}</Button>
@@ -769,82 +577,35 @@ export function SchedulePage() {
           sortedHistoryPlans={sortedHistoryPlans}
           selectedHistoryIds={selectedHistoryIds}
           currentSchedule={current}
-          onSelectHistory={(plan) => { currentScheduleSignal.value = plan; }}
+          onSelectHistory={plan => { currentScheduleSignal.value = plan; }}
           onToggleHistory={toggleHistorySelection}
-          onSelectAll={selectAllHistory}
-          onClearSelection={clearHistorySelection}
-          onInvertSelection={invertHistorySelection}
+          onSelectAll={() => setSelectedHistoryIds(new Set(sortedHistoryPlans.map(p => p.id)))}
+          onClearSelection={() => setSelectedHistoryIds(new Set())}
+          onInvertSelection={() => setSelectedHistoryIds(prev => new Set(sortedHistoryPlans.filter(p => !prev.has(p.id)).map(p => p.id)))}
           onDeleteHistory={handleDeleteHistory}
           onDeleteSelected={() => void handleDeleteSelectedHistories()}
           onEditNotes={setEditingNotes}
-          onShowMetrics={(plan) => void showMetricsForPlan(plan)}
+          onShowMetrics={plan => void showMetricsForPlan(plan)}
           editingNotes={editingNotes}
           onSaveNotes={(plan, notes) => void handleSaveHistoryNotes(plan, notes)}
           onCloseNotes={() => setEditingNotes(null)}
         />
       )}
 
-      {/* Manual edit dialog */}
+      {/* Dialogs */}
       {manualEditTarget && (
-        <ManualEditDialog
-          {...manualEditTarget}
-          onClose={() => setManualEditTarget(null)}
-        />
+        <ManualEditDialog {...manualEditTarget} onClose={() => setManualEditTarget(null)} />
       )}
-
-      {metricsDialog && (
-        <Dialog open={true} onClose={() => setMetricsDialog(null)} title={metricsDialog.title}>
-          <div class={s.formGroup}>
-            {metricsDialog.explanations.map((item) => (
-              <div key={item.key} class={`${s.text14} ${s.mb8}`}>
-                <strong>{item.label}</strong>: {item.value.toFixed(3)}
-                <div class={s.textMuted}>{item.summary}</div>
-              </div>
-            ))}
-          </div>
-        </Dialog>
-      )}
-
-      {sessionMutationDialog && (
-        <Dialog
-          open={true}
-          onClose={() => setSessionMutationDialog(null)}
-          title={sessionMutationDialog.mode === 'insert' ? t('mutationInsertDialogTitle') : t('mutationDeleteDialogTitle')}
-        >
-          <div class={s.formGroup}>
-            <label class={s.label}>{t('sessionDate')}</label>
-            <input class={s.input} value={sessionMutationDialog.sessionDate} disabled />
-          </div>
-          {sessionMutationDialog.mode === 'insert' && (
-            <>
-              <div class={s.formGroup}>
-                <label class={s.label}>{t('mutationInsertedDate')}</label>
-                <input
-                  class={s.input}
-                  type="date"
-                  value={insertedSessionDate}
-                  onInput={(e) => setInsertedSessionDate((e.target as HTMLInputElement).value)}
-                />
-              </div>
-              <div class={s.formGroup}>
-                <label class={s.label}>{t('mutationInsertPosition')}</label>
-                <select
-                  class={s.input}
-                  value={insertPosition}
-                  onChange={(e) => setInsertPosition((e.target as HTMLSelectElement).value as 'before' | 'after')}
-                >
-                  <option value="before">{t('mutationBefore')}</option>
-                  <option value="after">{t('mutationAfter')}</option>
-                </select>
-              </div>
-            </>
-          )}
-          <div class={s.flexGapSm}>
-            <Button variant="primary" onClick={() => void handleApplySessionMutation()}>{t('applyMutation')}</Button>
-            <Button variant="secondary" onClick={() => setSessionMutationDialog(null)}>{t('cancel')}</Button>
-          </div>
-        </Dialog>
-      )}
+      <MetricsDialog state={metricsDialog} onClose={() => setMetricsDialog(null)} />
+      <SessionMutationDialog
+        state={sessionMutationDialog}
+        insertedSessionDate={insertedSessionDate}
+        insertPosition={insertPosition}
+        onInsertedDateChange={setInsertedSessionDate}
+        onInsertPositionChange={setInsertPosition}
+        onApply={() => void handleApplySessionMutation()}
+        onClose={() => setSessionMutationDialog(null)}
+      />
 
       {/* Schedule tables */}
       <ScheduleView
@@ -858,4 +619,6 @@ export function SchedulePage() {
       />
     </div>
   );
+
+  // #endregion
 }

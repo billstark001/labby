@@ -7,6 +7,9 @@ import { sql } from 'drizzle-orm';
 import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 
+import { migratePostgres } from './migrate/postgres.js';
+import { migrateSqlite } from './migrate/sqlite.js';
+
 import type {
   EmailTask,
   Keyword,
@@ -218,164 +221,13 @@ export class SqliteStore {
   }
 
   private async migrate(): Promise<void> {
-    const commonSql = `
-      CREATE TABLE IF NOT EXISTS persons (
-        id TEXT PRIMARY KEY,
-        updated_at BIGINT NOT NULL DEFAULT 0,
-        payload TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS persons_updated_at_idx ON persons (updated_at DESC, id DESC);
-
-      CREATE TABLE IF NOT EXISTS keywords (
-        id TEXT PRIMARY KEY,
-        updated_at BIGINT NOT NULL DEFAULT 0,
-        payload TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS keywords_updated_at_idx ON keywords (updated_at DESC, id DESC);
-
-      CREATE TABLE IF NOT EXISTS configs (
-        id TEXT PRIMARY KEY,
-        updated_at BIGINT NOT NULL DEFAULT 0,
-        payload TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS configs_updated_at_idx ON configs (updated_at DESC, id DESC);
-
-      CREATE TABLE IF NOT EXISTS constraints (
-        id TEXT PRIMARY KEY,
-        config_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        created_at BIGINT NOT NULL,
-        updated_at BIGINT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS constraints_config_idx ON constraints (config_id);
-      CREATE INDEX IF NOT EXISTS constraints_updated_at_idx ON constraints (updated_at DESC, id DESC);
-
-      CREATE TABLE IF NOT EXISTS schedules (
-        id TEXT PRIMARY KEY,
-        config_id TEXT NOT NULL,
-        created_at BIGINT NOT NULL,
-        updated_at BIGINT NOT NULL DEFAULT 0,
-        payload TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS schedules_created_at_idx ON schedules (created_at DESC, id DESC);
-      CREATE INDEX IF NOT EXISTS schedules_updated_at_idx ON schedules (updated_at DESC, id DESC);
-
-      CREATE TABLE IF NOT EXISTS unavailabilities (
-        id TEXT PRIMARY KEY,
-        person_id TEXT NOT NULL,
-        config_id TEXT NOT NULL,
-        start_date TEXT NOT NULL,
-        end_date TEXT NOT NULL,
-        payload TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS unavailabilities_person_idx ON unavailabilities (person_id);
-      CREATE INDEX IF NOT EXISTS unavailabilities_config_idx ON unavailabilities (config_id);
-
-      CREATE TABLE IF NOT EXISTS email_tasks (
-        id TEXT PRIMARY KEY,
-        config_id TEXT NOT NULL,
-        updated_at BIGINT NOT NULL DEFAULT 0,
-        payload TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS email_tasks_config_idx ON email_tasks (config_id);
-      CREATE INDEX IF NOT EXISTS email_tasks_updated_at_idx ON email_tasks (updated_at DESC, id DESC);
-
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE,
-        email TEXT UNIQUE,
-        role INTEGER NOT NULL,
-        password_hash TEXT NOT NULL,
-        disabled INTEGER NOT NULL DEFAULT 0,
-        created_at BIGINT NOT NULL,
-        payload TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS refresh_tokens (
-        token_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        expires_at BIGINT NOT NULL,
-        created_at BIGINT NOT NULL,
-        revoked_at BIGINT,
-        replaced_by_token_id TEXT,
-        payload TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens (user_id);
-      CREATE INDEX IF NOT EXISTS refresh_tokens_expires_idx ON refresh_tokens (expires_at);
-    `;
-
     if (this.sqliteRaw) {
-      this.sqliteRaw.exec(commonSql);
-      // Backward-compatible column additions for existing databases.
-      try { this.sqliteRaw.exec('ALTER TABLE persons ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
-      try { this.sqliteRaw.exec('ALTER TABLE keywords ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
-      try { this.sqliteRaw.exec('ALTER TABLE configs ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
-      try { this.sqliteRaw.exec('ALTER TABLE schedules ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
-      try { this.sqliteRaw.exec('ALTER TABLE email_tasks ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
-      this.sqliteRaw.exec(`
-        CREATE TABLE IF NOT EXISTS keyword_vectors (
-          keyword_id TEXT PRIMARY KEY,
-          x DOUBLE PRECISION NOT NULL,
-          y DOUBLE PRECISION NOT NULL,
-          vector_f32 BLOB NOT NULL,
-          projection_f32 BLOB NOT NULL,
-          updated_at BIGINT NOT NULL,
-          payload TEXT NOT NULL,
-          FOREIGN KEY (keyword_id) REFERENCES keywords(id) ON DELETE CASCADE
-        );
-      `);
-      // Best effort: if sqlite-vec extension is available, create ANN index table.
-      try {
-        this.sqliteRaw.exec(`
-          CREATE VIRTUAL TABLE IF NOT EXISTS keyword_vectors_vec
-          USING vec0(keyword_id TEXT, embedding float[64]);
-        `);
-        this.sqliteVecEnabled = true;
-      } catch {
-        // sqlite-vec not available in current runtime; continue with blob storage.
-        this.sqliteVecEnabled = false;
-      }
+      const migrationResult = migrateSqlite(this.sqliteRaw);
+      this.sqliteVecEnabled = migrationResult.sqliteVecEnabled;
       return;
     }
 
-    for (const statement of commonSql
-      .split(';')
-      .map((part) => part.trim())
-      .filter(Boolean)) {
-      await this.executeCommand(sql.raw(`${statement};`));
-    }
-
-    // Backward-compatible column additions for existing databases.
-    const alterStatements = [
-      'ALTER TABLE persons ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
-      'ALTER TABLE keywords ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
-      'ALTER TABLE configs ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
-      'ALTER TABLE schedules ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
-      'ALTER TABLE email_tasks ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
-    ];
-    for (const statement of alterStatements) {
-      await this.executeCommand(sql.raw(statement));
-    }
-
-    await this.executeCommand(sql.raw('CREATE EXTENSION IF NOT EXISTS vector;'));
-    await this.executeCommand(sql.raw(`
-      CREATE TABLE IF NOT EXISTS keyword_vectors (
-        keyword_id TEXT PRIMARY KEY,
-        x DOUBLE PRECISION NOT NULL,
-        y DOUBLE PRECISION NOT NULL,
-        vector64 vector(64) NOT NULL,
-        projection2d vector(2) NOT NULL,
-        updated_at BIGINT NOT NULL,
-        payload JSONB NOT NULL,
-        FOREIGN KEY (keyword_id) REFERENCES keywords(id) ON DELETE CASCADE
-      );
-    `));
-    await this.executeCommand(sql.raw(`
-      CREATE INDEX IF NOT EXISTS keyword_vectors_vector64_ivfflat_idx
-      ON keyword_vectors USING ivfflat (vector64 vector_l2_ops) WITH (lists = 100);
-    `));
+    await migratePostgres(this.executeCommand.bind(this));
   }
 
   private async ensureReady(): Promise<void> {
@@ -455,6 +307,97 @@ export class SqliteStore {
       }
       return normalized;
     });
+  }
+
+  private normalizeKeywordVectorBackupRows(rows: TableRow[]): TableRow[] {
+    return rows.map((row) => {
+      const parsedPayload = this.parseKeywordVectorPayload(row.payload);
+      const keywordId = String(row.keyword_id ?? parsedPayload?.keywordId ?? '');
+      if (!keywordId) {
+        throw new Error('Invalid backup payload: keyword_vectors row missing keyword_id');
+      }
+
+      const updatedAt = Number(row.updated_at ?? parsedPayload?.updatedAt ?? nowMs());
+      const x = Number(row.x ?? parsedPayload?.x ?? 0);
+      const y = Number(row.y ?? parsedPayload?.y ?? 0);
+      const vector64 = this.resolveKeywordVector64(row, parsedPayload);
+      const payload = this.resolveKeywordVectorPayload(row.payload, {
+        keywordId,
+        vector64,
+        x,
+        y,
+        updatedAt,
+      });
+
+      if (this.dialect === 'sqlite') {
+        const sqliteRow: TableRow = {
+          keyword_id: keywordId,
+          x,
+          y,
+          vector_f32: `base64:${floatArrayToBuffer(vector64, LATENT_DIM).toString('base64')}`,
+          projection_f32: `base64:${floatArrayToBuffer([x, y], PROJECTION_DIM).toString('base64')}`,
+          updated_at: updatedAt,
+          payload,
+        };
+        return sqliteRow;
+      }
+
+      const pgRow: TableRow = {
+        keyword_id: keywordId,
+        x,
+        y,
+        vector64: toPgVectorLiteral(vector64, LATENT_DIM),
+        projection2d: toPgVectorLiteral([x, y], PROJECTION_DIM),
+        updated_at: updatedAt,
+        payload,
+      };
+      return pgRow;
+    });
+  }
+
+  private parseKeywordVectorPayload(payload: TableRowValue): Partial<KeywordVector> | null {
+    if (typeof payload !== 'string') return null;
+    try {
+      const parsed = JSON.parse(payload) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return null;
+      }
+      return parsed as Partial<KeywordVector>;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveKeywordVector64(row: TableRow, payload: Partial<KeywordVector> | null): number[] {
+    if (payload?.vector64 && Array.isArray(payload.vector64)) {
+      const out = new Array<number>(LATENT_DIM).fill(0);
+      for (let i = 0; i < LATENT_DIM; i++) {
+        const value = payload.vector64[i];
+        out[i] = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+      }
+      return out;
+    }
+
+    if (typeof row.vector64 === 'string') {
+      return fromPgVectorLiteral(row.vector64, LATENT_DIM);
+    }
+
+    if (typeof row.vector_f32 === 'string' && row.vector_f32.startsWith('base64:')) {
+      const encoded = row.vector_f32.slice('base64:'.length);
+      return bufferToFloatArray(Buffer.from(encoded, 'base64'), LATENT_DIM);
+    }
+
+    return new Array<number>(LATENT_DIM).fill(0);
+  }
+
+  private resolveKeywordVectorPayload(
+    payload: TableRowValue,
+    fallback: KeywordVector,
+  ): string {
+    if (typeof payload === 'string') {
+      return payload;
+    }
+    return JSON.stringify(fallback);
   }
 
   private async restoreTableRows(tableName: string, rows: TableRow[]): Promise<void> {
@@ -1105,7 +1048,9 @@ export class SqliteStore {
     const tables = {
       persons: this.validateTableRows('persons', snapshotObject.tables.persons),
       keywords: this.validateTableRows('keywords', snapshotObject.tables.keywords),
-      keyword_vectors: this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
+      keyword_vectors: this.normalizeKeywordVectorBackupRows(
+        this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
+      ),
       configs: this.validateTableRows('configs', snapshotObject.tables.configs),
       constraints: this.validateTableRows('constraints', snapshotObject.tables.constraints ?? []),
       schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
