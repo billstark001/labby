@@ -37,6 +37,7 @@ import {
   requireClientAuth,
   requireMinRole,
   requireRequestId,
+  requireServerAuth,
 } from "./http/middleware.js";
 import {
   defaultDisplayName,
@@ -85,6 +86,8 @@ export interface CreateAppOptions {
   mailer?: Mailer | null;
   onEmailTasksChanged?: () => Promise<void> | void;
   runEmailTaskNow?: (taskId: string) => Promise<void>;
+  schedulerDispatchApiKey?: string;
+  onSchedulerDispatch?: (jobName: string) => Promise<boolean>;
 }
 
 function resolveWebDistDir(explicitDir?: string): string | null {
@@ -197,6 +200,28 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.use("/api/v1/system/backup/*", requireMinRole(UserRole.Admin));
 
   app.get("/health", (c) => c.json({ ok: true, now: Date.now() }));
+
+  const schedulerDispatchApiKey = options.schedulerDispatchApiKey;
+  const schedulerDispatch = options.onSchedulerDispatch;
+  if (schedulerDispatchApiKey && schedulerDispatch) {
+    app.post('/internal/scheduler/dispatch', requireServerAuth(schedulerDispatchApiKey), async (c) => {
+      const body = await c.req.json().catch(() => ({})) as { jobName?: unknown };
+      const fromBody = typeof body.jobName === 'string' ? body.jobName : '';
+      const fromHeader = c.req.header('X-Labby-Job-Name') ?? '';
+      const jobName = fromBody.trim() || fromHeader.trim();
+
+      if (!jobName) {
+        throw new AppError('VALIDATION_ERROR', 'jobName is required', 400);
+      }
+
+      const okRun = await schedulerDispatch(jobName);
+      if (!okRun) {
+        throw new AppError('VALIDATION_ERROR', 'scheduler job not found', 404);
+      }
+
+      return ok(c, { ok: true, jobName });
+    });
+  }
 
   if (options.enablePublicEmailTaskIcs) {
     app.get('/public/email-tasks/:id/schedule.ics', async (c) => {

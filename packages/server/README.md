@@ -85,6 +85,8 @@ Optional settings:
 - `GOOGLE_OAUTH_JSON_PATH`, `GOOGLE_OAUTH_REFRESH_TOKEN`
 - `NOTIFY_RECIPIENTS`
 - `ENABLE_PUBLIC_EMAIL_TASK_ICS`, `PUBLIC_BASE_URL`
+- `SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
+- `CLOUD_SCHEDULER_PROJECT_ID`, `CLOUD_SCHEDULER_LOCATION`, `CLOUD_SCHEDULER_DISPATCH_URL`, `CLOUD_SCHEDULER_JOB_PREFIX`
 - `BACKUP_CRON`, `BACKUP_TIMEZONE`, `BACKUP_FORMAT`, `BACKUP_TARGET`, `BACKUP_FILENAME_PREFIX`
 - `BACKUP_EMAIL_RECIPIENTS`, `GOOGLE_DRIVE_FOLDER_ID`
 - `ONEDRIVE_CLIENT_ID`, `ONEDRIVE_CLIENT_SECRET`, `ONEDRIVE_REFRESH_TOKEN`, `ONEDRIVE_TENANT_ID`, `ONEDRIVE_FOLDER`
@@ -114,6 +116,16 @@ When SMTP is configured, the server starts the cron subsystem on boot.
 - The server sends a short reminder email to `NOTIFY_RECIPIENTS`.
 
 If SMTP is not configured, the cron subsystem stays disabled.
+
+## Scheduler Modes
+
+The scheduler can run in three modes using `SCHEDULER_MODE`:
+
+- `cron`: local node-cron only
+- `cloud`: Cloud Scheduler only
+- `hybrid`: local cron + Cloud Scheduler mirrored jobs
+
+In `cloud`/`hybrid`, the server keeps Cloud Scheduler jobs synchronized with internal job registration and uses `POST /internal/scheduler/dispatch` + `SCHEDULER_DISPATCH_API_KEY` for secure execution.
 
 When `ENABLE_PUBLIC_EMAIL_TASK_ICS=true`, each email task can opt in via metadata (`serveScheduleIcs`) to expose its latest schedule at:
 

@@ -1,8 +1,9 @@
 import { serve } from "@hono/node-server";
 import { createBackupServiceFromEnv, setActiveBackupService } from "./backup/service.js";
 import { createApp } from "./app.js";
+import { createCloudSchedulerMirrorFromEnv } from "./cron/cloud-scheduler.js";
 import { createAuthMaintenanceServiceFromEnv } from "./cron/auth-maintenance.js";
-import { scheduler } from "./cron/scheduler.js";
+import { resolveSchedulerMode, scheduler, type SchedulerMode } from "./cron/scheduler.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
 import type { StoreConnectionConfig } from "./store/index.js";
 import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-task-notifier.js";
@@ -10,6 +11,21 @@ import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-ta
 import { config } from "dotenv";
 
 config();
+
+const requestedSchedulerMode = resolveSchedulerMode(process.env.SCHEDULER_MODE);
+let schedulerMode: SchedulerMode = requestedSchedulerMode;
+if (requestedSchedulerMode !== 'cron') {
+  const mirror = createCloudSchedulerMirrorFromEnv();
+  if (mirror) {
+    scheduler.setMirror(mirror);
+  } else if (requestedSchedulerMode === 'cloud') {
+    schedulerMode = 'cron';
+    console.warn('[scheduler] SCHEDULER_MODE=cloud but cloud scheduler env is incomplete, falling back to cron mode.');
+  } else {
+    console.warn('[scheduler] SCHEDULER_MODE=hybrid but cloud scheduler env is incomplete, cloud sync is disabled.');
+  }
+}
+scheduler.setMode(schedulerMode);
 
 const port = Number(process.env.PORT ?? 4410);
 const dbPath = process.env.DB_PATH ?? "./run/labby.db";
@@ -60,6 +76,8 @@ const { app, store, close } = await createApp({
     }
     await emailTaskNotifier.runTaskNow(taskId);
   },
+  schedulerDispatchApiKey: process.env.SCHEDULER_DISPATCH_API_KEY,
+  onSchedulerDispatch: async (jobName: string) => scheduler.runNow(jobName),
 });
 
 // Email / cron subsystem (optional – only starts if SMTP is configured)
@@ -114,6 +132,17 @@ if (backupService) {
 } else {
   console.info("[backup] Database backups disabled.");
 }
+
+if (scheduler.hasMirror) {
+  try {
+    await scheduler.syncMirrorNow();
+    console.info(`[scheduler] Mirrored ${scheduler.registeredJobs.length} job(s) to Cloud Scheduler.`);
+  } catch (err) {
+    console.error('[scheduler] Failed to sync jobs to Cloud Scheduler:', err);
+  }
+}
+
+console.info(`[scheduler] Mode: ${scheduler.getMode()}; registered jobs: ${scheduler.registeredJobs.length}.`);
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`Labby server listening on http://localhost:${info.port}`);

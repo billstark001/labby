@@ -48,6 +48,10 @@ Common optional values:
 - `AUTH_ACCESS_TTL`, `AUTH_REFRESH_TTL`
 - `SMTP_*`, `NOTIFY_RECIPIENTS`
 - `BACKUP_*`
+- `SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
+- `CLOUD_SCHEDULER_PROJECT_ID`, `CLOUD_SCHEDULER_LOCATION`
+- `CLOUD_SCHEDULER_DISPATCH_URL` (optional if `PUBLIC_BASE_URL` is set)
+- `CLOUD_SCHEDULER_JOB_PREFIX`
 
 Important for this repository:
 
@@ -55,6 +59,35 @@ Important for this repository:
 - Set Rust engine paths explicitly at runtime:
   - `LABBY_CORE_NAPI_PATH=/app/packages/core/native/dist/node/labby_core.node`
   - `LABBY_CORE_WASM_NODE_PATH=/app/packages/core/native/dist/wasm-node/labby_core.js`
+
+## Cron + Cloud Scheduler Dual Mode
+
+This server supports three runtime scheduler modes via `SCHEDULER_MODE`:
+
+- `cron`: local node-cron only
+- `cloud`: Cloud Scheduler only
+- `hybrid`: both local node-cron and Cloud Scheduler
+
+Recommended on Cloud Run: `SCHEDULER_MODE=cloud`.
+
+Implementation notes:
+
+- Internal jobs still register in one place (same `syncJobs()` paths as local mode).
+- In `cloud`/`hybrid`, the server mirrors registered internal jobs to Cloud Scheduler automatically.
+- Cloud Scheduler triggers `POST /internal/scheduler/dispatch` with `X-Api-Key`.
+- The endpoint executes internal jobs by name, so Cloud and local jobs stay in sync without duplicating business logic.
+
+Required env for cloud mirroring:
+
+- `SCHEDULER_DISPATCH_API_KEY=<strong-random-secret>`
+- `CLOUD_SCHEDULER_PROJECT_ID=<PROJECT_ID>`
+- `CLOUD_SCHEDULER_LOCATION=<REGION>`
+- `PUBLIC_BASE_URL=<Cloud Run service URL>` or set `CLOUD_SCHEDULER_DISPATCH_URL` explicitly
+- Optional: `CLOUD_SCHEDULER_JOB_PREFIX=labby`
+
+Required IAM for the Cloud Run runtime service account:
+
+- `roles/cloudscheduler.admin` (create/update/delete jobs)
 
 ## Gmail OAuth JSON and Token (Secret Manager)
 
@@ -105,10 +138,30 @@ gcloud run deploy <SERVICE_NAME> \
   --update-secrets "/secrets/google-client.json=labby-google-client-json:latest,/secrets-token/google-token.json=labby-google-token-json:latest"
 ```
 
+Suggested scheduler-related env entries in `/tmp/labby-cloudrun-env.yaml`:
+
+```yaml
+SCHEDULER_MODE: cloud
+SCHEDULER_DISPATCH_API_KEY: "<strong-random-secret>"
+CLOUD_SCHEDULER_PROJECT_ID: "<PROJECT_ID>"
+CLOUD_SCHEDULER_LOCATION: "<REGION>"
+CLOUD_SCHEDULER_JOB_PREFIX: "labby"
+PUBLIC_BASE_URL: "https://<your-cloud-run-url>"
+```
+
 ### 4) Check URL
 
 ```bash
 gcloud run services describe <SERVICE_NAME> --region <REGION> --format='value(status.url)'
+```
+
+### 5) Verify mirrored Cloud Scheduler jobs
+
+```bash
+gcloud scheduler jobs list \
+  --location <REGION> \
+  --filter='name~"labby-"' \
+  --format='table(name,schedule,timeZone,state)'
 ```
 
 ## Build and Runtime Notes for This Monorepo
@@ -168,6 +221,8 @@ Executed operations summary:
 6. Prepared Cloud Run env yaml from existing `packages/server/.env` values.
 7. Deployed Cloud Run with secret file mounts and explicit Rust engine paths.
 8. Granted `roles/secretmanager.secretAccessor` to runtime account used by Cloud Run.
+9. Added scheduler dual-mode runtime (`cron/cloud/hybrid`) and mirrored internal jobs to Cloud Scheduler.
+10. Bound internal dispatch endpoint `/internal/scheduler/dispatch` with API-key authentication.
 
 Result:
 
@@ -176,6 +231,26 @@ Result:
 - Service URL:
   - `https://labby-server-476185329711.asia-northeast1.run.app`
   - `https://labby-server-xj4sdgvwwa-an.a.run.app`
+
+### Scheduler Dual-Mode Rollout Update (Tokyo, 2026-04-07)
+
+Latest rollout for Cloud Scheduler mirroring:
+
+- Latest revision: `labby-server-00012-ngd`
+- Image: `asia-northeast1-docker.pkg.dev/labby-scslab/labby/labby-server:20260407-201122-amd64`
+- Scheduler mode: `cloud`
+
+Verified after rollout:
+
+1. `/health` returns `{"ok":true,...}` on service URL.
+2. Mirrored jobs are enabled in Cloud Scheduler:
+
+- `labby-auth-maintenance-cleanup` (`17 3 * * *`, `UTC`)
+- `labby-email-task-nnk1hutze6v-mi5egx68f` (`0 18 * * 5`, `Asia/Tokyo`)
+
+3. Cloud Scheduler callback URI is unified to:
+
+- `https://labby-server-476185329711.asia-northeast1.run.app/internal/scheduler/dispatch`
 
 ## Required Running Services and Rough Cost Estimate
 

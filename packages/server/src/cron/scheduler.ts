@@ -24,6 +24,15 @@ export interface CronJobDefinition {
   timezone?: string;
 }
 
+export type SchedulerMode = 'cron' | 'cloud' | 'hybrid';
+
+export interface SchedulerMirror {
+  upsert(definition: CronJobDefinition): Promise<void>;
+  remove(name: string): Promise<void>;
+  sync(definitions: CronJobDefinition[]): Promise<void>;
+  shutdown?(): Promise<void>;
+}
+
 export interface CronJobHandle {
   name: string;
   stop(): void;
@@ -31,6 +40,45 @@ export interface CronJobHandle {
 
 export class CronScheduler {
   private readonly jobs = new Map<string, cron.ScheduledTask>();
+  private readonly definitions = new Map<string, CronJobDefinition>();
+  private mode: SchedulerMode = 'cron';
+  private mirror: SchedulerMirror | null = null;
+
+  setMode(mode: SchedulerMode): void {
+    this.mode = mode;
+  }
+
+  setMirror(mirror: SchedulerMirror | null): void {
+    this.mirror = mirror;
+  }
+
+  getMode(): SchedulerMode {
+    return this.mode;
+  }
+
+  get hasMirror(): boolean {
+    return this.mirror !== null;
+  }
+
+  private shouldRunLocally(): boolean {
+    return this.mode === 'cron' || this.mode === 'hybrid';
+  }
+
+  private upsertMirror(definition: CronJobDefinition): void {
+    if (!this.mirror) return;
+    void this.mirror.upsert(definition).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[scheduler] Failed to upsert mirrored job "${definition.name}": ${message}`);
+    });
+  }
+
+  private removeMirror(name: string): void {
+    if (!this.mirror) return;
+    void this.mirror.remove(name).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[scheduler] Failed to remove mirrored job "${name}": ${message}`);
+    });
+  }
 
   /**
    * Register and immediately start a cron job.
@@ -43,22 +91,28 @@ export class CronScheduler {
       throw new Error(`Invalid cron expression "${definition.expression}" for job "${definition.name}"`);
     }
 
-    const task = cron.schedule(
-      definition.expression,
-      async () => {
-        try {
-          await definition.handler();
-        } catch (err) {
-          console.error(`[cron] Job "${definition.name}" failed:`, err);
-        }
-      },
-      {
-        timezone: definition.timezone ?? 'UTC',
-        scheduled: true,
-      },
-    );
+    this.definitions.set(definition.name, definition);
 
-    this.jobs.set(definition.name, task);
+    if (this.shouldRunLocally()) {
+      const task = cron.schedule(
+        definition.expression,
+        async () => {
+          try {
+            await definition.handler();
+          } catch (err) {
+            console.error(`[cron] Job "${definition.name}" failed:`, err);
+          }
+        },
+        {
+          timezone: definition.timezone ?? 'UTC',
+          scheduled: true,
+        },
+      );
+
+      this.jobs.set(definition.name, task);
+    }
+
+    this.upsertMirror(definition);
     return {
       name: definition.name,
       stop: () => this.unregister(definition.name),
@@ -72,6 +126,8 @@ export class CronScheduler {
       existing.stop();
       this.jobs.delete(name);
     }
+    this.definitions.delete(name);
+    this.removeMirror(name);
   }
 
   /** Stop all registered cron jobs (call on graceful shutdown). */
@@ -81,12 +137,40 @@ export class CronScheduler {
       this.jobs.delete(name);
       console.info(`[cron] Stopped job "${name}"`);
     }
+    this.definitions.clear();
+
+    if (this.mirror?.shutdown) {
+      void this.mirror.shutdown().catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[scheduler] Failed to shutdown mirror: ${message}`);
+      });
+    }
   }
 
   /** Returns the names of all currently registered jobs. */
   get registeredJobs(): string[] {
-    return [...this.jobs.keys()];
+    return [...this.definitions.keys()];
   }
+
+  async syncMirrorNow(): Promise<void> {
+    if (!this.mirror) return;
+    await this.mirror.sync([...this.definitions.values()]);
+  }
+
+  async runNow(name: string): Promise<boolean> {
+    const definition = this.definitions.get(name);
+    if (!definition) return false;
+
+    await definition.handler();
+    return true;
+  }
+}
+
+export function resolveSchedulerMode(value: string | undefined): SchedulerMode {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === 'cloud') return 'cloud';
+  if (normalized === 'hybrid' || normalized === 'both') return 'hybrid';
+  return 'cron';
 }
 
 /** Singleton scheduler instance for the application. */
