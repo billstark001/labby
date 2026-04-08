@@ -7,17 +7,19 @@ import {
 } from '@/store/index';
 import { displayName } from '@/i18n';
 import { loadAllSchedules, useDatabase } from '@/db/index';
-import type {
-  SchedulePlan,
-  Session,
-  Presentation,
-  MetricExplanation,
-  ScheduleMetrics,
+import {
+  type SchedulePlan,
+  type Session,
+  type Presentation,
+  type MetricExplanation,
+  type ScheduleMetrics,
+  getPersonSimilarity,
 } from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import { Dialog } from '@/components/ui/Dialog';
 import { i18n } from '@/i18n';
+import { computed } from '@preact/signals';
 
 // #region Shared types
 
@@ -44,11 +46,20 @@ export interface ManualEditDialogProps {
   onClose: () => void;
 }
 
+const personKeywordsLookup = computed(() => {
+  const m = new Map<string, string[]>();
+  for (const p of personsSignal.value) {
+    m.set(p.id, p.keywordIds);
+  }
+  return m;
+});
+
 export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }: ManualEditDialogProps) {
   const { t } = i18n;
   const persons = personsSignal.value.filter(p => !p.disabled);
+  const personKeywords = personKeywordsLookup.value;
   const current = currentScheduleSignal.value;
-  const simLookup = similarityLookupSignal.value;
+  const simLookup = similarityLookupSignal.value; // TODO, BUG: this is keyword similarity, not person similarity, so it only returns 0 for id missing!
   const personMap = personMapSignal.value;
   const db = useDatabase();
 
@@ -63,8 +74,11 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
 
   function similarity(aId: string, bId: string): number {
     if (aId === bId) return 1;
-    const [a, b] = aId < bId ? [aId, bId] : [bId, aId];
-    return simLookup.getPairSimilarity(a, b) ?? 0;
+    return getPersonSimilarity(
+      personKeywords.get(aId) ?? [],
+      personKeywords.get(bId) ?? [],
+      simLookup,
+    );
   }
 
   function handleSelect(newId: string) {
@@ -88,6 +102,25 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
     onClose();
   }
 
+  const similarities: Map<string, number> = new Map();
+  if (mode === 'questioner' && presenterPerson) {
+    for (const p of persons) {
+      similarities.set(p.id, similarity(p.id, pres.presenterId));
+    }
+  }
+
+  const getCellColor = (pId: string): string => {
+    if (pId === currentId) return 'inherit';
+    if (mode !== 'questioner' || !presenterPerson) return 'inherit';
+    const sim = similarities.get(pId) ?? 0;
+    if (sim >= 1) return '#4caf50'; // exact match, use solid green
+    if (sim >= 0.75) return 'green';
+    if (sim >= 0.5) return '#b7c34a';
+    if (sim >= 0.25) return 'orange';
+    if (sim >= 0) return 'red';
+    return 'inherit';
+  }
+
   return (
     <Dialog
       open={true}
@@ -107,7 +140,7 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
             <tr key={p.id} style={{ opacity: p.id === currentId ? 0.4 : 1 }}>
               <td class={s.td}>{displayName(p)}</td>
               {mode === 'questioner' && presenterPerson && (
-                <td class={s.td}>{similarity(p.id, pres.presenterId).toFixed(3)}</td>
+                <td class={s.td} style={{ color: getCellColor(p.id) }}>{similarities.get(p.id)?.toFixed(3)}</td>
               )}
               <td class={s.td}>
                 <Button

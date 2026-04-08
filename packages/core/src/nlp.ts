@@ -47,6 +47,11 @@ export function keywordSimilarity(a: KeywordVector, b: KeywordVector): number {
   return 1 / (1 + d);
 }
 
+/**
+ * @deprecated Use `keywordVectorsToSimilarityLookup` instead for better performance with large vector sets.
+ * @param vectors 
+ * @returns 
+ */
 export function keywordVectorsToSimilarityMap(
   vectors: KeywordVector[],
 ): Map<string, number> {
@@ -100,154 +105,38 @@ export function keywordVectorsToSimilarityLookup(
   };
 }
 
-export function keywordVectorsToSimilarityEdges(
-  vectors: KeywordVector[],
-): SimilarityEdge[] {
-  if (vectors.length <= 1) return [];
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const vector of vectors) {
-    if (vector.x < minX) minX = vector.x;
-    if (vector.y < minY) minY = vector.y;
-    if (vector.x > maxX) maxX = vector.x;
-    if (vector.y > maxY) maxY = vector.y;
-  }
-
-  const spanX = Math.max(maxX - minX, 1e-6);
-  const spanY = Math.max(maxY - minY, 1e-6);
-  const area = spanX * spanY;
-  const avgPerCell = Math.max(DEFAULT_EDGE_NEIGHBORS * 2, 8);
-  const cellSize = Math.sqrt(area * avgPerCell / vectors.length);
-
-  const grid = new Map<string, IndexedVector[]>();
-  const indexed: IndexedVector[] = new Array(vectors.length);
-  for (let i = 0; i < vectors.length; i++) {
-    const vector = vectors[i];
-    const gx = Math.floor((vector.x - minX) / cellSize);
-    const gy = Math.floor((vector.y - minY) / cellSize);
-    const item: IndexedVector = { index: i, vector, gx, gy };
-    indexed[i] = item;
-    const key = `${gx}|${gy}`;
-    const bucket = grid.get(key);
-    if (bucket) {
-      bucket.push(item);
-    } else {
-      grid.set(key, [item]);
-    }
-  }
-
-  const edgeMap = new Map<string, SimilarityEdge>();
-
-  for (const node of indexed) {
-    const candidates: IndexedVector[] = [];
-    const seen = new Set<number>();
-
-    for (let radius = 0; radius <= 3; radius++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dy = -radius; dy <= radius; dy++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
-          const bucket = grid.get(`${node.gx + dx}|${node.gy + dy}`);
-          if (!bucket) continue;
-          for (const candidate of bucket) {
-            if (candidate.index === node.index || seen.has(candidate.index)) continue;
-            seen.add(candidate.index);
-            candidates.push(candidate);
-          }
-        }
-      }
-      if (candidates.length >= DEFAULT_EDGE_NEIGHBORS * 3) break;
-    }
-
-    if (candidates.length === 0) continue;
-
-    candidates
-      .sort((a, b) => {
-        const dax = a.vector.x - node.vector.x;
-        const day = a.vector.y - node.vector.y;
-        const dbx = b.vector.x - node.vector.x;
-        const dby = b.vector.y - node.vector.y;
-        return (dax * dax + day * day) - (dbx * dbx + dby * dby);
-      });
-
-    const limit = Math.min(DEFAULT_EDGE_NEIGHBORS, candidates.length);
-    for (let i = 0; i < limit; i++) {
-      const target = candidates[i].vector;
-      const source = node.vector;
-      const left = source.keywordId < target.keywordId ? source.keywordId : target.keywordId;
-      const right = source.keywordId < target.keywordId ? target.keywordId : source.keywordId;
-      const key = `${left}|${right}`;
-      if (edgeMap.has(key)) continue;
-      edgeMap.set(key, {
-        sourceId: left,
-        targetId: right,
-        weight: keywordSimilarity(source, target),
-      });
-    }
-  }
-
-  return [...edgeMap.values()];
-}
-
 /**
- * Legacy JS heuristic triplet recommender.
- *
- * Keep for tests/fixtures only; production recommendation must come from Rust
- * engine (`recommend_triplet`) via web/server embedding adapters.
+ * Calculates the similarity between two sets of keywords using the provided similarity lookup.
+ * For each keyword in `aKeywords`, it finds the best matching keyword in `bKeywords` and averages the best matches.
+ * @param aKeywords - The first set of keywords.
+ * @param bKeywords - The second set of keywords.
+ * @param sim - The similarity lookup to use for calculating pairwise similarities.
+ * @returns The average similarity between the two sets of keywords.
  */
-export function nextTripletQueryFromKeywordVectors(
-  vectors: KeywordVector[],
-  recentPairs?: Set<string>,
-): TripletQuery | null {
-  if (vectors.length < 3) return null;
-  const simMap = keywordVectorsToSimilarityMap(vectors);
-  let bestKey = '';
-  let bestDiff = Infinity;
-  for (const [key, sim] of simMap) {
-    if (recentPairs?.has(key)) continue;
-    const diff = Math.abs(sim - 0.5);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestKey = key;
-    }
-  }
-  if (!bestKey) {
-    for (const [key, sim] of simMap) {
-      const diff = Math.abs(sim - 0.5);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        bestKey = key;
-      }
-    }
-  }
-  if (!bestKey) return null;
-  const [anchorId, positiveId] = bestKey.split('|');
-  if (!anchorId || !positiveId) return null;
+export function getPersonSimilarity(
+  aKeywords: string[],
+  bKeywords: string[],
+  sim: SimilarityLookup,
+): number {
+  if (!aKeywords?.length || !bKeywords?.length) return 0;
 
-  const targetSim = simMap.get(bestKey) ?? 0;
-  let bestNegativeId: string | null = null;
-  let bestNegativeScore = Infinity;
+  const bestForA = new Array(aKeywords.length).fill(0);
+  const bestForB = new Array(bKeywords.length).fill(0);
 
-  for (const candidate of vectors) {
-    const candidateId = candidate.keywordId;
-    if (candidateId === anchorId || candidateId === positiveId) continue;
+  for (let i = 0; i < aKeywords.length; i++) {
+    for (let j = 0; j < bKeywords.length; j++) {
+      const w =
+        aKeywords[i] === bKeywords[j]
+          ? 1
+          : (sim.getPairSimilarity(aKeywords[i], bKeywords[j]) ?? 0);
 
-    const pairKey = anchorId < candidateId
-      ? `${anchorId}|${candidateId}`
-      : `${candidateId}|${anchorId}`;
-    const sim = simMap.get(pairKey) ?? 0;
-
-    // Hard negative: similarity to anchor close to the anchor-positive similarity.
-    const score = Math.abs(sim - targetSim);
-    if (score < bestNegativeScore) {
-      bestNegativeScore = score;
-      bestNegativeId = candidateId;
+      if (w > bestForA[i]) bestForA[i] = w;
+      if (w > bestForB[j]) bestForB[j] = w;
     }
   }
 
-  if (!bestNegativeId) return null;
-  const negativeId = bestNegativeId;
-  return { anchorId, positiveId, negativeId };
+  const sumA = bestForA.reduce((s, v) => s + v, 0);
+  const sumB = bestForB.reduce((s, v) => s + v, 0);
+
+  return (sumA / aKeywords.length + sumB / bKeywords.length) / 2;
 }

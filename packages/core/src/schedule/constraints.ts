@@ -4,6 +4,7 @@
  * All penalty weights are configurable by editing COST_WEIGHTS.
  */
 
+import { getPersonSimilarity } from '../nlp.js';
 import type {
   ScheduleMetrics,
   Session,
@@ -188,24 +189,6 @@ export function frequencyRoleWeight(
 
 // #endregion
 
-export function personSimilarity(
-  aKeywords: string[],
-  bKeywords: string[],
-  sim: SimilarityLookup,
-): number {
-  if (aKeywords.length === 0 || bKeywords.length === 0) return 0;
-  let total = 0;
-  let count = 0;
-  for (const a of aKeywords) {
-    for (const b of bKeywords) {
-      if (a === b) { total += 1; count++; continue; }
-      const w = sim.getPairSimilarity(a, b);
-      if (w !== undefined) { total += w; count++; }
-    }
-  }
-  return count === 0 ? 0 : total / count;
-}
-
 // #region Metrics explanation
 
 
@@ -359,7 +342,7 @@ export function computeCostBreakdown(
       const pk = ctx.personKeywords.get(pres.presenterId) ?? [];
       for (const q of pres.questionerIds) {
         relevancePenalty += Math.abs(
-          personSimilarity(pk, ctx.personKeywords.get(q) ?? [], ctx.similarities) - ctx.r,
+          getPersonSimilarity(pk, ctx.personKeywords.get(q) ?? [], ctx.similarities) - ctx.r,
         );
       }
     }
@@ -400,29 +383,9 @@ export function toScheduleMetrics(breakdown: CostBreakdown): ScheduleMetrics {
 
 export function buildCostContext(input: SolverInput): CostContext {
   const active = input.persons.filter(p => !p.disabled);
-  const similarities: SimilarityLookup = input.similarities instanceof Map
-    ? {
-      getPairSimilarity(leftKeywordId: string, rightKeywordId: string): number | undefined {
-        if (leftKeywordId === rightKeywordId) return 1;
-
-        const similarityMap = input.similarities as Map<string, number>;
-        const directKey = `${leftKeywordId}|${rightKeywordId}`;
-        if (similarityMap.has(directKey)) {
-          return similarityMap.get(directKey);
-        }
-
-        const reverseKey = `${rightKeywordId}|${leftKeywordId}`;
-        if (similarityMap.has(reverseKey)) {
-          return similarityMap.get(reverseKey);
-        }
-
-        return undefined;
-      },
-    }
-    : input.similarities;
   return {
     personKeywords: new Map(active.map(p => [p.id, p.keywordIds])),
-    similarities,
+    similarities: input.similarities,
     r: input.config.targetSimilarityRadius,
     constraints: input.constraints ?? [],
   };

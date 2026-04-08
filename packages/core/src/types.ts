@@ -186,7 +186,7 @@ export interface SolverInput {
   config: ScheduleConfig;
   persons: Person[];
   /** Flat similarity map: key = `${sourceId}|${targetId}`, value = weight */
-  similarities: Map<string, number> | SimilarityLookup;
+  similarities: SimilarityLookup;
   mutations?: ScheduleSessionMutationRecord[];
   /** Optional: persons unavailable on certain date ranges */
   unavailabilities?: PersonUnavailability[];

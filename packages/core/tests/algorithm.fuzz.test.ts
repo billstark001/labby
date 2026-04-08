@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   initKeywordVectors,
+  keywordVectorsToSimilarityLookup,
   keywordVectorsToSimilarityMap,
-  nextTripletQueryFromKeywordVectors,
   solveFull,
   solveIncremental,
   type Person,
@@ -100,7 +100,6 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
         const keywords = Array.from({ length: keywordCount }, (_, i) => `k${i}`);
         const vectors = initKeywordVectors(keywords);
         const simMap = keywordVectorsToSimilarityMap(vectors);
-        const query = nextTripletQueryFromKeywordVectors(vectors);
 
         let finiteCount = 0;
         for (const value of simMap.values()) {
@@ -110,7 +109,7 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
           finiteCount++;
         }
 
-        return finiteCount > 0 && query !== null;
+        return finiteCount > 0;
       });
 
       if (result) valid++;
@@ -131,7 +130,7 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
         const config = makeRandomConfig(`cfg-${seed}`);
 
         const baseVectors = initKeywordVectors(keywordPool);
-        const similarities = keywordVectorsToSimilarityMap(baseVectors);
+        const similarities = keywordVectorsToSimilarityLookup(baseVectors);
 
         const fullSessions = solveFull({ persons, similarities, config });
         const fullPlan: SchedulePlan = {

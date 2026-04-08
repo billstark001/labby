@@ -5,10 +5,10 @@
  * MUTATION_WEIGHTS and ANNEALING_CONFIG.
  */
 
+import { getPersonSimilarity } from '../nlp.js';
 import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SolverInput } from '../types.js';
 import {
   type CostContext,
-  personSimilarity,
   computeCost,
   buildCostContext,
   affinityPairWeight,
@@ -214,7 +214,7 @@ export class RandomScheduleGenerator {
     const similarityFactorScaleBottom = 0.2;
     const similarityFactorScaleTop = 0.6;
 
-    const rawSimilarity = personSimilarity(
+    const rawSimilarity = getPersonSimilarity(
       this.ctx.personKeywords.get(presenterId) ?? [],
       this.ctx.personKeywords.get(questionerId) ?? [],
       this.ctx.similarities,
@@ -299,7 +299,7 @@ export function mutate(
 
   /** Similarity-based questioner weight, matching buildRandomSchedule logic. */
   const simFactor = (pid: string, qid: string): number => {
-    const rawSim = personSimilarity(
+    const rawSim = getPersonSimilarity(
       ctx.personKeywords.get(pid) ?? [],
       ctx.personKeywords.get(qid) ?? [],
       ctx.similarities,

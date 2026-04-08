@@ -4,7 +4,6 @@ import {
   initKeywordVectors,
   keywordSimilarity,
   keywordVectorsToSimilarityMap,
-  nextTripletQueryFromKeywordVectors,
   SimilarityLookup,
   solveFull,
   solveIncremental,
@@ -170,11 +169,6 @@ describe('Keyword distance algorithm (black-box precise tests)', () => {
     expect(value).toBeLessThanOrEqual(1);
   });
 
-  test('nextTripletQuery returns null when vectors fewer than 3', () => {
-    const vectors = initKeywordVectors(['k1', 'k2']);
-    expect(nextTripletQueryFromKeywordVectors(vectors)).toBeNull();
-  });
-
   test('keyword similarity stays within (0,1]', () => {
     const vectors = initKeywordVectors(['k1', 'k2']);
     const [a, b] = vectors;
@@ -211,24 +205,6 @@ describe('Keyword distance algorithm (black-box precise tests)', () => {
       expect(dAB).toBeGreaterThanOrEqual(0);
       expect(Math.abs(dAB - dBA)).toBeLessThan(1e-6);
       expect(dAC).toBeLessThanOrEqual(dAB + dBC + 1e-6);
-    }
-  });
-
-  test('triplet query selection remains valid under dense pair graph', () => {
-    const vectors = withSeed(99, () => initKeywordVectors(
-      Array.from({ length: 120 }, (_, i) => `node-${i}`),
-    ));
-    const recent = new Set<string>();
-
-    for (let i = 0; i < 32; i++) {
-      const q = nextTripletQueryFromKeywordVectors(vectors, recent);
-      expect(q).not.toBeNull();
-      if (!q) continue;
-      expect(q.anchorId).not.toBe(q.positiveId);
-      expect(q.anchorId).not.toBe(q.negativeId);
-      expect(q.positiveId).not.toBe(q.negativeId);
-      const pair = [q.anchorId, q.positiveId].sort().join('|');
-      recent.add(pair);
     }
   });
 });
