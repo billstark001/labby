@@ -82,6 +82,41 @@ export interface DatabaseBackupSnapshot {
   };
 }
 
+interface ScheduleForeignKeyBundle {
+  persons: Person[];
+  keywords: Keyword[];
+  keywordVectors: KeywordVector[];
+  configs: ScheduleConfig[];
+  constraints: ScheduleConstraint[];
+  schedules: SchedulePlan[];
+  unavailabilities: PersonUnavailability[];
+}
+
+interface PersonForeignKeyBundle {
+  keywords: Keyword[];
+  constraints: ScheduleConstraint[];
+  schedules: SchedulePlan[];
+  unavailabilities: PersonUnavailability[];
+}
+
+interface KeywordForeignKeyBundle {
+  persons: Person[];
+  keywords: Keyword[];
+  keywordVectors: KeywordVector[];
+}
+
+interface ScheduleForeignKeyQuery {
+  configIds: string[];
+}
+
+interface PersonForeignKeyQuery {
+  personIds: string[];
+}
+
+interface KeywordForeignKeyQuery {
+  keywordIds: string[];
+}
+
 export type StoreConnectionConfig =
   | {
     dialect: 'sqlite';
@@ -172,6 +207,42 @@ function valueToTableValue(value: unknown): TableRowValue {
   return String(value);
 }
 
+function uniqueIds(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function extractConstraintPersonIds(constraint: ScheduleConstraint): string[] {
+  const value = constraint as { personIds?: unknown };
+  if (!Array.isArray(value.personIds)) return [];
+  return uniqueIds(value.personIds.filter((item): item is string => typeof item === 'string'));
+}
+
+function extractSchedulePersonIds(schedule: SchedulePlan): string[] {
+  const ids: string[] = [];
+  for (const session of schedule.sessions) {
+    for (const presentation of session.presentations) {
+      ids.push(presentation.presenterId);
+      ids.push(...presentation.questionerIds);
+    }
+  }
+  return uniqueIds(ids);
+}
+
+function normalizeUnavailabilityPersonIds(unavailability: PersonUnavailability): string[] {
+  const withMultiple = unavailability as PersonUnavailability & { personIds?: string[] };
+  if (Array.isArray(withMultiple.personIds) && withMultiple.personIds.length > 0) {
+    return uniqueIds(withMultiple.personIds);
+  }
+  if (unavailability.personId) {
+    return [unavailability.personId];
+  }
+  return [];
+}
+
+function escapeSqlLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
 export class SqliteStore {
   private readonly sqliteDb: SqliteDrizzleDb | null;
   private readonly pgDb: PostgresDrizzleDb | null;
@@ -240,10 +311,12 @@ export class SqliteStore {
     if (this.sqliteRaw) {
       const migrationResult = migrateSqlite(this.sqliteRaw);
       this.sqliteVecEnabled = migrationResult.sqliteVecEnabled;
+      await this.backfillForeignKeyColumns();
       return;
     }
 
     await migratePostgres(this.executeCommand.bind(this));
+    await this.backfillForeignKeyColumns();
   }
 
   private async ensureReady(): Promise<void> {
@@ -252,6 +325,60 @@ export class SqliteStore {
 
   private parsePayload<T>(payload: string): T {
     return JSON.parse(payload) as T;
+  }
+
+  private toSqlInList(ids: readonly string[]): string {
+    return ids.map((id) => `'${escapeSqlLiteral(id)}'`).join(', ');
+  }
+
+  private buildJsonArrayOverlapCondition(column: string, ids: readonly string[]): string {
+    if (ids.length === 0) return '1=0';
+    const inList = this.toSqlInList(ids);
+    if (this.sqliteRaw) {
+      return `EXISTS (SELECT 1 FROM json_each(${column}) je WHERE je.value IN (${inList}))`;
+    }
+    return `(${column}::jsonb ?| ARRAY[${inList}]::text[])`;
+  }
+
+  private async listPayloadsByIds<T>(tableName: string, idColumn: string, ids: readonly string[]): Promise<T[]> {
+    if (ids.length === 0) return [];
+    const inList = this.toSqlInList(ids);
+    const rows = await this.queryRows(sql.raw(`SELECT payload FROM ${tableName} WHERE ${idColumn} IN (${inList})`));
+    return rows.map((row) => this.parsePayload<T>(String(row.payload)));
+  }
+
+  private async backfillForeignKeyColumns(): Promise<void> {
+    const personRows = await this.queryRows(sql`SELECT id, payload FROM persons`);
+    for (const row of personRows) {
+      const person = this.parsePayload<Person>(String(row.payload));
+      const keywordIds = JSON.stringify(uniqueIds(person.keywordIds ?? []));
+      await this.executeCommand(sql`UPDATE persons SET keyword_ids = ${keywordIds} WHERE id = ${String(row.id)}`);
+    }
+
+    const constraintRows = await this.queryRows(sql`SELECT id, payload FROM constraints`);
+    for (const row of constraintRows) {
+      const constraint = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const personIds = JSON.stringify(extractConstraintPersonIds(constraint));
+      await this.executeCommand(sql`UPDATE constraints SET person_ids = ${personIds} WHERE id = ${String(row.id)}`);
+    }
+
+    const scheduleRows = await this.queryRows(sql`SELECT id, payload FROM schedules`);
+    for (const row of scheduleRows) {
+      const schedule = this.parsePayload<SchedulePlan>(String(row.payload));
+      const personIds = JSON.stringify(extractSchedulePersonIds(schedule));
+      await this.executeCommand(sql`UPDATE schedules SET person_ids = ${personIds} WHERE id = ${String(row.id)}`);
+    }
+
+    const unavailabilityRows = await this.queryRows(sql`SELECT id, payload FROM unavailabilities`);
+    for (const row of unavailabilityRows) {
+      const unavailability = this.parsePayload<PersonUnavailability>(String(row.payload));
+      const personIds = normalizeUnavailabilityPersonIds(unavailability);
+      await this.executeCommand(sql`
+        UPDATE unavailabilities
+        SET person_id = ${personIds[0] ?? ''}, person_ids = ${JSON.stringify(personIds)}
+        WHERE id = ${String(row.id)}
+      `);
+    }
   }
 
   private async listPayloads<T>(query: ReturnType<typeof sql>): Promise<T[]> {
@@ -487,10 +614,12 @@ export class SqliteStore {
   async putPerson(person: Person): Promise<void> {
     await this.ensureReady();
     const updated = { ...person, modifiedAt: person.modifiedAt ?? nowMs() };
+    const keywordIds = JSON.stringify(uniqueIds(updated.keywordIds ?? []));
     await this.executeCommand(sql`
-      INSERT INTO persons (id, updated_at, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      INSERT INTO persons (id, updated_at, keyword_ids, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${keywordIds}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         updated_at = excluded.updated_at,
+        keyword_ids = excluded.keyword_ids,
         payload = excluded.payload
     `);
   }
@@ -764,12 +893,14 @@ export class SqliteStore {
       configId: constraint.configId ?? '',
       modifiedAt: constraint.modifiedAt ?? nowMs(),
     };
+    const personIds = JSON.stringify(extractConstraintPersonIds(updated));
     await this.executeCommand(sql`
-      INSERT INTO constraints (id, config_id, type, payload, created_at, updated_at)
-      VALUES (${updated.id}, ${updated.configId}, ${updated.type}, ${JSON.stringify(updated)}, ${updated.modifiedAt ?? 0}, ${updated.modifiedAt ?? 0})
+      INSERT INTO constraints (id, config_id, type, person_ids, payload, created_at, updated_at)
+      VALUES (${updated.id}, ${updated.configId}, ${updated.type}, ${personIds}, ${JSON.stringify(updated)}, ${updated.modifiedAt ?? 0}, ${updated.modifiedAt ?? 0})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         type = excluded.type,
+        person_ids = excluded.person_ids,
         payload = excluded.payload,
         updated_at = excluded.updated_at
     `);
@@ -850,13 +981,15 @@ export class SqliteStore {
   async putSchedule(schedule: SchedulePlan): Promise<void> {
     await this.ensureReady();
     const updated = { ...schedule, modifiedAt: schedule.modifiedAt ?? nowMs() };
+    const personIds = JSON.stringify(extractSchedulePersonIds(updated));
     await this.executeCommand(sql`
-      INSERT INTO schedules (id, config_id, created_at, updated_at, payload)
-      VALUES (${updated.id}, ${updated.configId}, ${updated.createdAt}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      INSERT INTO schedules (id, config_id, created_at, updated_at, person_ids, payload)
+      VALUES (${updated.id}, ${updated.configId}, ${updated.createdAt}, ${updated.modifiedAt ?? 0}, ${personIds}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
+        person_ids = excluded.person_ids,
         payload = excluded.payload
     `);
   }
@@ -873,33 +1006,266 @@ export class SqliteStore {
 
   async getUnavailability(id: string): Promise<PersonUnavailability | undefined> {
     await this.ensureReady();
-    return this.getPayload<PersonUnavailability>(sql`SELECT payload FROM unavailabilities WHERE id = ${id}`);
+    const payload = await this.getPayload<PersonUnavailability>(sql`SELECT payload FROM unavailabilities WHERE id = ${id}`);
+    if (!payload) return undefined;
+    const personIds = normalizeUnavailabilityPersonIds(payload);
+    return ({
+      ...payload,
+      personId: personIds[0],
+      personIds,
+    } as PersonUnavailability);
   }
 
   async listUnavailabilities(): Promise<PersonUnavailability[]> {
     await this.ensureReady();
-    return this.listPayloads<PersonUnavailability>(sql`SELECT payload FROM unavailabilities ORDER BY start_date, end_date, id`);
+    const values = await this.listPayloads<PersonUnavailability>(sql`SELECT payload FROM unavailabilities ORDER BY start_date, end_date, id`);
+    return values.map((value) => {
+      const personIds = normalizeUnavailabilityPersonIds(value);
+      return ({
+        ...value,
+        personId: personIds[0],
+        personIds,
+      } as PersonUnavailability);
+    });
   }
 
   async putUnavailability(unavailability: PersonUnavailability): Promise<void> {
     await this.ensureReady();
+    const personIds = normalizeUnavailabilityPersonIds(unavailability);
+    const normalized: PersonUnavailability = {
+      ...unavailability,
+      personId: personIds[0],
+      personIds,
+    } as PersonUnavailability;
     await this.executeCommand(sql`
-      INSERT INTO unavailabilities (id, person_id, config_id, start_date, end_date, payload)
+      INSERT INTO unavailabilities (id, person_id, person_ids, config_id, start_date, end_date, payload)
       VALUES (
-        ${unavailability.id},
-        ${unavailability.personId},
-        ${unavailability.configId},
-        ${unavailability.startDate},
-        ${unavailability.endDate},
-        ${JSON.stringify(unavailability)}
+        ${normalized.id},
+        ${normalized.personId ?? ''},
+        ${JSON.stringify(personIds)},
+        ${normalized.configId},
+        ${normalized.startDate},
+        ${normalized.endDate},
+        ${JSON.stringify(normalized)}
       )
       ON CONFLICT(id) DO UPDATE SET
         person_id = excluded.person_id,
+        person_ids = excluded.person_ids,
         config_id = excluded.config_id,
         start_date = excluded.start_date,
         end_date = excluded.end_date,
         payload = excluded.payload
     `);
+  }
+
+  async listScheduleForeignKeys(query: ScheduleForeignKeyQuery): Promise<ScheduleForeignKeyBundle> {
+    await this.ensureReady();
+    const configIds = uniqueIds(query.configIds ?? []);
+    if (configIds.length === 0) {
+      return {
+        persons: [],
+        keywords: [],
+        keywordVectors: [],
+        configs: [],
+        constraints: [],
+        schedules: [],
+        unavailabilities: [],
+      };
+    }
+
+    const configs = await this.listPayloadsByIds<ScheduleConfig>('configs', 'id', configIds);
+    const configInList = this.toSqlInList(configIds);
+
+    const scheduleRows = await this.queryRows(sql.raw(`
+      SELECT payload, person_ids
+      FROM schedules
+      WHERE config_id IN (${configInList})
+      ORDER BY updated_at DESC, created_at DESC, id DESC
+    `));
+    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(String(row.payload)));
+
+    const constraintRows = await this.queryRows(sql.raw(`
+      SELECT id, config_id, payload, person_ids
+      FROM constraints
+      WHERE config_id IN (${configInList}) OR config_id = ''
+      ORDER BY updated_at DESC, id DESC
+    `));
+    const constraints = constraintRows.map((row) => {
+      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      return {
+        ...payload,
+        id: String(payload.id ?? row.id),
+        configId: String(row.config_id ?? payload.configId ?? ''),
+      };
+    });
+
+    const unavailabilityRows = await this.queryRows(sql.raw(`
+      SELECT payload, person_ids
+      FROM unavailabilities
+      WHERE config_id IN (${configInList})
+      ORDER BY start_date, end_date, id
+    `));
+    const unavailabilities = unavailabilityRows.map((row) => {
+      const payload = this.parsePayload<PersonUnavailability>(String(row.payload));
+      const personIds = normalizeUnavailabilityPersonIds(payload);
+      return ({
+        ...payload,
+        personId: personIds[0],
+        personIds,
+      } as PersonUnavailability);
+    });
+
+    const personIdSet = new Set<string>();
+    for (const row of scheduleRows) {
+      const ids = (() => {
+        try {
+          return uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]);
+        } catch {
+          return [];
+        }
+      })();
+      for (const id of ids) personIdSet.add(id);
+    }
+    for (const row of constraintRows) {
+      const ids = (() => {
+        try {
+          return uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]);
+        } catch {
+          return [];
+        }
+      })();
+      for (const id of ids) personIdSet.add(id);
+    }
+    for (const row of unavailabilityRows) {
+      const ids = (() => {
+        try {
+          return uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]);
+        } catch {
+          return [];
+        }
+      })();
+      for (const id of ids) personIdSet.add(id);
+    }
+
+    const persons = await this.listPayloadsByIds<Person>('persons', 'id', [...personIdSet]);
+    const keywordIdSet = new Set<string>();
+    for (const person of persons) {
+      for (const keywordId of person.keywordIds ?? []) keywordIdSet.add(keywordId);
+    }
+    const keywordIds = [...keywordIdSet];
+    const [keywords, keywordVectors] = await Promise.all([
+      this.listPayloadsByIds<Keyword>('keywords', 'id', keywordIds),
+      this.getKeywordVectors(keywordIds),
+    ]);
+
+    return {
+      persons,
+      keywords,
+      keywordVectors,
+      configs,
+      constraints,
+      schedules,
+      unavailabilities,
+    };
+  }
+
+  async listPersonForeignKeys(query: PersonForeignKeyQuery): Promise<PersonForeignKeyBundle> {
+    await this.ensureReady();
+    const personIds = uniqueIds(query.personIds ?? []);
+    if (personIds.length === 0) {
+      return {
+        keywords: [],
+        constraints: [],
+        schedules: [],
+        unavailabilities: [],
+      };
+    }
+
+    const persons = await this.listPayloadsByIds<Person>('persons', 'id', personIds);
+    const keywordIdSet = new Set<string>();
+    for (const person of persons) {
+      for (const keywordId of person.keywordIds ?? []) keywordIdSet.add(keywordId);
+    }
+    const keywords = await this.listPayloadsByIds<Keyword>('keywords', 'id', [...keywordIdSet]);
+
+    const overlapCondition = this.buildJsonArrayOverlapCondition('person_ids', personIds);
+
+    const scheduleRows = await this.queryRows(sql.raw(`
+      SELECT payload
+      FROM schedules
+      WHERE ${overlapCondition}
+      ORDER BY updated_at DESC, created_at DESC, id DESC
+    `));
+    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(String(row.payload)));
+
+    const constraintRows = await this.queryRows(sql.raw(`
+      SELECT id, config_id, payload
+      FROM constraints
+      WHERE ${overlapCondition}
+      ORDER BY updated_at DESC, id DESC
+    `));
+    const constraints = constraintRows.map((row) => {
+      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      return {
+        ...payload,
+        id: String(payload.id ?? row.id),
+        configId: String(row.config_id ?? payload.configId ?? ''),
+      };
+    });
+
+    const unavailabilityRows = await this.queryRows(sql.raw(`
+      SELECT payload
+      FROM unavailabilities
+      WHERE ${overlapCondition}
+      ORDER BY start_date, end_date, id
+    `));
+    const unavailabilities = unavailabilityRows.map((row) => {
+      const payload = this.parsePayload<PersonUnavailability>(String(row.payload));
+      const normalizedIds = normalizeUnavailabilityPersonIds(payload);
+      return ({
+        ...payload,
+        personId: normalizedIds[0],
+        personIds: normalizedIds,
+      } as PersonUnavailability);
+    });
+
+    return {
+      keywords,
+      constraints,
+      schedules,
+      unavailabilities,
+    };
+  }
+
+  async listKeywordForeignKeys(query: KeywordForeignKeyQuery): Promise<KeywordForeignKeyBundle> {
+    await this.ensureReady();
+    const keywordIds = uniqueIds(query.keywordIds ?? []);
+    if (keywordIds.length === 0) {
+      return {
+        persons: [],
+        keywords: [],
+        keywordVectors: [],
+      };
+    }
+    const [keywords, keywordVectors] = await Promise.all([
+      this.listPayloadsByIds<Keyword>('keywords', 'id', keywordIds),
+      this.getKeywordVectors(keywordIds),
+    ]);
+
+    const overlapCondition = this.buildJsonArrayOverlapCondition('keyword_ids', keywordIds);
+    const personRows = await this.queryRows(sql.raw(`
+      SELECT payload
+      FROM persons
+      WHERE ${overlapCondition}
+      ORDER BY updated_at DESC, id DESC
+    `));
+    const persons = personRows.map((row) => this.parsePayload<Person>(String(row.payload)));
+
+    return {
+      persons,
+      keywords,
+      keywordVectors,
+    };
   }
 
   async deleteUnavailability(id: string): Promise<void> {
@@ -1244,6 +1610,7 @@ export class SqliteStore {
     await this.restoreTableRows('users', tables.users);
     await this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
     await this.restoreTableRows('auth_verification_codes', tables.auth_verification_codes);
+    await this.backfillForeignKeyColumns();
   }
 
   async restoreEntityDump(dump: unknown): Promise<void> {
@@ -1323,6 +1690,7 @@ export class SqliteStore {
     for (const task of emailTasks) {
       await this.putEmailTask(task);
     }
+    await this.backfillForeignKeyColumns();
   }
 
   async restoreFromSqliteFile(sourcePath: string): Promise<void> {

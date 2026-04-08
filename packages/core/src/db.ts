@@ -87,6 +87,47 @@ export interface EmailTaskStore {
   clear(): Promise<void>;
 }
 
+export interface ScheduleForeignKeyBundle {
+  persons: Person[];
+  keywords: Keyword[];
+  keywordVectors: KeywordVector[];
+  configs: ScheduleConfig[];
+  constraints: ScheduleConstraint[];
+  schedules: SchedulePlan[];
+  unavailabilities: PersonUnavailability[];
+}
+
+export interface ScheduleForeignKeyQuery {
+  configIds: string[];
+}
+
+export interface PersonForeignKeyBundle {
+  keywords: Keyword[];
+  schedules: SchedulePlan[];
+  constraints: ScheduleConstraint[];
+  unavailabilities: PersonUnavailability[];
+}
+
+export interface PersonForeignKeyQuery {
+  personIds: string[];
+}
+
+export interface KeywordForeignKeyBundle {
+  persons: Person[];
+  keywords: Keyword[];
+  keywordVectors: KeywordVector[];
+}
+
+export interface KeywordForeignKeyQuery {
+  keywordIds: string[];
+}
+
+export interface ForeignKeyStore {
+  readForSchedule(query: ScheduleForeignKeyQuery): Promise<ScheduleForeignKeyBundle>;
+  readForPerson(query: PersonForeignKeyQuery): Promise<PersonForeignKeyBundle>;
+  readForKeyword(query: KeywordForeignKeyQuery): Promise<KeywordForeignKeyBundle>;
+}
+
 export interface LabbyDB {
   persons: PersonStore;
   keywords: KeywordStore;
@@ -96,6 +137,7 @@ export interface LabbyDB {
   schedules: SchedulePlanStore;
   unavailabilities: PersonUnavailabilityStore;
   emailTasks: EmailTaskStore;
+  foreignKeys: ForeignKeyStore;
 }
 
 export interface DatabaseDump {

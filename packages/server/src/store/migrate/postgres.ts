@@ -4,6 +4,7 @@ const POSTGRES_COMMON_SQL = `
   CREATE TABLE IF NOT EXISTS persons (
     id TEXT PRIMARY KEY,
     updated_at BIGINT NOT NULL DEFAULT 0,
+    keyword_ids TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS persons_updated_at_idx ON persons (updated_at DESC, id DESC);
@@ -26,6 +27,7 @@ const POSTGRES_COMMON_SQL = `
     id TEXT PRIMARY KEY,
     config_id TEXT NOT NULL,
     type TEXT NOT NULL,
+    person_ids TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL
@@ -38,6 +40,7 @@ const POSTGRES_COMMON_SQL = `
     config_id TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL DEFAULT 0,
+    person_ids TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS schedules_created_at_idx ON schedules (created_at DESC, id DESC);
@@ -46,6 +49,7 @@ const POSTGRES_COMMON_SQL = `
   CREATE TABLE IF NOT EXISTS unavailabilities (
     id TEXT PRIMARY KEY,
     person_id TEXT NOT NULL,
+    person_ids TEXT NOT NULL DEFAULT '[]',
     config_id TEXT NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
@@ -118,9 +122,13 @@ export async function migratePostgres(executeCommand: ExecuteCommand): Promise<v
   // Backward-compatible column additions for existing databases.
   const alterStatements = [
     'ALTER TABLE persons ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+    "ALTER TABLE persons ADD COLUMN IF NOT EXISTS keyword_ids TEXT NOT NULL DEFAULT '[]';",
     'ALTER TABLE keywords ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
     'ALTER TABLE configs ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+    "ALTER TABLE constraints ADD COLUMN IF NOT EXISTS person_ids TEXT NOT NULL DEFAULT '[]';",
     'ALTER TABLE schedules ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
+    "ALTER TABLE schedules ADD COLUMN IF NOT EXISTS person_ids TEXT NOT NULL DEFAULT '[]';",
+    "ALTER TABLE unavailabilities ADD COLUMN IF NOT EXISTS person_ids TEXT NOT NULL DEFAULT '[]';",
     'ALTER TABLE email_tasks ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;',
   ];
   for (const statement of alterStatements) {

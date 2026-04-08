@@ -148,29 +148,66 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
 
 interface UnavailFormProps {
   configId: string;
+  initial?: PersonUnavailability;
   onSave: (u: PersonUnavailability) => void;
   onCancel: () => void;
 }
 
-export function UnavailForm({ configId, onSave, onCancel }: UnavailFormProps) {
+export function UnavailForm({ configId, initial, onSave, onCancel }: UnavailFormProps) {
   const { t } = i18n;
   const persons = personsSignal.value;
-  const [personId, setPersonId] = useState(persons[0]?.id ?? '');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [personIds, setPersonIds] = useState<string[]>(() => {
+    if (Array.isArray(initial?.personIds) && initial.personIds.length > 0) {
+      return [...new Set(initial.personIds)];
+    }
+    if (initial?.personId) {
+      return [initial.personId];
+    }
+    return [];
+  });
+  const [startDate, setStartDate] = useState(initial?.startDate ?? '');
+  const [endDate, setEndDate] = useState(initial?.endDate ?? '');
 
   function handleSave() {
-    if (!personId || !startDate || !endDate) return;
-    onSave({ id: nanoid(), personId, configId, startDate, endDate });
+    if (personIds.length === 0 || !startDate || !endDate) return;
+    onSave({
+      id: initial?.id ?? nanoid(),
+      personId: personIds[0],
+      personIds,
+      configId,
+      startDate,
+      endDate,
+    });
+  }
+
+  function togglePerson(personId: string) {
+    setPersonIds((prev) => {
+      if (prev.includes(personId)) {
+        return prev.filter((id) => id !== personId);
+      }
+      return [...prev, personId];
+    });
   }
 
   return (
     <div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('unavailPerson')}</label>
-        <select class={s.input} value={personId} onChange={e => setPersonId((e.target as HTMLSelectElement).value)}>
-          {persons.map(p => <option key={p.id} value={p.id}>{displayName(p)}</option>)}
-        </select>
+        <div class={s.tagList}>
+          {persons.map((person) => {
+            const selected = personIds.includes(person.id);
+            return (
+              <button
+                key={person.id}
+                type="button"
+                class={`${s.badgeSelectable} ${selected ? s.badgeSelectableActive : ''}`}
+                onClick={() => togglePerson(person.id)}
+              >
+                {displayName(person)}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('unavailStart')}</label>

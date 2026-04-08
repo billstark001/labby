@@ -19,6 +19,11 @@ export interface SystemCapabilities {
   };
 }
 
+const CAPABILITIES_CACHE_TTL_MS = 30_000;
+let cachedCapabilities: SystemCapabilities | null = null;
+let cachedAt = 0;
+let inflightCapabilitiesRequest: Promise<SystemCapabilities> | null = null;
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -28,8 +33,26 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function fetchSystemCapabilities(): Promise<SystemCapabilities> {
-  return apiClient.request<SystemCapabilities>('/system/capabilities', { method: 'GET' });
+export async function fetchSystemCapabilities(options: { force?: boolean } = {}): Promise<SystemCapabilities> {
+  const force = options.force === true;
+  const now = Date.now();
+  if (!force && cachedCapabilities && now - cachedAt <= CAPABILITIES_CACHE_TTL_MS) {
+    return cachedCapabilities;
+  }
+  if (!force && inflightCapabilitiesRequest) {
+    return inflightCapabilitiesRequest;
+  }
+  inflightCapabilitiesRequest = apiClient
+    .request<SystemCapabilities>('/system/capabilities', { method: 'GET' })
+    .then((result) => {
+      cachedCapabilities = result;
+      cachedAt = Date.now();
+      return result;
+    })
+    .finally(() => {
+      inflightCapabilitiesRequest = null;
+    });
+  return inflightCapabilitiesRequest;
 }
 
 export async function runServerBackup(input: { format?: BackupFormat; target?: BackupTarget; } = {}): Promise<void> {
@@ -37,6 +60,8 @@ export async function runServerBackup(input: { format?: BackupFormat; target?: B
     method: 'POST',
     body: JSON.stringify(input),
   });
+  cachedCapabilities = null;
+  cachedAt = 0;
 }
 
 export async function downloadServerBackup(format: BackupFormat): Promise<void> {
@@ -66,4 +91,6 @@ export async function uploadServerBackup(file: File): Promise<void> {
     },
     body: await file.arrayBuffer(),
   });
+  cachedCapabilities = null;
+  cachedAt = 0;
 }

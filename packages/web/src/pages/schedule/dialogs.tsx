@@ -6,7 +6,7 @@ import {
   personMapSignal,
 } from '@/store/index';
 import { displayName } from '@/i18n';
-import { loadAllSchedules, useDatabase } from '@/db/index';
+import { readScheduleForeignKeys, useDatabase } from '@/db/index';
 import {
   type SchedulePlan,
   type Session,
@@ -96,7 +96,8 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
     });
     const updated: SchedulePlan = { ...current, sessions: newSessions, modifiedAt: Date.now() };
     db.schedules.put(updated).then(async () => {
-      await loadAllSchedules(db);
+      const foreignKeys = await readScheduleForeignKeys(db, [updated.configId]);
+      personsSignal.value = foreignKeys.persons;
       currentScheduleSignal.value = updated;
     });
     onClose();

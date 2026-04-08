@@ -499,6 +499,16 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   // Database CRUD routes
   // ---------------------------------------------------------------------------
 
+  const scheduleForeignKeyQuerySchema = z.object({
+    configIds: z.array(z.string().min(1)).min(1),
+  });
+  const personForeignKeyQuerySchema = z.object({
+    personIds: z.array(z.string().min(1)).min(1),
+  });
+  const keywordForeignKeyQuerySchema = z.object({
+    keywordIds: z.array(z.string().min(1)).min(1),
+  });
+
   app.get("/api/v1/db/persons", async (c) => {
     const { offset, limit } = parsePagination(c.req.query());
     return ok(c, toPage(await store.listPersons(), offset, limit));
@@ -617,6 +627,18 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.get("/api/v1/db/email-tasks", async (c) => {
     const { offset, limit } = parsePagination(c.req.query());
     return ok(c, toPage(await store.listEmailTasks(), offset, limit));
+  });
+  app.post('/api/v1/db/foreign-keys/schedule', async (c) => {
+    const query = scheduleForeignKeyQuerySchema.parse(await c.req.json());
+    return ok(c, await store.listScheduleForeignKeys(query));
+  });
+  app.post('/api/v1/db/foreign-keys/person', async (c) => {
+    const query = personForeignKeyQuerySchema.parse(await c.req.json());
+    return ok(c, await store.listPersonForeignKeys(query));
+  });
+  app.post('/api/v1/db/foreign-keys/keyword', async (c) => {
+    const query = keywordForeignKeyQuerySchema.parse(await c.req.json());
+    return ok(c, await store.listKeywordForeignKeys(query));
   });
   app.get("/api/v1/db/email-tasks/:id", async (c) => ok(c, (await store.getEmailTask(c.req.param("id"))) ?? null));
   app.put("/api/v1/db/email-tasks/:id", async (c) => {

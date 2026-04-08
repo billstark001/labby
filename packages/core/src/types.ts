@@ -163,7 +163,10 @@ export interface ScheduleSessionMutationRecord {
 /** A period when a person is unavailable (cannot present or question). */
 export interface PersonUnavailability {
   id: string;
-  personId: string;
+  /** @deprecated Use personIds for multi-person unavailability. */
+  personId?: string;
+  /** One or many persons covered by this unavailable range. */
+  personIds?: string[];
   configId: string;
   startDate: string; // ISO date
   endDate: string;   // ISO date (inclusive)

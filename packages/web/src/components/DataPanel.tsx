@@ -155,7 +155,7 @@ export function DataPanel() {
     setLoadingCapabilities(true);
     setCapabilitiesError(null);
     try {
-      setCapabilities(await fetchSystemCapabilities());
+      setCapabilities(await fetchSystemCapabilities({ force: true }));
     } catch (error) {
       setCapabilitiesError(String(error));
     } finally {

@@ -265,21 +265,13 @@ Result:
 
 Latest rollout for Cloud Scheduler mirroring:
 
-- Latest revision: `labby-server-00012-ngd`
-- Image: `asia-northeast1-docker.pkg.dev/labby-scslab/labby/labby-server:20260407-201122-amd64`
 - Scheduler mode: `cloud`
 
 Verified after rollout:
 
 1. `/health` returns `{"ok":true,...}` on service URL.
-2. Mirrored jobs are enabled in Cloud Scheduler:
-
-- `labby-auth-maintenance-cleanup` (`17 3 * * *`, `UTC`)
-- `labby-email-task-nnk1hutze6v-mi5egx68f` (`0 18 * * 5`, `Asia/Tokyo`)
-
-3. Cloud Scheduler callback URI is unified to:
-
-- `https://labby-server-476185329711.asia-northeast1.run.app/internal/scheduler/dispatch`
+2. Mirrored jobs are enabled in Cloud Scheduler.
+3. Cloud Scheduler callback URI is unified.
 
 ## Required Running Services and Rough Cost Estimate
 

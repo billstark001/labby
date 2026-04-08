@@ -4,6 +4,8 @@ import { nanoid } from 'nanoid';
 import { Pencil } from 'lucide-preact';
 import {
   personsSignal,
+  keywordsSignal,
+  keywordVectorsSignal,
   configsSignal,
   constraintsSignal,
   schedulesSignal,
@@ -16,12 +18,8 @@ import {
 import { displayName } from '@/i18n';
 import {
   loadAllConfigs,
-  loadAllConstraints,
   loadAllEmailTasks,
-  loadAllPersons,
-  loadAllSchedules,
-  loadAllSimilarities,
-  loadAllUnavailabilities,
+  readScheduleForeignKeys,
   useDatabase,
 } from '@/db/index';
 import { computeScheduleMetrics, explainScheduleMetrics, mutatePresentations, mutateSessions } from '@labby/core';
@@ -80,6 +78,7 @@ export function SchedulePage() {
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
   const [changeDate, setChangeDate] = useState('');
   const [showUnavailForm, setShowUnavailForm] = useState(false);
+  const [editingUnavail, setEditingUnavail] = useState<PersonUnavailability | null>(null);
   const [editingNotes, setEditingNotes] = useState<SchedulePlan | null>(null);
   const [manualEditTarget, setManualEditTarget] = useState<{
     mode: 'presenter' | 'questioner';
@@ -125,12 +124,7 @@ export function SchedulePage() {
     let cancelled = false;
     const run = async () => {
       await Promise.all([
-        loadAllPersons(db),
         loadAllConfigs(db),
-        loadAllConstraints(db),
-        loadAllSchedules(db),
-        loadAllSimilarities(db),
-        loadAllUnavailabilities(db),
         loadAllEmailTasks(db),
       ]);
       if (cancelled) return;
@@ -142,6 +136,30 @@ export function SchedulePage() {
     void run();
     return () => { cancelled = true; };
   }, [db]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedConfigId) {
+      personsSignal.value = [];
+      keywordsSignal.value = [];
+      keywordVectorsSignal.value = [];
+      constraintsSignal.value = [];
+      schedulesSignal.value = [];
+      unavailabilitiesSignal.value = [];
+      return;
+    }
+    void (async () => {
+      const foreignKeys = await readScheduleForeignKeys(db, [selectedConfigId]);
+      if (cancelled) return;
+      personsSignal.value = foreignKeys.persons;
+      keywordsSignal.value = foreignKeys.keywords;
+      keywordVectorsSignal.value = foreignKeys.keywordVectors;
+      constraintsSignal.value = foreignKeys.constraints;
+      schedulesSignal.value = foreignKeys.schedules;
+      unavailabilitiesSignal.value = foreignKeys.unavailabilities;
+    })();
+    return () => { cancelled = true; };
+  }, [db, selectedConfigId]);
 
   useEffect(() => {
     if (selectedConfigId && !configs.some(item => item.id === selectedConfigId)) {
@@ -217,6 +235,16 @@ export function SchedulePage() {
     if (local) openMetricsDialog(title, local.metrics, local.explanations);
   }
 
+  async function refreshScheduleScopedData(configId: string) {
+    const foreignKeys = await readScheduleForeignKeys(db, [configId]);
+    personsSignal.value = foreignKeys.persons;
+    keywordsSignal.value = foreignKeys.keywords;
+    keywordVectorsSignal.value = foreignKeys.keywordVectors;
+    constraintsSignal.value = foreignKeys.constraints;
+    schedulesSignal.value = foreignKeys.schedules;
+    unavailabilitiesSignal.value = foreignKeys.unavailabilities;
+  }
+
   async function handleSolveResult(result: unknown) {
     const normalized = normalizeSolveResponse(result);
     const planWithMeta: SchedulePlan = {
@@ -228,7 +256,7 @@ export function SchedulePage() {
       ),
     };
     await db.schedules.put({ ...planWithMeta, modifiedAt: Date.now() });
-    await loadAllSchedules(db);
+    await refreshScheduleScopedData(planWithMeta.configId);
     currentScheduleSignal.value = { ...planWithMeta, modifiedAt: Date.now() };
     if (normalized.metrics && normalized.explanations) {
       openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
@@ -356,7 +384,7 @@ export function SchedulePage() {
   async function handleDeleteHistory(plan: SchedulePlan) {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       await db.schedules.delete(plan.id);
-      await loadAllSchedules(db);
+      await refreshScheduleScopedData(plan.configId);
       const next = schedulesSignal.value;
       if (currentScheduleSignal.value?.id === plan.id) {
         currentScheduleSignal.value = next.length > 0 ? next.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)) : null;
@@ -369,7 +397,7 @@ export function SchedulePage() {
     const ids = [...selectedHistoryIds];
     confirmDialog(t('confirmDelete'), t('deleteSelectedHistories', String(ids.length)), async () => {
       await Promise.all(ids.map(id => db.schedules.delete(id)));
-      await loadAllSchedules(db);
+      await refreshScheduleScopedData(selectedConfigId);
       const nextCurrent = currentScheduleSignal.value;
       if (nextCurrent && !schedulesSignal.value.some(item => item.id === nextCurrent.id)) {
         currentScheduleSignal.value = schedulesSignal.value
@@ -391,7 +419,7 @@ export function SchedulePage() {
   async function handleSaveHistoryNotes(plan: SchedulePlan, notes: string) {
     const updated = { ...plan, notes, modifiedAt: Date.now() };
     await db.schedules.put(updated);
-    await loadAllSchedules(db);
+    await refreshScheduleScopedData(plan.configId);
     if (currentScheduleSignal.value?.id === plan.id) currentScheduleSignal.value = updated;
   }
 
@@ -401,15 +429,16 @@ export function SchedulePage() {
 
   async function handleSaveUnavail(u: PersonUnavailability) {
     await db.unavailabilities.put(u);
-    await loadAllUnavailabilities(db);
+    await refreshScheduleScopedData(u.configId);
     setShowUnavailForm(false);
+    setEditingUnavail(null);
   }
 
   async function handleDeleteUnavail(id: string) {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       try {
         await db.unavailabilities.delete(id);
-        await loadAllUnavailabilities(db);
+        await refreshScheduleScopedData(selectedConfigId);
       } catch (err) {
         toast.error(`${t('computeError')}: ${String(err)}`);
       }
@@ -520,7 +549,7 @@ export function SchedulePage() {
     };
 
     await db.schedules.put(mutated);
-    await loadAllSchedules(db);
+    await refreshScheduleScopedData(mutated.configId);
     currentScheduleSignal.value = mutated;
     setSessionMutationDialog(null);
     setInsertedSessionDate('');
@@ -580,7 +609,7 @@ export function SchedulePage() {
     };
 
     await db.schedules.put(mutated);
-    await loadAllSchedules(db);
+    await refreshScheduleScopedData(mutated.configId);
     currentScheduleSignal.value = mutated;
     setPresentationMutationDialog(null);
     maybeShowLocalMetrics(mutated, t('metricsAfterMutationTitle'));
@@ -616,10 +645,21 @@ export function SchedulePage() {
             setSelectedConfigId('');
           });
         }}
-        onAddUnavail={() => setShowUnavailForm(true)}
+          onAddUnavail={() => {
+            setEditingUnavail(null);
+            setShowUnavailForm(true);
+          }}
+          onEditUnavail={(u) => {
+            setEditingUnavail(u);
+            setShowUnavailForm(true);
+          }}
         onDeleteUnavail={handleDeleteUnavail}
         showUnavailForm={showUnavailForm}
-        onCloseUnavailForm={() => setShowUnavailForm(false)}
+          editingUnavail={editingUnavail}
+          onCloseUnavailForm={() => {
+            setShowUnavailForm(false);
+            setEditingUnavail(null);
+          }}
         onSaveUnavail={handleSaveUnavail}
         showConfigForm={showConfigForm}
         onCloseConfigForm={() => { setShowConfigForm(false); setEditingConfig(null); }}

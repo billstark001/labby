@@ -107,6 +107,28 @@ export function createDummyDB(): LabbyDB {
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
     emailTasks: emailTasksStore,
+    foreignKeys: {
+      readForSchedule: async (_query) => ({
+        persons: [],
+        keywords: [],
+        keywordVectors: [],
+        configs: [],
+        constraints: [],
+        schedules: [],
+        unavailabilities: [],
+      }),
+      readForPerson: async (_query) => ({
+        keywords: [],
+        constraints: [],
+        schedules: [],
+        unavailabilities: [],
+      }),
+      readForKeyword: async (_query) => ({
+        persons: [],
+        keywords: [],
+        keywordVectors: [],
+      }),
+    },
   };
 
   return db;

@@ -42,6 +42,10 @@ export function buildUnavailMap(
   const map = new Map<string, Set<string>>();
   for (const u of unavailabilities) {
     if (u.configId !== configId) continue;
+    const unavailablePersonIds = Array.isArray(u.personIds) && u.personIds.length > 0
+      ? u.personIds
+      : (u.personId ? [u.personId] : []);
+    if (unavailablePersonIds.length === 0) continue;
     const [sy, sm, sd] = u.startDate.split('-').map(Number);
     const [ey, em, ed] = u.endDate.split('-').map(Number);
     const start = Date.UTC(sy, sm - 1, sd);
@@ -50,7 +54,9 @@ export function buildUnavailMap(
       const d = new Date(t);
       const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
       if (!map.has(key)) map.set(key, new Set());
-      map.get(key)!.add(u.personId);
+      for (const personId of unavailablePersonIds) {
+        map.get(key)!.add(personId);
+      }
     }
   }
   return map;

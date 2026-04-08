@@ -7,18 +7,24 @@ import type {
   DatabaseDump,
   EmailTask,
   EmailTaskStore,
+  KeywordForeignKeyQuery,
+  KeywordForeignKeyBundle,
   Keyword,
   KeywordStore,
   KeywordVector,
   KeywordVectorStore,
   LabbyDB,
   Person,
+  PersonForeignKeyQuery,
   PersonStore,
   PersonUnavailability,
   PersonUnavailabilityStore,
   ScheduleConfig,
   ScheduleConfigStore,
   ScheduleConstraint,
+  ScheduleForeignKeyQuery,
+  ScheduleForeignKeyBundle,
+  PersonForeignKeyBundle,
   ScheduleConstraintStore,
   SchedulePlan,
   SchedulePlanStore,
@@ -146,6 +152,25 @@ async function listStore<T>(idb: IDBPDatabase, storeName: string, query: ListQue
   return { items, total, offset, limit };
 }
 
+async function listAllStore<T>(idb: IDBPDatabase, storeName: string): Promise<T[]> {
+  const tx = idb.transaction(storeName, 'readonly');
+  const store = tx.objectStore(storeName);
+  const values = await store.getAll();
+  await tx.done;
+  return values as T[];
+}
+
+function uniqueIds(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function hasAnyOverlap(left: readonly string[], right: Set<string>): boolean {
+  for (const item of left) {
+    if (right.has(item)) return true;
+  }
+  return false;
+}
+
 async function listStoreSorted<T>(
   idb: IDBPDatabase,
   storeName: string,
@@ -245,7 +270,16 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
   const unavailabilitiesStore: PersonUnavailabilityStore = {
     get: (id: string) => idb.get('unavailabilities', id),
     list: (query: ListQuery) => listStore<PersonUnavailability>(idb, 'unavailabilities', query),
-    put: (value: PersonUnavailability) => idb.put('unavailabilities', value).then(() => void 0),
+    put: (value: PersonUnavailability) => {
+      const normalizedPersonIds = Array.isArray(value.personIds) && value.personIds.length > 0
+        ? value.personIds
+        : (value.personId ? [value.personId] : []);
+      return idb.put('unavailabilities', {
+        ...value,
+        personId: normalizedPersonIds[0],
+        personIds: normalizedPersonIds,
+      }).then(() => void 0);
+    },
     delete: (id: string) => idb.delete('unavailabilities', id),
     clear: () => idb.clear('unavailabilities'),
   };
@@ -258,6 +292,165 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
     clear: () => idb.clear('email_tasks'),
   };
 
+  const foreignKeysStore = {
+    readForSchedule: async (query: ScheduleForeignKeyQuery): Promise<ScheduleForeignKeyBundle> => {
+      const configIds = uniqueIds(query.configIds ?? []);
+      if (configIds.length === 0) {
+        return {
+          persons: [],
+          keywords: [],
+          keywordVectors: [],
+          configs: [],
+          constraints: [],
+          schedules: [],
+          unavailabilities: [],
+        };
+      }
+      const configSet = new Set(configIds);
+      const [allConfigs, allConstraints, allSchedules, allUnavailabilities, allPersons, allKeywords, allKeywordVectorRecords] = await Promise.all([
+        listAllStore<ScheduleConfig>(idb, 'configs'),
+        listAllStore<ScheduleConstraint>(idb, 'schedule_constraints'),
+        listAllStore<SchedulePlan>(idb, 'schedules'),
+        listAllStore<PersonUnavailability>(idb, 'unavailabilities'),
+        listAllStore<Person>(idb, 'persons'),
+        listAllStore<Keyword>(idb, 'keywords'),
+        listAllStore<KeywordVectorRecord>(idb, 'keyword_vectors'),
+      ]);
+
+      const configs = allConfigs.filter((item) => configSet.has(item.id));
+      const schedules = allSchedules.filter((item) => configSet.has(item.configId));
+      const constraints = allConstraints.filter((item) => !item.configId || configSet.has(item.configId));
+      const unavailabilities = allUnavailabilities.filter((item) => configSet.has(item.configId));
+
+      const personIdSet = new Set<string>();
+      for (const schedule of schedules) {
+        for (const session of schedule.sessions) {
+          for (const presentation of session.presentations) {
+            personIdSet.add(presentation.presenterId);
+            for (const questionerId of presentation.questionerIds) {
+              personIdSet.add(questionerId);
+            }
+          }
+        }
+      }
+      for (const unavailability of unavailabilities) {
+        const ids = Array.isArray(unavailability.personIds) && unavailability.personIds.length > 0
+          ? unavailability.personIds
+          : (unavailability.personId ? [unavailability.personId] : []);
+        for (const id of ids) personIdSet.add(id);
+      }
+      for (const constraint of constraints) {
+        const ids = Array.isArray((constraint as { personIds?: unknown }).personIds)
+          ? ((constraint as { personIds: string[] }).personIds)
+          : [];
+        for (const id of ids) personIdSet.add(id);
+      }
+
+      const persons = allPersons.filter((item) => personIdSet.has(item.id));
+      const keywordIdSet = new Set<string>();
+      for (const person of persons) {
+        for (const keywordId of person.keywordIds) {
+          keywordIdSet.add(keywordId);
+        }
+      }
+      const keywords = allKeywords.filter((item) => keywordIdSet.has(item.id));
+      const keywordVectors = allKeywordVectorRecords
+        .filter((item) => keywordIdSet.has(item.keywordId))
+        .map(fromKeywordVectorRecord);
+
+      return {
+        persons,
+        keywords,
+        keywordVectors,
+        configs,
+        constraints,
+        schedules,
+        unavailabilities,
+      };
+    },
+    readForPerson: async (query: PersonForeignKeyQuery): Promise<PersonForeignKeyBundle> => {
+      const personIds = uniqueIds(query.personIds ?? []);
+      if (personIds.length === 0) {
+        return {
+          keywords: [],
+          constraints: [],
+          schedules: [],
+          unavailabilities: [],
+        };
+      }
+      const personSet = new Set(personIds);
+      const [allPersons, allKeywords, allConstraints, allSchedules, allUnavailabilities] = await Promise.all([
+        listAllStore<Person>(idb, 'persons'),
+        listAllStore<Keyword>(idb, 'keywords'),
+        listAllStore<ScheduleConstraint>(idb, 'schedule_constraints'),
+        listAllStore<SchedulePlan>(idb, 'schedules'),
+        listAllStore<PersonUnavailability>(idb, 'unavailabilities'),
+      ]);
+
+      const selectedPersons = allPersons.filter((item) => personSet.has(item.id));
+      const keywordIdSet = new Set<string>();
+      for (const person of selectedPersons) {
+        for (const keywordId of person.keywordIds) keywordIdSet.add(keywordId);
+      }
+      const keywords = allKeywords.filter((item) => keywordIdSet.has(item.id));
+
+      const constraints = allConstraints.filter((item) => {
+        const ids = Array.isArray((item as { personIds?: unknown }).personIds)
+          ? ((item as { personIds: string[] }).personIds)
+          : [];
+        return hasAnyOverlap(ids, personSet);
+      });
+      const schedules = allSchedules.filter((item) => {
+        for (const session of item.sessions) {
+          for (const presentation of session.presentations) {
+            if (personSet.has(presentation.presenterId)) return true;
+            if (hasAnyOverlap(presentation.questionerIds, personSet)) return true;
+          }
+        }
+        return false;
+      });
+      const unavailabilities = allUnavailabilities.filter((item) => {
+        const ids = Array.isArray(item.personIds) && item.personIds.length > 0
+          ? item.personIds
+          : (item.personId ? [item.personId] : []);
+        return hasAnyOverlap(ids, personSet);
+      });
+
+      return {
+        keywords,
+        constraints,
+        schedules,
+        unavailabilities,
+      };
+    },
+    readForKeyword: async (query: KeywordForeignKeyQuery): Promise<KeywordForeignKeyBundle> => {
+      const keywordIds = uniqueIds(query.keywordIds ?? []);
+      if (keywordIds.length === 0) {
+        return {
+          persons: [],
+          keywords: [],
+          keywordVectors: [],
+        };
+      }
+      const keywordSet = new Set(keywordIds);
+      const [allPersons, allKeywords, allKeywordVectorRecords] = await Promise.all([
+        listAllStore<Person>(idb, 'persons'),
+        listAllStore<Keyword>(idb, 'keywords'),
+        listAllStore<KeywordVectorRecord>(idb, 'keyword_vectors'),
+      ]);
+      const persons = allPersons.filter((item) => hasAnyOverlap(item.keywordIds, keywordSet));
+      const keywords = allKeywords.filter((item) => keywordSet.has(item.id));
+      const keywordVectors = allKeywordVectorRecords
+        .filter((item) => keywordSet.has(item.keywordId))
+        .map(fromKeywordVectorRecord);
+      return {
+        persons,
+        keywords,
+        keywordVectors,
+      };
+    },
+  };
+
   const db: LabbyDB = {
     persons: personsStore,
     keywords: keywordsStore,
@@ -267,6 +460,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
     emailTasks: emailTasksStore,
+    foreignKeys: foreignKeysStore,
   };
 
   return db;

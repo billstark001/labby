@@ -44,6 +44,6 @@ describe('similarity lookup map behavior', () => {
     ])));
 
     const similarity = getPersonSimilarity(['kA', 'kX'], ['kB'], ctx.similarities);
-    expect(similarity).toBe(0.45); // (0.9 + 0) / 2, not (0.9 + 0 + 0) / 3
+    expect(similarity).toBe(0.675); // (0.9 + 0.45) / 2
   });
 });

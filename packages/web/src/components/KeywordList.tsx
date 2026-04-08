@@ -1,9 +1,9 @@
 /** Keyword management panel. */
 import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import { personsSignal } from '../store/index';
+import { personsSignal, keywordsSignal } from '../store/index';
 import { displayName } from '@/i18n';
-import { listKeywordsPage, loadAllKeywords, loadAllPersons, useDatabase } from '../db/index';
+import { buildKeywordReferenceCount, listKeywordsPage, readKeywordForeignKeys, useDatabase } from '../db/index';
 import * as s from '../styles/components.css';
 import {
   Button,
@@ -91,18 +91,32 @@ function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
 export function KeywordList() {
   const db = useDatabase();
   const { t } = i18n;
-  const persons = personsSignal.value;
   const [pagedKeywords, setPagedKeywords] = useState<Keyword[]>([]);
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalItems, setTotalItems] = useState(0);
+  const [keywordReferenceCount, setKeywordReferenceCount] = useState<Map<string, number>>(new Map());
+
+  async function refreshForeignKeyContext(keywordIds: string[]) {
+    if (keywordIds.length === 0) {
+      personsSignal.value = [];
+      keywordsSignal.value = [];
+      setKeywordReferenceCount(new Map());
+      return;
+    }
+    const bundle = await readKeywordForeignKeys(db, keywordIds);
+    personsSignal.value = bundle.persons;
+    keywordsSignal.value = bundle.keywords;
+    setKeywordReferenceCount(buildKeywordReferenceCount(bundle));
+  }
 
   async function refreshKeywordsPage(targetPage = page, targetPageSize = pageSize) {
     const safePage = Math.max(1, targetPage);
     const offset = (safePage - 1) * targetPageSize;
     const result = await listKeywordsPage(db, offset, targetPageSize);
     setPagedKeywords(result.items);
+    await refreshForeignKeyContext(result.items.map((item) => item.id));
     setTotalItems(result.total);
 
     const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
@@ -116,22 +130,16 @@ export function KeywordList() {
   }
 
   useEffect(() => {
-    void loadAllPersons(db);
-    void loadAllKeywords(db);
-  }, [db]);
-
-  useEffect(() => {
     void refreshKeywordsPage(page, pageSize);
   }, [db, page, pageSize]);
 
   /** Check if a keyword is referenced by any person */
   function isKeywordReferenced(id: string): boolean {
-    return persons.some(p => p.keywordIds.includes(id));
+    return (keywordReferenceCount.get(id) ?? 0) > 0;
   }
 
   async function handleSave(k: Keyword) {
     await db.keywords.put(k);
-    await loadAllKeywords(db);
     await refreshKeywordsPage();
     setEditing(null);
   }
@@ -139,7 +147,6 @@ export function KeywordList() {
   async function handleDisableToggle(k: Keyword) {
     const updated: Keyword = { ...k, disabled: !k.disabled };
     await db.keywords.put(updated);
-    await loadAllKeywords(db);
     await refreshKeywordsPage();
   }
 
@@ -150,7 +157,6 @@ export function KeywordList() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.keywords.delete(k.id);
-      await loadAllKeywords(db);
       await refreshKeywordsPage();
     });
   }

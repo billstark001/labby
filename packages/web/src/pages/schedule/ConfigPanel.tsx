@@ -23,8 +23,10 @@ interface ConfigPanelProps {
   onEditConfig: (config: ScheduleConfig) => void;
   onDeleteConfig: (config: ScheduleConfig) => void;
   onAddUnavail: () => void;
+  onEditUnavail: (u: PersonUnavailability) => void;
   onDeleteUnavail: (id: string) => void;
   showUnavailForm: boolean;
+  editingUnavail: PersonUnavailability | null;
   onCloseUnavailForm: () => void;
   onSaveUnavail: (u: PersonUnavailability) => void;
   showConfigForm: boolean;
@@ -44,8 +46,10 @@ export function ConfigPanel({
   onEditConfig,
   onDeleteConfig,
   onAddUnavail,
+  onEditUnavail,
   onDeleteUnavail,
   showUnavailForm,
+  editingUnavail,
   onCloseUnavailForm,
   onSaveUnavail,
   showConfigForm,
@@ -54,6 +58,19 @@ export function ConfigPanel({
   editingConfig,
 }: ConfigPanelProps) {
   const { t } = i18n;
+
+  function resolveUnavailabilityNames(unavail: PersonUnavailability): string {
+    const personIds = Array.isArray(unavail.personIds) && unavail.personIds.length > 0
+      ? unavail.personIds
+      : (unavail.personId ? [unavail.personId] : []);
+    if (personIds.length === 0) return '—';
+    return personIds
+      .map((personId) => {
+        const person = personMap.get(personId);
+        return person ? displayName(person) : fallbackEntityId(personId);
+      })
+      .join(', ');
+  }
 
   return (
     <>
@@ -122,22 +139,20 @@ export function ConfigPanel({
               ]}
               getKey={unavail => unavail.id}
               renderDesktopRow={unavail => {
-                const person = personMap.get(unavail.personId);
                 return (
                   <>
-                    <td class={s.td}>{person ? displayName(person) : fallbackEntityId(unavail.personId)}</td>
+                    <td class={s.td}>{resolveUnavailabilityNames(unavail)}</td>
                     <td class={s.td}>{unavail.startDate}</td>
                     <td class={s.td}>{unavail.endDate}</td>
                   </>
                 );
               }}
               renderMobileCard={unavail => {
-                const person = personMap.get(unavail.personId);
                 return (
                   <>
                     <div class={dataStyles.mobileHeader}>
                       <div class={dataStyles.mobileTitle}>
-                        {person ? displayName(person) : fallbackEntityId(unavail.personId)}
+                        {resolveUnavailabilityNames(unavail)}
                       </div>
                     </div>
                     <div class={dataStyles.mobileFields}>
@@ -152,7 +167,10 @@ export function ConfigPanel({
                 );
               }}
               renderActions={unavail => (
-                <Button variant="danger" onClick={() => onDeleteUnavail(unavail.id)}>{t('delete')}</Button>
+                <>
+                  <Button variant="ghost" onClick={() => onEditUnavail(unavail)}>{t('edit')}</Button>
+                  <Button variant="danger" onClick={() => onDeleteUnavail(unavail.id)}>{t('delete')}</Button>
+                </>
               )}
             />
           )}
@@ -160,9 +178,15 @@ export function ConfigPanel({
       )}
 
       {showUnavailForm && selectedConfigId && (
-        <Dialog open={true} onClose={onCloseUnavailForm} closeOnOverlayClick={false} title={t('addUnavailability')}>
+        <Dialog
+          open={true}
+          onClose={onCloseUnavailForm}
+          closeOnOverlayClick={false}
+          title={editingUnavail ? t('edit') : t('addUnavailability')}
+        >
           <UnavailForm
             configId={selectedConfigId}
+            initial={editingUnavail ?? undefined}
             onSave={onSaveUnavail}
             onCancel={onCloseUnavailForm}
           />

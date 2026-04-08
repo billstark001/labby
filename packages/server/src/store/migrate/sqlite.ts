@@ -4,6 +4,7 @@ const SQLITE_COMMON_SQL = `
   CREATE TABLE IF NOT EXISTS persons (
     id TEXT PRIMARY KEY,
     updated_at BIGINT NOT NULL DEFAULT 0,
+    keyword_ids TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS persons_updated_at_idx ON persons (updated_at DESC, id DESC);
@@ -26,6 +27,7 @@ const SQLITE_COMMON_SQL = `
     id TEXT PRIMARY KEY,
     config_id TEXT NOT NULL,
     type TEXT NOT NULL,
+    person_ids TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL
@@ -38,6 +40,7 @@ const SQLITE_COMMON_SQL = `
     config_id TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL DEFAULT 0,
+    person_ids TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS schedules_created_at_idx ON schedules (created_at DESC, id DESC);
@@ -46,6 +49,7 @@ const SQLITE_COMMON_SQL = `
   CREATE TABLE IF NOT EXISTS unavailabilities (
     id TEXT PRIMARY KEY,
     person_id TEXT NOT NULL,
+    person_ids TEXT NOT NULL DEFAULT '[]',
     config_id TEXT NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
@@ -110,9 +114,13 @@ export function migrateSqlite(rawDb: Database.Database): { sqliteVecEnabled: boo
 
   // Backward-compatible column additions for existing databases.
   try { rawDb.exec('ALTER TABLE persons ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+  try { rawDb.exec("ALTER TABLE persons ADD COLUMN keyword_ids TEXT NOT NULL DEFAULT '[]';"); } catch {}
   try { rawDb.exec('ALTER TABLE keywords ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
   try { rawDb.exec('ALTER TABLE configs ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+  try { rawDb.exec("ALTER TABLE constraints ADD COLUMN person_ids TEXT NOT NULL DEFAULT '[]';"); } catch {}
   try { rawDb.exec('ALTER TABLE schedules ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
+  try { rawDb.exec("ALTER TABLE schedules ADD COLUMN person_ids TEXT NOT NULL DEFAULT '[]';"); } catch {}
+  try { rawDb.exec("ALTER TABLE unavailabilities ADD COLUMN person_ids TEXT NOT NULL DEFAULT '[]';"); } catch {}
   try { rawDb.exec('ALTER TABLE email_tasks ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;'); } catch {}
 
   rawDb.exec(`

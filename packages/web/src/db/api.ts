@@ -1,6 +1,8 @@
 import type {
   EmailTask,
   EmailTaskStore,
+  KeywordForeignKeyQuery,
+  KeywordForeignKeyBundle,
   Keyword,
   KeywordStore,
   KeywordVector,
@@ -13,6 +15,10 @@ import type {
   ScheduleConfig,
   ScheduleConfigStore,
   ScheduleConstraint,
+  ScheduleForeignKeyQuery,
+  ScheduleForeignKeyBundle,
+  PersonForeignKeyQuery,
+  PersonForeignKeyBundle,
   ScheduleConstraintStore,
   SchedulePlan,
   SchedulePlanStore,
@@ -71,6 +77,35 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   const unavailabilities = createEntityStore<PersonUnavailability>(client, '/db/unavailabilities') satisfies PersonUnavailabilityStore;
   const emailTasks = createEntityStore<EmailTask>(client, '/db/email-tasks') satisfies EmailTaskStore;
 
+  const normalizedUnavailabilities: PersonUnavailabilityStore = {
+    ...unavailabilities,
+    put: (value: PersonUnavailability) => {
+      const normalizedPersonIds = Array.isArray(value.personIds) && value.personIds.length > 0
+        ? value.personIds
+        : (value.personId ? [value.personId] : []);
+      return unavailabilities.put({
+        ...value,
+        personId: normalizedPersonIds[0],
+        personIds: normalizedPersonIds,
+      });
+    },
+  };
+
+  const foreignKeys = {
+    readForSchedule: (query: ScheduleForeignKeyQuery) => client.request<ScheduleForeignKeyBundle>('/db/foreign-keys/schedule', {
+      method: 'POST',
+      body: JSON.stringify(query),
+    }),
+    readForPerson: (query: PersonForeignKeyQuery) => client.request<PersonForeignKeyBundle>('/db/foreign-keys/person', {
+      method: 'POST',
+      body: JSON.stringify(query),
+    }),
+    readForKeyword: (query: KeywordForeignKeyQuery) => client.request<KeywordForeignKeyBundle>('/db/foreign-keys/keyword', {
+      method: 'POST',
+      body: JSON.stringify(query),
+    }),
+  };
+
   const keywordVectors: KeywordVectorStore = {
     get: async (keywordId: string) => {
       const value = await client.request<KeywordVector | null>(`/db/keyword-vectors/${keywordId}`, { method: 'GET' });
@@ -124,8 +159,9 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     configs,
     constraints,
     schedules,
-    unavailabilities,
+    unavailabilities: normalizedUnavailabilities,
     emailTasks,
+    foreignKeys,
   };
 }
 

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import type { Person, Keyword } from '@labby/core';
 
-import { personsSignal, keywordsSignal, keywordMapSignal, schedulesSignal } from '@/store';
+import { personsSignal, keywordsSignal, keywordMapSignal } from '@/store';
 import { fallbackEntityId, displayName, i18n } from '@/i18n';
-import { listPersonsPage, loadAllKeywords, loadAllSchedules, useDatabase } from '@/db';
+import { buildPersonReferenceCount, listPersonsPage, readPersonForeignKeys, useDatabase } from '@/db';
 import * as s from '@/styles/components.css';
 import {
   Button,
@@ -157,17 +157,29 @@ export function PersonsTab() {
   const db = useDatabase();
   const { t } = i18n;
   const persons = personsSignal.value;
-  const schedules = schedulesSignal.value;
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [totalItems, setTotalItems] = useState(0);
+  const [personReferenceCount, setPersonReferenceCount] = useState<Map<string, number>>(new Map());
+
+  async function refreshForeignKeyContext(personIds: string[]) {
+    if (personIds.length === 0) {
+      keywordsSignal.value = [];
+      setPersonReferenceCount(new Map());
+      return;
+    }
+    const bundle = await readPersonForeignKeys(db, personIds);
+    keywordsSignal.value = bundle.keywords;
+    setPersonReferenceCount(buildPersonReferenceCount(bundle));
+  }
 
   async function refreshPersonsPage(targetPage = page, targetPageSize = pageSize) {
     const safePage = Math.max(1, targetPage);
     const offset = (safePage - 1) * targetPageSize;
     const result = await listPersonsPage(db, offset, targetPageSize);
     personsSignal.value = result.items;
+    await refreshForeignKeyContext(result.items.map((item) => item.id));
     setTotalItems(result.total);
 
     const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
@@ -181,28 +193,16 @@ export function PersonsTab() {
   }
 
   useEffect(() => {
-    void loadAllKeywords(db);
-    void loadAllSchedules(db);
-  }, [db]);
-
-  useEffect(() => {
     void refreshPersonsPage(page, pageSize);
   }, [db, page, pageSize]);
 
   function isPersonReferenced(id: string): boolean {
-    return schedules.some((plan) =>
-      plan.sessions.some((sess) =>
-        sess.presentations.some((presentation) =>
-          presentation.presenterId === id || presentation.questionerIds.includes(id),
-        ),
-      ),
-    );
+    return (personReferenceCount.get(id) ?? 0) > 0;
   }
 
   async function handleSave(p: Person, newKeywords: Keyword[]) {
     await Promise.all(newKeywords.map((keyword) => db.keywords.put(keyword)));
     await db.persons.put(p);
-    await loadAllKeywords(db);
     await refreshPersonsPage();
     setEditing(null);
   }
