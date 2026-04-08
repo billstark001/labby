@@ -66,6 +66,16 @@ function ensureBackupFormat(value: string | undefined): BackupFormat {
   return value === 'msgpack' ? 'msgpack' : 'sqlite';
 }
 
+function resolveBackupFormatForDialect(
+  requested: BackupFormat,
+  dialect: ReturnType<SqliteStore['getDialect']>,
+): BackupFormat {
+  if (dialect === 'postgres') {
+    return 'msgpack';
+  }
+  return requested;
+}
+
 function ensureBackupTarget(value: string | undefined): BackupTarget | null {
   if (value === 'email' || value === 'google-drive' || value === 'onedrive') {
     return value;
@@ -231,11 +241,14 @@ export class BackupService {
       ? loadGoogleOAuthClientFromFile(this.config.googleOAuthJsonPath)
       : null;
 
+    const dialect = this.options.store.getDialect();
+    const configuredFormat = resolveBackupFormatForDialect(this.config.format, dialect);
+
     return {
       scheduleEnabled: Boolean(this.config.cronExpression && this.config.target),
       scheduleConfigured: Boolean(this.config.cronExpression),
       configuredTarget: this.config.target,
-      configuredFormat: this.config.format,
+      configuredFormat,
       targets: {
         email: this.options.mailer !== null,
         'google-drive': Boolean(
@@ -249,12 +262,13 @@ export class BackupService {
           && this.config.onedriveRefreshToken,
         ),
       },
-      formats: ['sqlite', 'msgpack'],
+      formats: dialect === 'postgres' ? ['msgpack'] : ['sqlite', 'msgpack'],
     };
   }
 
   async createDownloadArtifact(format: BackupFormat = this.config.format): Promise<BackupArtifact> {
-    return format === 'msgpack'
+    const effectiveFormat = resolveBackupFormatForDialect(format, this.options.store.getDialect());
+    return effectiveFormat === 'msgpack'
       ? buildMsgpackArtifact(this.config.filenamePrefix, await this.options.store.exportBackupSnapshot())
       : buildSqliteArtifact(this.config.filenamePrefix, this.options.store);
   }
@@ -285,7 +299,10 @@ export class BackupService {
   }
 
   async dispatchBackup(input?: { format?: BackupFormat; target?: BackupTarget; }): Promise<void> {
-    const format = input?.format ?? this.config.format;
+    const format = resolveBackupFormatForDialect(
+      input?.format ?? this.config.format,
+      this.options.store.getDialect(),
+    );
     const target = input?.target ?? this.config.target;
     if (!target) {
       throw new Error('No backup target is configured');
@@ -344,10 +361,13 @@ export function createBackupServiceFromEnv(options: CreateBackupServiceOptions):
     console.warn('[backup] Unsupported BACKUP_TARGET. Expected email, google-drive, or onedrive.');
   }
 
+  const configuredFormat = ensureBackupFormat(process.env.BACKUP_FORMAT?.trim());
+  const format = resolveBackupFormatForDialect(configuredFormat, options.store.getDialect());
+
   return new BackupService(options, {
     cronExpression: process.env.BACKUP_CRON?.trim() || undefined,
     timezone: process.env.BACKUP_TIMEZONE?.trim() || 'UTC',
-    format: ensureBackupFormat(process.env.BACKUP_FORMAT?.trim()),
+    format,
     target,
     filenamePrefix: process.env.BACKUP_FILENAME_PREFIX?.trim() || 'labby-backup',
     emailRecipients: splitCsv(process.env.BACKUP_EMAIL_RECIPIENTS || process.env.NOTIFY_RECIPIENTS),

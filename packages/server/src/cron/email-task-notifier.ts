@@ -1,5 +1,14 @@
 import type { EmailTask, ScheduleConfig } from '@labby/core';
-import { buildEmailTemplateScheduleVariables, renderTemplate, renderTemplateToHtml, type ScheduleDateGranularity } from '@labby/core';
+import {
+  buildEmailTemplateScheduleVariables,
+  buildScheduleIcs,
+  buildScheduleTemplateBlocks,
+  renderTemplate,
+  renderTemplateToHtml,
+  type Person,
+  type ScheduleDateGranularity,
+  type SchedulePlan,
+} from '@labby/core';
 
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
@@ -83,6 +92,86 @@ function formatZonedDateTime(runAt: number, locale: string, timeZone: string): s
   }).format(new Date(runAt));
 }
 
+function personDisplayName(person: Person, locale: string): string {
+  return person.names?.[locale] ?? person.names?.en ?? person.name ?? person.id;
+}
+
+type EmailAttachmentType = 'schedule-semester-csv' | 'schedule-semester-ics';
+
+function resolveAttachmentTypes(task: EmailTask): EmailAttachmentType[] {
+  const value = task.metadata?.attachmentTypes;
+  if (!Array.isArray(value)) {
+    return ['schedule-semester-csv', 'schedule-semester-ics'];
+  }
+
+  const types = value
+    .filter((item): item is string => typeof item === 'string')
+    .filter((item): item is EmailAttachmentType => item === 'schedule-semester-csv' || item === 'schedule-semester-ics');
+  return [...new Set(types)];
+}
+
+function icsLabelsForLocale(locale: string): { presenter: string; questioners: string } {
+  if (locale === 'zh-CN') {
+    return { presenter: '主讲', questioners: '提问' };
+  }
+  if (locale === 'ja-JP') {
+    return { presenter: '発表者', questioners: '質問者' };
+  }
+  return { presenter: 'Presenter', questioners: 'Questioners' };
+}
+
+function buildScheduleAttachments(input: {
+  task: EmailTask;
+  config: ScheduleConfig;
+  plan: SchedulePlan;
+  locale: string;
+  persons: Person[];
+}): Array<{ filename: string; content: Buffer; contentType: string }> {
+  const selectedTypes = resolveAttachmentTypes(input.task);
+  if (selectedTypes.length === 0) {
+    return [];
+  }
+
+  const personMap = new Map(input.persons.map((person) => [person.id, person]));
+  const displayName = (person: Person) => personDisplayName(person, input.locale);
+  const localeTag = input.locale.replace(/[^a-z0-9-]/gi, '') || 'en';
+  const blocks = selectedTypes.includes('schedule-semester-csv')
+    ? buildScheduleTemplateBlocks(input.plan, personMap, displayName, {
+      config: input.config,
+      dateDisplay: {
+        locale: input.locale,
+        granularity: 'date',
+        includeWeekday: true,
+      },
+    })
+    : null;
+  const ics = selectedTypes.includes('schedule-semester-ics')
+    ? buildScheduleIcs(input.plan, personMap, displayName, input.config, icsLabelsForLocale(input.locale))
+    : null;
+  const slug = input.config.id.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'schedule';
+  const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
+  if (blocks) {
+    attachments.push({
+      filename: `schedule-${slug}-semester.${localeTag}.csv`,
+      content: Buffer.from(blocks.csv, 'utf-8'),
+      contentType: 'text/csv; charset=utf-8',
+    });
+  }
+  if (ics) {
+    attachments.push({
+      filename: `schedule-${slug}-semester.${localeTag}.ics`,
+      content: Buffer.from(ics, 'utf-8'),
+      contentType: 'text/calendar; charset=utf-8',
+    });
+  }
+  return attachments;
+}
+
+function hasPeriodEnded(config: ScheduleConfig, runAt: number, timezone: string): boolean {
+  const today = formatZonedDate(runAt, timezone);
+  return today > config.endDate;
+}
+
 function latestScheduleSummary(sessions: number, createdAt: number | null): string {
   if (!createdAt) return `No generated schedule found. Session count: ${sessions}.`;
   return `Latest plan has ${sessions} sessions, created at ${new Date(createdAt).toISOString()}.`;
@@ -104,18 +193,25 @@ export class EmailTaskNotifier {
   async syncJobs(): Promise<void> {
     const { scheduler, store } = this.options;
     const tasks = await store.listEmailTasks();
+    const configs = new Map((await store.listConfigs()).map((config) => [config.id, config]));
     const active = new Set<string>();
+    const runAt = Date.now();
 
     for (const task of tasks) {
       const days = uniqueSortedDays(task.daysOfWeek);
       if (days.length === 0 || task.emails.length === 0) continue;
+
+      const config = configs.get(task.configId);
+      if (!config) continue;
+
+      const timezone = resolveTaskTimezone(task);
+      if (hasPeriodEnded(config, runAt, timezone)) continue;
 
       const jobName = `email-task:${task.id}`;
       active.add(jobName);
 
       const sendTime = parseSendTime(task.sendTime ?? (task.metadata?.sendTime as string | undefined), this.options.defaultHour ?? 9);
       const expression = toCronExpression(days, sendTime.hour, sendTime.minute);
-      const timezone = resolveTaskTimezone(task);
 
       scheduler.register({
         name: jobName,
@@ -148,7 +244,10 @@ export class EmailTaskNotifier {
 
   private async executeTask(task: EmailTask, options: { manual: boolean }): Promise<void> {
     const config = await this.options.store.getConfig(task.configId);
-    if (!config) return;
+    if (!config) {
+      this.options.scheduler.unregister(`email-task:${task.id}`);
+      return;
+    }
     const persons = await this.options.store.listPersons();
 
     const latest = (await this.options.store.listSchedules())
@@ -157,6 +256,48 @@ export class EmailTaskNotifier {
 
     const sentCounts = { ...(task.sentCounts ?? {}) };
     const runAt = Date.now();
+    const timezone = resolveTaskTimezone(task);
+
+    if (!options.manual && hasPeriodEnded(config, runAt, timezone)) {
+      this.options.scheduler.unregister(`email-task:${task.id}`);
+      await this.options.store.putEmailTask({
+        ...task,
+        lastSkippedAt: runAt,
+        modifiedAt: runAt,
+      });
+      return;
+    }
+
+    if (!latest) {
+      if (!options.manual) {
+        await this.options.store.putEmailTask({
+          ...task,
+          lastSkippedAt: runAt,
+          modifiedAt: runAt,
+        });
+      }
+      return;
+    }
+
+    if (!options.manual && task.lastRunAt && latest.createdAt <= task.lastRunAt) {
+      await this.options.store.putEmailTask({
+        ...task,
+        lastSkippedAt: runAt,
+        modifiedAt: runAt,
+      });
+      return;
+    }
+
+    const locale = (task.metadata?.dateLocale as string | undefined)
+      ?? (task.metadata?.injectionLanguage as string | undefined)
+      ?? 'en';
+    const attachments = buildScheduleAttachments({
+      task,
+      config,
+      plan: latest,
+      locale,
+      persons,
+    });
 
     if (!options.manual && task.skipNextRun) {
       await this.options.store.putEmailTask({
@@ -204,6 +345,7 @@ export class EmailTaskNotifier {
         subject: renderedSubject.output.trim() || `[Labby] Scheduled Email ${task.id}`,
         text: rendered.output,
         html: rendered.html,
+        attachments,
       });
 
       sentCounts[recipient] = currentSent + 1;

@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import {
   personsSignal,
   currentScheduleSignal,
-  similarityMapSignal,
+  similarityLookupSignal,
   personMapSignal,
 } from '@/store/index';
 import { displayName } from '@/i18n';
@@ -48,7 +48,7 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
   const { t } = i18n;
   const persons = personsSignal.value.filter(p => !p.disabled);
   const current = currentScheduleSignal.value;
-  const simMap = similarityMapSignal.value;
+  const simLookup = similarityLookupSignal.value;
   const personMap = personMapSignal.value;
   const db = useDatabase();
 
@@ -64,7 +64,7 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
   function similarity(aId: string, bId: string): number {
     if (aId === bId) return 1;
     const [a, b] = aId < bId ? [aId, bId] : [bId, aId];
-    return simMap.get(`${a}|${b}`) ?? 0;
+    return simLookup.getPairSimilarity(a, b) ?? 0;
   }
 
   function handleSelect(newId: string) {

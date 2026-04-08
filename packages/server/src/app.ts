@@ -85,6 +85,8 @@ export interface CreateAppOptions {
   enablePublicEmailTaskIcs?: boolean;
   mailer?: Mailer | null;
   onEmailTasksChanged?: () => Promise<void> | void;
+  onConfigsChanged?: () => Promise<void> | void;
+  onSchedulesChanged?: () => Promise<void> | void;
   runEmailTaskNow?: (taskId: string) => Promise<void>;
   schedulerDispatchApiKey?: string;
   onSchedulerDispatch?: (jobName: string) => Promise<boolean>;
@@ -556,10 +558,12 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.put("/api/v1/db/configs/:id", async (c) => {
     const config = await c.req.json<ScheduleConfig>();
     await store.putConfig({ ...config, id: c.req.param("id") });
+    await options.onConfigsChanged?.();
     return ok(c, await store.getConfig(c.req.param("id")), 201);
   });
   app.delete("/api/v1/db/configs/:id", async (c) => {
     await store.deleteConfig(c.req.param("id"));
+    await options.onConfigsChanged?.();
     return c.body(null, 204);
   });
 
@@ -586,10 +590,12 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.put("/api/v1/db/schedules/:id", async (c) => {
     const schedule = await c.req.json<SchedulePlan>();
     await store.putSchedule({ ...schedule, id: c.req.param("id") });
+    await options.onSchedulesChanged?.();
     return ok(c, await store.getSchedule(c.req.param("id")), 201);
   });
   app.delete("/api/v1/db/schedules/:id", async (c) => {
     await store.deleteSchedule(c.req.param("id"));
+    await options.onSchedulesChanged?.();
     return c.body(null, 204);
   });
 

@@ -6,8 +6,10 @@ import type {
 } from '@labby/core';
 import initWasm, { WasmEmbeddingEngine } from '../../../core/native/dist/wasm-web/labby_core.js';
 import wasmBinaryUrl from '../../../core/native/dist/wasm-web/labby_core_bg.wasm?url';
-import { apiClient } from '@/lib/api';
 import { isServerDeployment } from '@/lib/runtime';
+import * as api from '@/api-server/embedding-engine';
+
+// #region Engine API Normalization Layer
 
 const LATENT_DIM = 64;
 const FRONTEND_ONLY_MAX_NODES = 1_000;
@@ -159,20 +161,14 @@ function pairKeysToHydratedPairs(recentPairKeys: readonly string[]): Uint32Array
   return Uint32Array.from(out);
 }
 
-export async function recommendTripletWithWasm(
+// #endregion
+
+// #region Business Logic
+
+async function recommendTripletWithWasm(
   vectors: KeywordVector[],
   recentPairKeys: readonly string[],
 ): Promise<TripletQuery | null> {
-  if (isServerDeployment) {
-    const response = await apiClient.request<{ query: TripletQuery | null }>('/nlp/recommend-triplet', {
-      method: 'POST',
-      body: JSON.stringify({
-        excludedPairs: [...recentPairKeys],
-      }),
-    });
-    return response.query;
-  }
-
   ensureFrontendOnlyScale(vectors);
 
   if (!enginePromise) {
@@ -200,25 +196,12 @@ export async function recommendTripletWithWasm(
   };
 }
 
-export async function applyTripletWithWasm(
+async function applyTripletWithWasm(
   vectors: KeywordVector[],
   query: TripletQuery,
   margin = 0.2,
   options?: IterativeUpdateOptions,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
-  if (isServerDeployment) {
-    return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-similarity', {
-      method: 'POST',
-      body: JSON.stringify({
-        anchorId: query.anchorId,
-        positiveId: query.positiveId,
-        negativeId: query.negativeId,
-        margin,
-        updateOptions: resolveIterativeUpdateOptions(options),
-      }),
-    });
-  }
-
   ensureFrontendOnlyScale(vectors);
 
   if (!enginePromise) {
@@ -263,25 +246,13 @@ export async function applyTripletWithWasm(
 
   return { loss, updatedVectors };
 }
-
-export async function applyPairUpdate(
+async function applyPairUpdateWithWasm(
   vectors: KeywordVector[],
   leftId: string,
   rightId: string,
   targetDistance: number,
   options?: IterativeUpdateOptions,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
-  if (isServerDeployment) {
-    return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-pair', {
-      method: 'POST',
-      body: JSON.stringify({
-        leftId,
-        rightId,
-        targetDistance,
-        updateOptions: resolveIterativeUpdateOptions(options),
-      }),
-    });
-  }
 
   ensureFrontendOnlyScale(vectors);
 
@@ -323,27 +294,10 @@ export async function applyPairUpdate(
 
   return { loss, updatedVectors };
 }
-
-export async function applySupervision(
+async function applyRankedSupervisionWithWasm(
   vectors: KeywordVector[],
-  query: SupervisionQuery,
+  query: Extract<SupervisionQuery, { kind: 'ranked' }>,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
-  if (query.kind === 'pair') {
-    return applyPairUpdate(
-      vectors,
-      query.leftId,
-      query.rightId,
-      query.targetDistance,
-      query.updateOptions,
-    );
-  }
-
-  if (isServerDeployment) {
-    return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/apply-supervision', {
-      method: 'POST',
-      body: JSON.stringify(query),
-    });
-  }
 
   ensureFrontendOnlyScale(vectors);
 
@@ -398,3 +352,66 @@ export async function applySupervision(
 
   return { loss: 0, updatedVectors };
 }
+
+// #endregion
+
+// #region API Layer
+
+
+export async function recommendTriplet(
+  vectors: KeywordVector[],
+  recentPairKeys: readonly string[],
+): Promise<TripletQuery | null> {
+  if (isServerDeployment) {
+    return api.recommendTriplet(recentPairKeys);
+  }
+  return recommendTripletWithWasm(vectors, recentPairKeys);
+}
+
+export async function applyTriplet(
+  vectors: KeywordVector[],
+  query: TripletQuery,
+  margin = 0.2,
+  options?: IterativeUpdateOptions,
+): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+  if (isServerDeployment) {
+    return api.applyTriplet(query, margin, options);
+  }
+  return applyTripletWithWasm(vectors, query, margin, options);
+}
+
+export async function applyPairUpdate(
+  vectors: KeywordVector[],
+  leftId: string,
+  rightId: string,
+  targetDistance: number,
+  options?: IterativeUpdateOptions,
+): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+  if (isServerDeployment) {
+    return api.applyPairUpdate(leftId, rightId, targetDistance, resolveIterativeUpdateOptions(options));
+  }
+  return applyPairUpdateWithWasm(vectors, leftId, rightId, targetDistance, options);
+}
+
+
+export async function applySupervision(
+  vectors: KeywordVector[],
+  query: SupervisionQuery,
+): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
+  if (query.kind === 'pair') {
+    return applyPairUpdate(
+      vectors,
+      query.leftId,
+      query.rightId,
+      query.targetDistance,
+      query.updateOptions,
+    );
+  }
+
+  if (isServerDeployment) {
+    return api.applySupervision(query);
+  }
+  return applyRankedSupervisionWithWasm(vectors, query);
+}
+
+// #endregion

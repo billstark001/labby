@@ -13,7 +13,7 @@ import type { KeywordVector, TripletQuery } from '@labby/core';
 import * as s from '../styles/components.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
-import { applyTripletWithWasm, recommendTripletWithWasm } from '@/lib/embedding-engine';
+import { applyTriplet, recommendTriplet } from '@/lib/embedding-engine';
 import { isServerDeployment } from '@/lib/runtime';
 
 /** Max number of recently answered pair keys to exclude from next query. */
@@ -61,7 +61,7 @@ export function TripletCard() {
     recommendSeqRef.current += 1;
     const seq = recommendSeqRef.current;
 
-    void recommendTripletWithWasm(vectors, recentPairs)
+    void recommendTriplet(vectors, recentPairs)
       .then((next) => {
         if (recommendSeqRef.current !== seq) return;
         setQuery(next);
@@ -95,7 +95,7 @@ export function TripletCard() {
             : { anchorId: query.anchorId, positiveId: query.negativeId, negativeId: query.positiveId };
         answeredQuery = effectiveQuery;
 
-        const result = await applyTripletWithWasm(keywordVectorsSignal.value, effectiveQuery);
+        const result = await applyTriplet(keywordVectorsSignal.value, effectiveQuery);
 
         if (result.updatedVectors?.length) {
           const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));

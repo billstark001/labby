@@ -1,23 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import { apiClient } from '@/lib/api';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
-
-const USER_ROLE_USER = 0;
-const USER_ROLE_ADMIN = 1;
-const USER_ROLE_ROOT = 2;
-
-interface SafeUser {
-  id: string;
-  username: string;
-  email?: string;
-  role: number;
-  disabled: boolean;
-  createdAt: number;
-}
+import { createUser, deleteUser, fetchUsers, SafeUser, updateUser, USER_ROLE_ADMIN, USER_ROLE_ROOT, USER_ROLE_USER, UserRoleWithoutRoot } from '@/api-server/users';
 
 interface UsersTabProps {
   canManageUsers: boolean;
@@ -40,14 +27,11 @@ function CreateUserForm({ onSave, onCancel }: CreateUserFormProps) {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(USER_ROLE_USER);
+  const [role, setRole] = useState<UserRoleWithoutRoot>(USER_ROLE_USER);
 
   async function handleSubmit() {
     try {
-      await apiClient.request('/users', {
-        method: 'POST',
-        body: JSON.stringify({ username, email: email || undefined, password, role }),
-      });
+      await createUser(username, email, password, role);
       toast.success(t('createUser'));
       onSave();
     } catch (err) {
@@ -71,7 +55,7 @@ function CreateUserForm({ onSave, onCancel }: CreateUserFormProps) {
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('userRole')}</label>
-        <select class={s.input} value={role} onChange={(e) => setRole(Number((e.target as HTMLSelectElement).value))}>
+        <select class={s.input} value={role} onChange={(e) => setRole(Number((e.target as HTMLSelectElement).value) as UserRoleWithoutRoot)}>
           <option value={USER_ROLE_USER}>{t('userRoleUser')}</option>
           <option value={USER_ROLE_ADMIN}>{t('userRoleAdmin')}</option>
         </select>
@@ -92,15 +76,12 @@ interface EditUserFormProps {
 
 function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
   const { t } = i18n;
-  const [role, setRole] = useState(user.role);
+  const [role, setRole] = useState<UserRoleWithoutRoot>(user.role as UserRoleWithoutRoot);
   const [disabled, setDisabled] = useState(user.disabled);
 
   async function handleSubmit() {
     try {
-      await apiClient.request(`/users/${user.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ role, disabled }),
-      });
+      await updateUser(user.id, { role, disabled });
       toast.success(t('editUser'));
       onSave();
     } catch (err) {
@@ -116,7 +97,7 @@ function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('userRole')}</label>
-        <select class={s.input} value={role} onChange={(e) => setRole(Number((e.target as HTMLSelectElement).value))}>
+        <select class={s.input} value={role} onChange={(e) => setRole(Number((e.target as HTMLSelectElement).value) as UserRoleWithoutRoot)}>
           <option value={USER_ROLE_USER}>{t('userRoleUser')}</option>
           <option value={USER_ROLE_ADMIN}>{t('userRoleAdmin')}</option>
         </select>
@@ -149,7 +130,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
   async function loadUsers() {
     setLoading(true);
     try {
-      const data = await apiClient.request<SafeUser[]>('/users');
+      const data = await fetchUsers();
       setUsers(data);
     } catch (err) {
       toast.error(String(err));
@@ -165,7 +146,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
   function handleDelete(user: SafeUser) {
     confirmDialog(t('deleteUser'), t('deleteUserWarning'), async () => {
       try {
-        await apiClient.request(`/users/${user.id}`, { method: 'DELETE' });
+        await deleteUser(user.id);
         await loadUsers();
       } catch (err) {
         toast.error(String(err));

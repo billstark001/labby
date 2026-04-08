@@ -4,7 +4,7 @@ import { Button } from '@/components/ui';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { isServerDeployment } from '@/lib/runtime';
-import { fetchSystemCapabilities } from '@/lib/server-backup';
+import { fetchSystemCapabilities } from '@/api-server/backup';
 
 import { PersonsTab } from './PersonsTab';
 import { ConstraintsTab } from './ConstraintsTab';

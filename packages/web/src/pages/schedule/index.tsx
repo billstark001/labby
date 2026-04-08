@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import { nanoid } from 'nanoid';
 import { Pencil } from 'lucide-preact';
 import {
@@ -7,7 +8,7 @@ import {
   constraintsSignal,
   schedulesSignal,
   currentScheduleSignal,
-  similarityMapSignal,
+  similarityLookupSignal,
   isComputingSignal,
   personMapSignal,
   unavailabilitiesSignal,
@@ -23,7 +24,7 @@ import {
   loadAllUnavailabilities,
   useDatabase,
 } from '@/db/index';
-import { computeScheduleMetrics, explainScheduleMetrics, mutatePresentations, mutateSessions, solveFull, solveIncremental } from '@labby/core';
+import { computeScheduleMetrics, explainScheduleMetrics, mutatePresentations, mutateSessions } from '@labby/core';
 import type { ScheduleConfig, SchedulePlan, PersonUnavailability, MetricExplanation, ScheduleMetrics } from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
@@ -37,8 +38,6 @@ import {
 } from '@/lib/scheduleExport';
 import { confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
-import { apiClient } from '@/lib/api';
-import { isServerDeployment } from '@/lib/runtime';
 import { i18n } from '@/i18n';
 import { ConfigPanel } from './ConfigPanel';
 import { ScheduleHistoryPanel } from './ScheduleHistoryPanel';
@@ -52,49 +51,18 @@ import {
   type PresentationMutationDialogState,
   type SessionMutationDialogState,
 } from './dialogs';
+import {
+  createSolverBackend,
+  defaultIncrementalDate,
+  normalizeSolveResponse,
+  buildSessionDateMeta,
+  type SolverContext,
+} from './service';
 
 const LAST_SELECTED_CONFIG_STORAGE_KEY = 'schedule.lastSelectedConfigId';
 
-function defaultIncrementalDate(): string {
-  const nextWeek = new Date();
-  nextWeek.setUTCDate(nextWeek.getUTCDate() + 7);
-  return nextWeek.toISOString().slice(0, 10);
-}
-
-function normalizeSolveResponse(result: unknown): {
-  plan: SchedulePlan;
-  metrics?: ScheduleMetrics;
-  explanations?: MetricExplanation[];
-  warnings?: string[];
-} {
-  if (result && typeof result === 'object' && 'plan' in (result as Record<string, unknown>)) {
-    return result as { plan: SchedulePlan; metrics?: ScheduleMetrics; explanations?: MetricExplanation[]; warnings?: string[] };
-  }
-  return { plan: result as SchedulePlan };
-}
-
-function buildSessionDateMeta(
-  sessions: SchedulePlan['sessions'],
-  mutations: SchedulePlan['sessionMutations'],
-  existing: SchedulePlan['sessionDateMeta'],
-): NonNullable<SchedulePlan['sessionDateMeta']> {
-  const existingMap = existing ?? {};
-  const insertMap = new Map<string, { action: 'insert' | 'delete'; createdAt: number }>();
-  for (const m of mutations ?? []) {
-    if (m.action === 'insert') {
-      insertMap.set(m.date, { action: m.action, createdAt: m.createdAt });
-    }
-  }
-
-  const out: NonNullable<SchedulePlan['sessionDateMeta']> = {};
-  for (const session of sessions) {
-    const meta = existingMap[session.date] ?? insertMap.get(session.date);
-    if (meta) {
-      out[session.date] = meta;
-    }
-  }
-  return out;
-}
+// Single backend instance — isServerDeployment is a startup-time constant.
+const backend = createSolverBackend();
 
 export function SchedulePage() {
   const { t } = i18n;
@@ -106,13 +74,11 @@ export function SchedulePage() {
   const unavailabilities = unavailabilitiesSignal.value;
   const db = useDatabase();
 
+  // States passed to child components remain as useState.
   const [showConfigForm, setShowConfigForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ScheduleConfig | null>(null);
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
   const [changeDate, setChangeDate] = useState('');
-  const [copiedTsv, setCopiedTsv] = useState(false);
-  const [copiedHtml, setCopiedHtml] = useState(false);
-  const [copiedCsv, setCopiedCsv] = useState(false);
   const [showUnavailForm, setShowUnavailForm] = useState(false);
   const [editingNotes, setEditingNotes] = useState<SchedulePlan | null>(null);
   const [manualEditTarget, setManualEditTarget] = useState<{
@@ -134,6 +100,12 @@ export function SchedulePage() {
   const [presentationMutationMode, setPresentationMutationMode] = useState<'session-resize' | 'shift-chain' | 'session-refill'>('session-resize');
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
+  // Transient clipboard-feedback flags are component-local; signals avoid
+  // a full re-render and have no child consumers, so useState is not needed.
+  const copiedTsv = useSignal(false);
+  const copiedHtml = useSignal(false);
+  const copiedCsv = useSignal(false);
+
   const activePersonCount = persons.filter(p => !p.disabled).length;
   const selectedConfig = configs.find(c => c.id === selectedConfigId);
   const schedulesForSelectedConfig = useMemo(
@@ -146,7 +118,6 @@ export function SchedulePage() {
   );
   const personMap = personMapSignal.value;
   const configUnavails = unavailabilities.filter(u => u.configId === selectedConfigId);
-
 
   // #region Effects
 
@@ -209,13 +180,27 @@ export function SchedulePage() {
 
   // #region Helpers
 
+  /** Builds the SolverContext from component-local reactive values. */
+  function solverCtx(configId: string): SolverContext {
+    return {
+      persons,
+      similarities: similarityLookupSignal.value,
+      unavailabilities,
+      constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === configId),
+    };
+  }
+
+  /**
+   * Always computes metrics locally (used for mutation feedback and as a
+   * fallback after a solve, regardless of deployment mode).
+   */
   function localMetricsForPlan(plan: SchedulePlan) {
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return null;
     const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
     const metrics = computeScheduleMetrics(plan, {
       persons,
-      similarities: similarityMapSignal.value,
+      similarities: similarityLookupSignal.value,
       config,
       unavailabilities,
       constraints,
@@ -258,37 +243,19 @@ export function SchedulePage() {
   // #region Metrics
 
   async function showMetricsForPlan(plan: SchedulePlan): Promise<void> {
-    if (isServerDeployment) {
-      const data = await apiClient.request<{ metrics: ScheduleMetrics; explanations: MetricExplanation[] }>('/solver/metrics', {
-        method: 'POST',
-        body: JSON.stringify({ scheduleId: plan.id }),
-      });
-      openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, data.metrics, data.explanations);
-      return;
-    }
-    maybeShowLocalMetrics(plan, `${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`);
+    const config = configs.find(c => c.id === plan.configId);
+    if (!config) return;
+    const { metrics, explanations } = await backend.computeMetricsForPlan(plan, config, solverCtx(config.id));
+    openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, metrics, explanations);
   }
 
   async function showMetricsForSession(plan: SchedulePlan, sessionDate: string): Promise<void> {
-    if (isServerDeployment) {
-      const data = await apiClient.request<{ metrics: ScheduleMetrics; explanations: MetricExplanation[] }>('/solver/metrics', {
-        method: 'POST',
-        body: JSON.stringify({ scheduleId: plan.id, sessionDate }),
-      });
-      openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, data.metrics, data.explanations);
-      return;
-    }
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return;
-    const constraints = constraintsSignal.value.filter(item => !item.configId || item.configId === config.id);
     const sessionIndex = plan.sessions.findIndex(session => session.date === sessionDate);
     if (sessionIndex < 0) return;
-    const metrics = computeScheduleMetrics(
-      { ...plan, sessions: [plan.sessions[sessionIndex]] },
-      { persons, similarities: similarityMapSignal.value, config, unavailabilities, constraints },
-      plan.sessions.slice(0, sessionIndex),
-    );
-    openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, metrics, explainScheduleMetrics(metrics));
+    const { metrics, explanations } = await backend.computeMetricsForSession(plan, sessionDate, config, solverCtx(config.id));
+    openMetricsDialog(`${sessionDate} · ${t('sessionDate')}`, metrics, explanations);
   }
 
   // #endregion
@@ -315,25 +282,7 @@ export function SchedulePage() {
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const result = isServerDeployment
-        ? await apiClient.request<unknown>('/solver/run', {
-          method: 'POST',
-          body: JSON.stringify({ configId: config.id, personIds: persons.map(p => p.id) }),
-        })
-        : {
-          plan: {
-            id: nanoid(),
-            createdAt: Date.now(),
-            configId: config.id,
-            sessions: solveFull({
-              persons,
-              similarities: similarityMapSignal.value,
-              config,
-              unavailabilities,
-              constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id),
-            }),
-          } satisfies SchedulePlan,
-        };
+      const result = await backend.runFull(config, solverCtx(config.id));
       await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -354,29 +303,7 @@ export function SchedulePage() {
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const result = isServerDeployment
-        ? await apiClient.request<unknown>('/solver/run-incremental', {
-          method: 'POST',
-          body: JSON.stringify({ configId: config.id, previousPlanId: current.id, changeDate, personIds: persons.map(p => p.id) }),
-        })
-        : {
-          plan: {
-            id: nanoid(),
-            createdAt: Date.now(),
-            configId: config.id,
-            sessions: solveIncremental({
-              persons,
-              similarities: similarityMapSignal.value,
-              config,
-              sessions: current.sessions,
-              mutations: current.sessionMutations,
-              changeDate,
-              unavailabilities,
-              constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id),
-            }),
-            sessionMutations: current.sessionMutations,
-          } satisfies SchedulePlan,
-        };
+      const result = await backend.runIncremental(config, current, changeDate, solverCtx(config.id));
       await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -395,22 +322,22 @@ export function SchedulePage() {
   async function handleCopyTsv() {
     if (!current) return;
     await copyScheduleTable(current, personMap, displayName);
-    setCopiedTsv(true);
-    window.setTimeout(() => setCopiedTsv(false), 1500);
+    copiedTsv.value = true;
+    window.setTimeout(() => { copiedTsv.value = false; }, 1500);
   }
 
   async function handleCopyHtml() {
     if (!current) return;
     await copyScheduleHtml(current, personMap, displayName);
-    setCopiedHtml(true);
-    window.setTimeout(() => setCopiedHtml(false), 1500);
+    copiedHtml.value = true;
+    window.setTimeout(() => { copiedHtml.value = false; }, 1500);
   }
 
   async function handleCopyCsv() {
     if (!current) return;
     await copyScheduleCsv(current, personMap, displayName);
-    setCopiedCsv(true);
-    window.setTimeout(() => setCopiedCsv(false), 1500);
+    copiedCsv.value = true;
+    window.setTimeout(() => { copiedCsv.value = false; }, 1500);
   }
 
   function handleExportIcs() {
@@ -734,9 +661,9 @@ export function SchedulePage() {
       {/* Copy / Export row */}
       {current && (
         <div class={`${s.toolbar} ${s.mb24}`}>
-          <Button variant="secondary" onClick={handleCopyTsv}>{copiedTsv ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}</Button>
-          <Button variant="secondary" onClick={handleCopyHtml}>{copiedHtml ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}</Button>
-          <Button variant="secondary" onClick={handleCopyCsv}>{copiedCsv ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}</Button>
+          <Button variant="secondary" onClick={handleCopyTsv}>{copiedTsv.value ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}</Button>
+          <Button variant="secondary" onClick={handleCopyHtml}>{copiedHtml.value ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}</Button>
+          <Button variant="secondary" onClick={handleCopyCsv}>{copiedCsv.value ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>{t('exportHtml')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>{t('exportCsv')}</Button>
           <Button variant="secondary" onClick={handleExportIcs}>{t('exportIcs')}</Button>

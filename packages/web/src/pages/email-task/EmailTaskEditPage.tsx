@@ -19,12 +19,13 @@ import { Button, Dialog, toast } from '@/components/ui';
 import { confirmDialog } from '@/components/ui/Dialog';
 import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
-import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/lib/email-task-actions';
+import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { configsSignal, emailTasksSignal, personsSignal, schedulesSignal } from '@/store';
 import * as s from '@/styles/components.css';
+import { AttachmentSettingsDialog, type EmailAttachmentType } from './AttachmentSettingsDialog';
 
 const DAY_OPTIONS = [
   { value: 0, label: 'Sun' },
@@ -131,8 +132,13 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [showDaysDialog, setShowDaysDialog] = useState(false);
   const [showVarDialog, setShowVarDialog] = useState(false);
+  const [showAttachmentDialog, setShowAttachmentDialog] = useState(false);
   const [docLanguage, setDocLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
   const [isDirty, setIsDirty] = useState(false);
+  const [attachmentTypes, setAttachmentTypes] = useState<EmailAttachmentType[]>([
+    'schedule-semester-csv',
+    'schedule-semester-ics',
+  ]);
 
   const initializedKeyRef = useRef('');
 
@@ -200,6 +206,15 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
     setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
     setServeScheduleIcs((task.metadata?.serveScheduleIcs as boolean | undefined) ?? false);
+    const metadataAttachmentTypes = task.metadata?.attachmentTypes;
+    if (Array.isArray(metadataAttachmentTypes)) {
+      const nextTypes = metadataAttachmentTypes
+        .filter((item): item is string => typeof item === 'string')
+        .filter((item): item is EmailAttachmentType => item === 'schedule-semester-csv' || item === 'schedule-semester-ics');
+      setAttachmentTypes([...new Set(nextTypes)]);
+    } else {
+      setAttachmentTypes(['schedule-semester-csv', 'schedule-semester-ics']);
+    }
     setIsDirty(false);
   }
 
@@ -217,6 +232,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setInjectionLanguage(i18n.lang.value);
     setDateGranularity('date');
     setServeScheduleIcs(false);
+    setAttachmentTypes(['schedule-semester-csv', 'schedule-semester-ics']);
     setIsDirty(false);
   }
 
@@ -294,6 +310,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         dateGranularity,
         dateLocale: injectionLanguage,
         serveScheduleIcs,
+        attachmentTypes,
         timezone: taskTimezone || 'UTC',
         sendTime,
       },
@@ -344,6 +361,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     () => tasks.find((item) => item.id === selectedTaskId),
     [tasks, selectedTaskId],
   );
+
+  const attachmentSummary = useMemo(() => {
+    if (attachmentTypes.length === 0) return t('noneSelected');
+    return attachmentTypes.map((type) => {
+      if (type === 'schedule-semester-csv') return t('emailTaskAttachmentCsv');
+      return t('emailTaskAttachmentIcs');
+    }).join(', ');
+  }, [attachmentTypes, t]);
 
   function toggleDay(day: number): void {
     setIsDirty(true);
@@ -528,6 +553,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         </div>
 
         <div class={s.formGroup}>
+          <label class={s.label}>{t('emailTaskAttachments')}</label>
+          <div class={s.flexGapSm}>
+            <Button variant="secondary" onClick={() => setShowAttachmentDialog(true)}>{t('emailTaskAttachmentDialogOpen')}</Button>
+            <span class={`${s.text12} ${s.textMuted}`}>{attachmentSummary}</span>
+          </div>
+        </div>
+
+        <div class={s.formGroup}>
           <label class={s.label}>{t('emailTemplateEditor')}</label>
           <CodeMirrorEditor value={templateText} onChange={(v) => { setIsDirty(true); setTemplateText(v); }} />
           <div class={`${s.text12} ${s.textMuted}`}>{t('templateSyntaxHint')}</div>
@@ -636,6 +669,18 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             <Button variant="secondary" onClick={() => setShowVarDialog(false)}>{t('close')}</Button>
           </div>
         </Dialog>
+      )}
+
+      {showAttachmentDialog && (
+        <AttachmentSettingsDialog
+          open={showAttachmentDialog}
+          onClose={() => setShowAttachmentDialog(false)}
+          selected={attachmentTypes}
+          onChange={(next) => {
+            setIsDirty(true);
+            setAttachmentTypes(next);
+          }}
+        />
       )}
     </div>
   );

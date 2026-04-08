@@ -1,5 +1,5 @@
 import { signal, computed } from '@preact/signals';
-import { keywordVectorsToSimilarityMap } from '@labby/core';
+import { keywordVectorsToSimilarityLookup } from '@labby/core';
 import type { Person, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
@@ -52,8 +52,8 @@ export const keywordMapSignal = computed(() => {
 });
 
 /** Flat similarity lookup: key = `${a}|${b}` (a < b lexicographically). */
-export const similarityMapSignal = computed(() => {
-  return keywordVectorsToSimilarityMap(keywordVectorsSignal.value);
+export const similarityLookupSignal = computed(() => {
+  return keywordVectorsToSimilarityLookup(keywordVectorsSignal.value);
 });
 
 /** Presentation count per person in the current schedule. */

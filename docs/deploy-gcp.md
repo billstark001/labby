@@ -106,6 +106,35 @@ Note: mount each secret under a different directory path to avoid Cloud Run moun
 
 ## Local gcloud CLI Deployment (Repeatable)
 
+### Incremental deployment helper (ts + tsx + pnpm)
+
+Repository root now includes:
+
+```bash
+pnpm deploy:cloudrun:incremental
+```
+
+Behavior:
+
+- Detects changed files from git merge-base to HEAD.
+- Skips deployment when changes only touch non-deployable paths (for example docs only).
+- Builds/pushes an amd64 image and deploys Cloud Run when server/core/web/docker-related files changed.
+
+Required env vars:
+
+- `CLOUD_RUN_PROJECT_ID`
+- `CLOUD_RUN_REGION`
+- `CLOUD_RUN_REPOSITORY`
+- `CLOUD_RUN_SERVICE`
+
+Optional env vars:
+
+- `DEPLOY_DIFF_BASE` (override diff base ref)
+- `CLOUD_RUN_ENV_VARS_FILE`
+- `CLOUD_RUN_UPDATE_SECRETS`
+- `CLOUD_RUN_DEPLOY_ARGS`
+- `CLOUD_RUN_QUIET` (`false` to disable `--quiet`)
+
 ### 1) Select project and configure Docker auth
 
 ```bash

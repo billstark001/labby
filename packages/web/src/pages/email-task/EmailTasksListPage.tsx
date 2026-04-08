@@ -5,7 +5,7 @@ import { Button, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles a
 import { confirmDialog } from '@/components/ui/Dialog';
 import { loadAllConfigs, loadAllEmailTasks, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
-import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/lib/email-task-actions';
+import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';

@@ -70,6 +70,12 @@ const { app, store, close } = await createApp({
   onEmailTasksChanged: async () => {
     await emailTaskNotifier?.syncJobs();
   },
+  onConfigsChanged: async () => {
+    await emailTaskNotifier?.syncJobs();
+  },
+  onSchedulesChanged: async () => {
+    await emailTaskNotifier?.syncJobs();
+  },
   runEmailTaskNow: async (taskId: string) => {
     if (!emailTaskNotifier) {
       throw new Error('email task notifier is not configured');

@@ -1375,6 +1375,10 @@ export class SqliteStore {
     await this.sqliteRaw.backup(destinationPath);
   }
 
+  getDialect(): StoreConnectionConfig['dialect'] {
+    return this.dialect;
+  }
+
   async close(): Promise<void> {
     await this.ensureReady();
     this.sqliteRaw?.close();

@@ -13,7 +13,7 @@ import {
   uploadServerBackup,
   type BackupTarget,
   type SystemCapabilities,
-} from '@/lib/server-backup';
+} from '@/api-server/backup';
 import { deploymentMode, isFrontendOnlyDeployment, isServerDeployment } from '@/lib/runtime';
 import clsx from 'clsx';
 import { confirmDialog } from './ui/Dialog';

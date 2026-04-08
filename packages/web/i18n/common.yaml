@@ -809,6 +809,41 @@ emailTaskServeScheduleIcsHint:
   zh-CN: 当服务端环境允许时，将该任务最新排班公开为 ICS 端点。
   ja-JP: サーバー環境で許可されている場合、このタスクの最新スケジュールを公開 ICS エンドポイントとして公開します。
 
+emailTaskAttachments:
+  en: Email Attachments
+  zh-CN: 邮件附件
+  ja-JP: メール添付
+
+emailTaskAttachmentDialogOpen:
+  en: Select Attachments
+  zh-CN: 选择附件
+  ja-JP: 添付を選択
+
+emailTaskAttachmentDialogHint:
+  en: Choose which files to include in each scheduled email. You can select none or multiple items.
+  zh-CN: 选择每次定时邮件要附带的文件。可以不选，也可以多选。
+  ja-JP: 定期メールに添付するファイルを選択します。未選択または複数選択が可能です。
+
+emailTaskAttachmentCsv:
+  en: Semester Schedule CSV
+  zh-CN: 学期排班 CSV
+  ja-JP: 学期スケジュール CSV
+
+emailTaskAttachmentIcs:
+  en: Semester Schedule ICS
+  zh-CN: 学期排班 ICS
+  ja-JP: 学期スケジュール ICS
+
+emailTaskAttachmentNoneHint:
+  en: No files selected. Emails will be sent without attachments.
+  zh-CN: 未选择文件，邮件将不附带附件发送。
+  ja-JP: 添付ファイルが未選択のため、添付なしで送信されます。
+
+emailTaskAttachmentDialogSelectedHint:
+  en: '{0} file(s) selected.'
+  zh-CN: 已选择 {0} 个文件。
+  ja-JP: '{0} 件のファイルを選択中。'
+
 emailTemplatePreset:
   en: Template Preset
   zh-CN: 模板预设
@@ -993,6 +1028,11 @@ passwordResetHint:
   en: Request a reset code, then set a new password.
   zh-CN: 先发送重置码，再使用验证码设置新密码。
   ja-JP: リセットコードを送信してから、新しいパスワードを設定します。
+
+passwordResetOpenPanel:
+  en: Forgot password?
+  zh-CN: 忘记密码？
+  ja-JP: パスワードを忘れた場合
 
 requestPasswordReset:
   en: Send Reset Code

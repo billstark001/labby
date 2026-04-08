@@ -13,11 +13,13 @@
     "dev:server": "pnpm --filter @labby/server dev",
     "dev:server:web": "pnpm --filter @labby/web dev:server",
     "preview": "pnpm --filter @labby/web preview",
+    "deploy:cloudrun:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/cloud-run-incremental-deploy.ts",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint"
   },
   "devDependencies": {
+    "dotenv": "^17.3.1",
     "typescript": "^6.0.2"
   }
 }
