@@ -1,5 +1,5 @@
 import { apiClient } from "@/lib/api";
-import { MetricExplanation, ScheduleConfig, ScheduleMetrics, SchedulePlan } from "@labby/core";
+import { IncrementalSolveMode, MetricExplanation, ScheduleConfig, ScheduleMetrics, SchedulePlan } from "@labby/core";
 
 interface MetricsResult {
   metrics: ScheduleMetrics;
@@ -18,6 +18,7 @@ export async function runIncremental(
   currentPlan: SchedulePlan,
   changeDate: string,
   personIds: string[],
+  mode: IncrementalSolveMode = 'full',
 ): Promise<unknown> {
   return apiClient.request<unknown>('/solver/run-incremental', {
     method: 'POST',
@@ -26,6 +27,7 @@ export async function runIncremental(
       previousPlanId: currentPlan.id,
       changeDate,
       personIds,
+      mode,
     }),
   });
 }

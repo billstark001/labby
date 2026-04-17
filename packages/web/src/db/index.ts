@@ -6,6 +6,7 @@
 import { IDBPDatabase } from 'idb';
 import {
   KeywordForeignKeyBundle,
+  ListQuery,
   PersonForeignKeyBundle,
   ScheduleForeignKeyBundle,
   DatabaseDump,
@@ -194,12 +195,12 @@ export async function loadAllUnavailabilities(db: LabbyDB, pageSize = DEFAULT_PA
   unavailabilitiesSignal.value = await listAllPaginated(db.unavailabilities, pageSize);
 }
 
-export async function listPersonsPage(db: LabbyDB, offset: number, limit: number) {
-  return db.persons.list({ offset, limit });
+export async function listPersonsPage(db: LabbyDB, query: ListQuery) {
+  return db.persons.list(query);
 }
 
-export async function listKeywordsPage(db: LabbyDB, offset: number, limit: number) {
-  return db.keywords.list({ offset, limit });
+export async function listKeywordsPage(db: LabbyDB, query: ListQuery) {
+  return db.keywords.list(query);
 }
 
 export async function listSimilaritiesPage(db: LabbyDB, offset: number, limit: number) {

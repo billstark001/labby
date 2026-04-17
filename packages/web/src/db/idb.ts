@@ -5,6 +5,7 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type {
   DatabaseDump,
+  EntityListSortBy,
   EmailTask,
   EmailTaskStore,
   KeywordForeignKeyQuery,
@@ -14,6 +15,7 @@ import type {
   KeywordVector,
   KeywordVectorStore,
   LabbyDB,
+  ListSortDirection,
   Person,
   PersonForeignKeyQuery,
   PersonStore,
@@ -34,6 +36,18 @@ import type {
 
 const DB_NAME = 'labby';
 const DB_VERSION = 5;
+
+type EntityListSort = {
+  sortBy: EntityListSortBy;
+  sortDirection: ListSortDirection;
+};
+
+type SortableEntity = {
+  id: string;
+  modifiedAt?: number;
+  name?: string;
+  notes?: string;
+};
 
 interface KeywordVectorRecord {
   keywordId: string;
@@ -121,7 +135,60 @@ function normalizeListQuery(query: ListQuery): ListQuery {
   return {
     offset: Math.max(0, Math.floor(query.offset)),
     limit: Math.max(1, Math.floor(query.limit)),
+    sortBy: query.sortBy,
+    sortDirection: query.sortDirection,
   };
+}
+
+function normalizeEntitySort(query: ListQuery): EntityListSort {
+  const sortBy = query.sortBy ?? 'modifiedAt';
+  const sortDirection = query.sortDirection ?? (sortBy === 'modifiedAt' ? 'desc' : 'asc');
+  return { sortBy, sortDirection };
+}
+
+function normalizeSortText(value: string | undefined): string {
+  return (value ?? '').trim().toLocaleLowerCase();
+}
+
+function compareText(left: string | undefined, right: string | undefined, direction: ListSortDirection): number {
+  const diff = normalizeSortText(left).localeCompare(normalizeSortText(right));
+  return direction === 'asc' ? diff : -diff;
+}
+
+function compareNumber(left: number | undefined, right: number | undefined, direction: ListSortDirection): number {
+  const diff = (left ?? 0) - (right ?? 0);
+  return direction === 'asc' ? diff : -diff;
+}
+
+function compareSortableEntities<T extends SortableEntity>(left: T, right: T, query: ListQuery): number {
+  const resolved = normalizeEntitySort(query);
+  const comparators: Array<(leftItem: T, rightItem: T) => number> = [];
+
+  if (resolved.sortBy === 'modifiedAt') {
+    comparators.push((leftItem, rightItem) => compareNumber(leftItem.modifiedAt, rightItem.modifiedAt, resolved.sortDirection));
+  }
+  if (resolved.sortBy === 'name') {
+    comparators.push((leftItem, rightItem) => compareText(leftItem.name, rightItem.name, resolved.sortDirection));
+  }
+  if (resolved.sortBy === 'notes') {
+    comparators.push((leftItem, rightItem) => compareText(leftItem.notes, rightItem.notes, resolved.sortDirection));
+  }
+
+  comparators.push(
+    (leftItem, rightItem) => compareNumber(leftItem.modifiedAt, rightItem.modifiedAt, 'desc'),
+    (leftItem, rightItem) => compareText(leftItem.name, rightItem.name, 'asc'),
+    (leftItem, rightItem) => compareText(leftItem.notes, rightItem.notes, 'asc'),
+    (leftItem, rightItem) => compareText(leftItem.id, rightItem.id, 'asc'),
+  );
+
+  for (const comparator of comparators) {
+    const diff = comparator(left, right);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+
+  return 0;
 }
 
 async function listStore<T>(idb: IDBPDatabase, storeName: string, query: ListQuery): Promise<PaginatedResult<T>> {
@@ -195,11 +262,31 @@ async function listStoreSorted<T>(
   };
 }
 
+async function listStoreByComparator<T>(
+  idb: IDBPDatabase,
+  storeName: string,
+  query: ListQuery,
+  compare: (left: T, right: T, query: ListQuery) => number,
+): Promise<PaginatedResult<T>> {
+  const { offset, limit } = normalizeListQuery(query);
+  const tx = idb.transaction(storeName, 'readonly');
+  const store = tx.objectStore(storeName);
+  const all = (await store.getAll()) as T[];
+  await tx.done;
+  const sorted = [...all].sort((left, right) => compare(left, right, query));
+  return {
+    items: sorted.slice(offset, offset + limit),
+    total: sorted.length,
+    offset,
+    limit,
+  };
+}
+
 export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const personsStore: PersonStore = {
     get: (id: string) => idb.get('persons', id),
-    list: (query: ListQuery) => listStoreSorted<Person>(idb, 'persons', query, (item) => item.modifiedAt ?? 0),
+    list: (query: ListQuery) => listStoreByComparator<Person>(idb, 'persons', query, compareSortableEntities),
     put: (value: Person) => idb.put('persons', value).then(() => void 0),
     delete: (id: string) => idb.delete('persons', id),
     clear: () => idb.clear('persons'),
@@ -207,7 +294,7 @@ export function createIDB(idb: IDBPDatabase): LabbyDB {
 
   const keywordsStore: KeywordStore = {
     get: (id: string) => idb.get('keywords', id),
-    list: (query: ListQuery) => listStoreSorted<Keyword>(idb, 'keywords', query, (item) => item.modifiedAt ?? 0),
+    list: (query: ListQuery) => listStoreByComparator<Keyword>(idb, 'keywords', query, compareSortableEntities),
     put: (value: Keyword) => idb.put('keywords', value).then(() => void 0),
     delete: (id: string) => idb.delete('keywords', id),
     clear: () => idb.clear('keywords'),

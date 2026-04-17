@@ -43,6 +43,7 @@ export interface ManualEditDialogProps {
   sessionDate: string;
   presIndex: number;
   questIndex?: number;
+  action?: 'replace' | 'add';
   onClose: () => void;
 }
 
@@ -54,9 +55,9 @@ const personKeywordsLookup = computed(() => {
   return m;
 });
 
-export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onClose }: ManualEditDialogProps) {
+export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, action = 'replace', onClose }: ManualEditDialogProps) {
   const { t } = i18n;
-  const persons = personsSignal.value.filter(p => !p.disabled);
+  const persons = personsSignal.value;
   const personKeywords = personKeywordsLookup.value;
   const current = currentScheduleSignal.value;
   const simLookup = similarityLookupSignal.value; // TODO, BUG: this is keyword similarity, not person similarity, so it only returns 0 for id missing!
@@ -69,8 +70,23 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
   const pres = session.presentations[presIndex];
   if (!pres) return null;
 
-  const currentId = mode === 'presenter' ? pres.presenterId : pres.questionerIds[questIndex ?? 0];
+  const currentId = mode === 'presenter'
+    ? pres.presenterId
+    : action === 'replace'
+      ? pres.questionerIds[questIndex ?? 0]
+      : undefined;
   const presenterPerson = personMap.get(pres.presenterId);
+  const usedQuestionerIds = new Set(pres.questionerIds);
+
+  function isSelectionDisabled(personId: string): boolean {
+    if (mode === 'presenter') {
+      return personId === pres.presenterId || pres.questionerIds.includes(personId);
+    }
+    if (action === 'add') {
+      return personId === pres.presenterId || usedQuestionerIds.has(personId);
+    }
+    return personId === pres.presenterId || (usedQuestionerIds.has(personId) && personId !== currentId);
+  }
 
   function similarity(aId: string, bId: string): number {
     if (aId === bId) return 1;
@@ -89,6 +105,10 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
         if (pi !== presIndex) return p;
         if (mode === 'presenter') return { ...p, presenterId: newId };
         const newQIds = [...p.questionerIds];
+        if (action === 'add') {
+          newQIds.push(newId);
+          return { ...p, questionerIds: newQIds };
+        }
         newQIds[questIndex ?? 0] = newId;
         return { ...p, questionerIds: newQIds };
       });
@@ -126,7 +146,7 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
     <Dialog
       open={true}
       onClose={onClose}
-      title={mode === 'presenter' ? t('selectNewPresenter') : t('selectNewQuestioner')}
+      title={mode === 'presenter' ? t('selectNewPresenter') : action === 'add' ? t('addQuestioner') : t('selectNewQuestioner')}
     >
       <table class={s.table}>
         <thead>
@@ -139,7 +159,12 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
         <tbody>
           {persons.map(p => (
             <tr key={p.id} style={{ opacity: p.id === currentId ? 0.4 : 1 }}>
-              <td class={s.td}>{displayName(p)}</td>
+              <td class={s.td}>
+                <div class={s.flexGapXs}>
+                  <span>{displayName(p)}</span>
+                  {p.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
+                </div>
+              </td>
               {mode === 'questioner' && presenterPerson && (
                 <td class={s.td} style={{ color: getCellColor(p.id) }}>{similarities.get(p.id)?.toFixed(3)}</td>
               )}
@@ -147,7 +172,7 @@ export function ManualEditDialog({ mode, sessionDate, presIndex, questIndex, onC
                 <Button
                   variant={p.id === currentId ? 'ghost' : 'primary'}
                   onClick={() => handleSelect(p.id)}
-                  disabled={p.id === currentId}
+                  disabled={isSelectionDisabled(p.id)}
                 >
                   {t('confirm')}
                 </Button>

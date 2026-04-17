@@ -276,6 +276,76 @@ export function buildRandomSchedule(
   return sessions;
 }
 
+function buildQuestionerPicker(
+  personIds: string[],
+  ctx: CostContext,
+  guidance: ConstraintGuidance,
+  unavailMap: Map<string, Set<string>>,
+): (presenterId: string, date: string, count: number) => string[] {
+  const simFactor = (presenterId: string, questionerId: string): number => {
+    const rawSim = getPersonSimilarity(
+      ctx.personKeywords.get(presenterId) ?? [],
+      ctx.personKeywords.get(questionerId) ?? [],
+      ctx.similarities,
+    );
+    const diff = Math.abs(rawSim - ctx.r);
+    const scaled = (diff - 0.2) / 0.4;
+    return Math.min(Math.max(0, 1 - scaled), 1);
+  };
+
+  return (presenterId: string, date: string, count: number): string[] => {
+    const unavail = unavailMap.get(date) ?? new Set<string>();
+    const pool = personIds.filter(
+      id => id !== presenterId && !unavail.has(id) && !noOverlapForbidden(presenterId, id, guidance),
+    );
+    const picked: string[] = [];
+    const used = new Set<string>();
+
+    for (let j = 0; j < count; j++) {
+      const avail = pool.filter(id => !used.has(id));
+      if (!avail.length) break;
+      const weights = avail.map(id =>
+        Math.max(0.01, affinityPairWeight(presenterId, id, guidance) * simFactor(presenterId, id)),
+      );
+      const total = weights.reduce((sum, weight) => sum + weight, 0);
+      let cursor = Math.random() * total;
+      let chosen = avail.length - 1;
+      for (let k = 0; k < weights.length; k++) {
+        cursor -= weights[k];
+        if (cursor <= 0) {
+          chosen = k;
+          break;
+        }
+      }
+      used.add(avail[chosen]);
+      picked.push(avail[chosen]);
+    }
+
+    return picked;
+  };
+}
+
+function rebuildQuestionersForSessions(
+  sessions: Session[],
+  personIds: string[],
+  ctx: CostContext,
+  config: ScheduleConfig,
+  unavailMap: Map<string, Set<string>> = new Map(),
+): Session[] {
+  const guidance = buildConstraintGuidance(ctx);
+  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap);
+  const next = deepCloneSessions(sessions);
+
+  for (const session of next) {
+    for (const presentation of session.presentations) {
+      const count = presentation.questionerIds.length || config.questionersPerPresenter;
+      presentation.questionerIds = pickQuestioners(presentation.presenterId, session.date, count);
+    }
+  }
+
+  return next;
+}
+
 // #endregion
 
 // #region Annealing
@@ -296,45 +366,7 @@ export function mutate(
   const allSessions = [...historicalSessions, ...clone];
 
   // ── Shared helpers ─────────────────────────────────────────────────────────
-
-  /** Similarity-based questioner weight, matching buildRandomSchedule logic. */
-  const simFactor = (pid: string, qid: string): number => {
-    const rawSim = getPersonSimilarity(
-      ctx.personKeywords.get(pid) ?? [],
-      ctx.personKeywords.get(qid) ?? [],
-      ctx.similarities,
-    );
-    const diff = Math.abs(rawSim - ctx.r);
-    const scaled = (diff - 0.2) / 0.4;
-    return Math.min(Math.max(0, 1 - scaled), 1);
-  };
-
-  /** Pick `count` questioners for `presenterId` at `date` via weighted sampling. */
-  const pickQuestioners = (presenterId: string, date: string, count: number): string[] => {
-    const unavail = unavailMap.get(date) ?? new Set<string>();
-    const pool = personIds.filter(
-      id => id !== presenterId && !unavail.has(id) && !noOverlapForbidden(presenterId, id, guidance),
-    );
-    const picked: string[] = [];
-    const used = new Set<string>();
-    for (let j = 0; j < count; j++) {
-      const avail = pool.filter(id => !used.has(id));
-      if (!avail.length) break;
-      const weights = avail.map(id =>
-        Math.max(0.01, affinityPairWeight(presenterId, id, guidance) * simFactor(presenterId, id)),
-      );
-      const total = weights.reduce((s, w) => s + w, 0);
-      let r = Math.random() * total;
-      let chosen = avail.length - 1;
-      for (let k = 0; k < weights.length; k++) {
-        r -= weights[k];
-        if (r <= 0) { chosen = k; break; }
-      }
-      used.add(avail[chosen]);
-      picked.push(avail[chosen]);
-    }
-    return picked;
-  };
+  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap);
 
   /** Raw (unscaled) per-person presenter appearance counts across allSessions. */
   const rawPresenterCounts = (): Map<string, number> => {
@@ -533,6 +565,30 @@ export function mutate(
   return clone;
 }
 
+function mutateQuestionersOnly(
+  sessions: Session[],
+  personIds: string[],
+  ctx: CostContext,
+  guidance: ConstraintGuidance,
+  config: ScheduleConfig,
+  unavailMap: Map<string, Set<string>> = new Map(),
+): Session[] {
+  if (!sessions.length) return sessions;
+
+  const clone = deepCloneSessions(sessions);
+  const eligible = clone.filter(session => session.presentations.length > 0);
+  if (!eligible.length || !personIds.length) {
+    return clone;
+  }
+
+  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap);
+  const session = eligible[Math.floor(Math.random() * eligible.length)];
+  const presentation = session.presentations[Math.floor(Math.random() * session.presentations.length)];
+  const count = presentation.questionerIds.length || config.questionersPerPresenter;
+  presentation.questionerIds = pickQuestioners(presentation.presenterId, session.date, count);
+  return clone;
+}
+
 export function simulatedAnnealing(
   initial: Session[],
   ctx: CostContext,
@@ -573,6 +629,46 @@ export function simulatedAnnealing(
   return best;
 }
 
+export function simulatedAnnealingQuestionersOnly(
+  initial: Session[],
+  ctx: CostContext,
+  historicalSessions: Session[],
+  config: ScheduleConfig,
+  hammingRef: Session[] | null,
+  hammingWeight: number,
+  unavailMap: Map<string, Set<string>> = new Map(),
+  maxIter = ANNEALING_CONFIG.maxIter,
+): Session[] {
+  const guidance = buildConstraintGuidance(ctx);
+  const personIds = [...ctx.personKeywords.keys()];
+  const totalCost = (sessions: Session[]) =>
+    computeCost(sessions, ctx, guidance, historicalSessions) +
+    (hammingRef ? hammingWeight * hammingDistance(sessions, hammingRef) : 0);
+
+  let current = deepCloneSessions(initial);
+  let currentCost = totalCost(current);
+  let best = deepCloneSessions(current);
+  let bestCost = currentCost;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
+    const neighbor = mutateQuestionersOnly(current, personIds, ctx, guidance, config, unavailMap);
+    const neighborCost = totalCost(neighbor);
+    const delta = neighborCost - currentCost;
+
+    if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
+      current = neighbor;
+      currentCost = neighborCost;
+      if (currentCost < bestCost) {
+        best = deepCloneSessions(current);
+        bestCost = currentCost;
+      }
+    }
+  }
+
+  return best;
+}
+
 export const annealingSolver: ScheduleSolver = {
   solveFull(input: SolverInput): Session[] {
     const { config, unavailabilities = [], mutations } = input;
@@ -599,6 +695,7 @@ export const annealingSolver: ScheduleSolver = {
     const {
       config, sessions, mutations,
       index: _index, changeDate: _changeDate, unavailabilities = [],
+      mode = 'full',
       useHamming = true,
     } = input;
 
@@ -614,15 +711,31 @@ export const annealingSolver: ScheduleSolver = {
 
     const frozenSessions = sessions.slice(0, index);
     const activeSessions = sessions.slice(index);
-    const mutableDates = generateSessionDates({ ...config, startDate: changeDate });
-    if (mutations?.length) {
-      replaySessionMutations(mutableDates, mutations, { inPlace: true, startDate: changeDate });
-    }
 
     const ctx = buildCostContext(input);
     const personIds = [...ctx.personKeywords.keys()];
     const unavailMap = buildUnavailMap(unavailabilities, config.id);
     const hammingRef = useHamming ? activeSessions : null;
+
+    if (mode === 'questioners-only') {
+      const initial = rebuildQuestionersForSessions(activeSessions, personIds, ctx, config, unavailMap);
+      const optimized = simulatedAnnealingQuestionersOnly(
+        initial,
+        ctx,
+        frozenSessions,
+        config,
+        hammingRef,
+        ANNEALING_CONFIG.hammingWeight,
+        unavailMap,
+      );
+
+      return frozenSessions.concat(optimized);
+    }
+
+    const mutableDates = generateSessionDates({ ...config, startDate: changeDate });
+    if (mutations?.length) {
+      replaySessionMutations(mutableDates, mutations, { inPlace: true, startDate: changeDate });
+    }
 
     const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
     const optimized = simulatedAnnealing(

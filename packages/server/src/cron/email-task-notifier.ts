@@ -177,6 +177,24 @@ function latestScheduleSummary(sessions: number, createdAt: number | null): stri
   return `Latest plan has ${sessions} sessions, created at ${new Date(createdAt).toISOString()}.`;
 }
 
+type TaskExecutionContext = {
+  config: ScheduleConfig | undefined;
+  persons: Person[];
+  latest: SchedulePlan | undefined;
+  sentCounts: Record<string, number>;
+  runAt: number;
+  timezone: string;
+};
+
+type TaskExecutionDecision =
+  | { kind: 'unregister-missing-config' }
+  | { kind: 'skip-disabled' }
+  | { kind: 'skip-ended' }
+  | { kind: 'skip-next' }
+  | { kind: 'skip-no-schedule' }
+  | { kind: 'skip-stale-schedule' }
+  | { kind: 'send' };
+
 export class EmailTaskNotifier {
   constructor(private readonly options: EmailTaskNotifierOptions) {}
 
@@ -190,6 +208,69 @@ export class EmailTaskNotifier {
     return `${normalizedBase}/public/email-tasks/${encodeURIComponent(task.id)}/schedule.ics`;
   }
 
+  private async loadExecutionContext(task: EmailTask): Promise<TaskExecutionContext> {
+    const config = await this.options.store.getConfig(task.configId);
+    const persons = config ? await this.options.store.listPersons() : [];
+    const latest = config
+      ? (await this.options.store.listSchedules())
+        .filter((item) => item.configId === task.configId)
+        .sort((a, b) => b.createdAt - a.createdAt)[0]
+      : undefined;
+
+    return {
+      config,
+      persons,
+      latest,
+      sentCounts: { ...(task.sentCounts ?? {}) },
+      runAt: Date.now(),
+      timezone: resolveTaskTimezone(task),
+    };
+  }
+
+  private determineExecutionDecision(task: EmailTask, context: TaskExecutionContext, options: { manual: boolean }): TaskExecutionDecision {
+    if (!context.config) {
+      return { kind: 'unregister-missing-config' };
+    }
+
+    if (!options.manual && task.disabled) {
+      return { kind: 'skip-disabled' };
+    }
+
+    if (!options.manual && hasPeriodEnded(context.config, context.runAt, context.timezone)) {
+      return { kind: 'skip-ended' };
+    }
+
+    if (!options.manual && task.skipNextRun) {
+      return { kind: 'skip-next' };
+    }
+
+    if (!context.latest) {
+      return { kind: 'skip-no-schedule' };
+    }
+
+    if (!options.manual && task.lastRunAt && context.latest.createdAt <= task.lastRunAt) {
+      return { kind: 'skip-stale-schedule' };
+    }
+
+    return { kind: 'send' };
+  }
+
+  private async persistTask(task: EmailTask, patch: Partial<EmailTask>): Promise<void> {
+    await this.options.store.putEmailTask({
+      ...task,
+      ...patch,
+      modifiedAt: patch.modifiedAt ?? Date.now(),
+    });
+  }
+
+  private async persistScheduledSkip(task: EmailTask, runAt: number, patch: Partial<EmailTask> = {}): Promise<void> {
+    await this.persistTask(task, {
+      ...patch,
+      lastSkippedAt: runAt,
+      modifiedAt: runAt,
+    });
+  }
+
   async syncJobs(): Promise<void> {
     const { scheduler, store } = this.options;
     const tasks = await store.listEmailTasks();
@@ -198,6 +279,8 @@ export class EmailTaskNotifier {
     const runAt = Date.now();
 
     for (const task of tasks) {
+      if (task.disabled) continue;
+
       const days = uniqueSortedDays(task.daysOfWeek);
       if (days.length === 0 || task.emails.length === 0) continue;
 
@@ -243,48 +326,47 @@ export class EmailTaskNotifier {
   }
 
   private async executeTask(task: EmailTask, options: { manual: boolean }): Promise<void> {
-    const config = await this.options.store.getConfig(task.configId);
-    if (!config) {
+    const context = await this.loadExecutionContext(task);
+    const decision = this.determineExecutionDecision(task, context, options);
+
+    if (decision.kind === 'unregister-missing-config') {
       this.options.scheduler.unregister(`email-task:${task.id}`);
       return;
     }
-    const persons = await this.options.store.listPersons();
 
-    const latest = (await this.options.store.listSchedules())
-      .filter((item) => item.configId === task.configId)
-      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    const { config, persons, latest, sentCounts, runAt, timezone } = context;
 
-    const sentCounts = { ...(task.sentCounts ?? {}) };
-    const runAt = Date.now();
-    const timezone = resolveTaskTimezone(task);
+    if (decision.kind === 'skip-disabled') {
+      await this.persistScheduledSkip(task, runAt);
+      return;
+    }
 
-    if (!options.manual && hasPeriodEnded(config, runAt, timezone)) {
+    if (decision.kind === 'skip-ended') {
       this.options.scheduler.unregister(`email-task:${task.id}`);
-      await this.options.store.putEmailTask({
-        ...task,
-        lastSkippedAt: runAt,
-        modifiedAt: runAt,
+      await this.persistScheduledSkip(task, runAt);
+      return;
+    }
+
+    if (decision.kind === 'skip-next') {
+      await this.persistScheduledSkip(task, runAt, {
+        skipNextRun: false,
       });
       return;
     }
 
-    if (!latest) {
+    if (decision.kind === 'skip-no-schedule') {
       if (!options.manual) {
-        await this.options.store.putEmailTask({
-          ...task,
-          lastSkippedAt: runAt,
-          modifiedAt: runAt,
-        });
+        await this.persistScheduledSkip(task, runAt);
       }
       return;
     }
 
-    if (!options.manual && task.lastRunAt && latest.createdAt <= task.lastRunAt) {
-      await this.options.store.putEmailTask({
-        ...task,
-        lastSkippedAt: runAt,
-        modifiedAt: runAt,
-      });
+    if (decision.kind === 'skip-stale-schedule') {
+      await this.persistScheduledSkip(task, runAt);
+      return;
+    }
+
+    if (!config || !latest) {
       return;
     }
 
@@ -298,16 +380,6 @@ export class EmailTaskNotifier {
       locale,
       persons,
     });
-
-    if (!options.manual && task.skipNextRun) {
-      await this.options.store.putEmailTask({
-        ...task,
-        skipNextRun: false,
-        lastSkippedAt: runAt,
-        modifiedAt: runAt,
-      });
-      return;
-    }
 
     for (const recipient of task.emails) {
       const currentSent = sentCounts[recipient] ?? 0;
@@ -340,9 +412,17 @@ export class EmailTaskNotifier {
         console.warn(`[email-task] subject template render errors for task ${task.id}:`, renderedSubject.errors);
       }
 
+      const renderedSenderName = task.senderNameTemplate
+        ? renderTemplate(task.senderNameTemplate, context)
+        : { output: '', errors: [] };
+      if (renderedSenderName.errors.length > 0) {
+        console.warn(`[email-task] sender name template render errors for task ${task.id}:`, renderedSenderName.errors);
+      }
+
       await this.options.mailer.send({
         to: [recipient],
         subject: renderedSubject.output.trim() || `[Labby] Scheduled Email ${task.id}`,
+        fromName: renderedSenderName.output.trim() || undefined,
         text: rendered.output,
         html: rendered.html,
         attachments,
@@ -351,11 +431,9 @@ export class EmailTaskNotifier {
       sentCounts[recipient] = currentSent + 1;
     }
 
-    await this.options.store.putEmailTask({
-      ...task,
+    await this.persistTask(task, {
       sentCounts,
       lastRunAt: runAt,
-      modifiedAt: runAt,
     });
   }
 

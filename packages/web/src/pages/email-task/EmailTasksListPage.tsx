@@ -2,10 +2,9 @@ import { useEffect } from 'preact/hooks';
 import type { EmailTask } from '@labby/core';
 
 import { Button, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles, toast } from '@/components/ui';
-import { confirmDialog } from '@/components/ui/Dialog';
 import { loadAllConfigs, loadAllEmailTasks, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
-import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
+import { setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
@@ -35,6 +34,10 @@ function summarizeEmails(task: EmailTask): string {
   return `${shown} +${task.emails.length - 2}`;
 }
 
+function summarizeCadence(task: EmailTask): string {
+  return `${summarizeDays(task.daysOfWeek)} · ${task.sendTime ?? '09:00'} · ${task.timezone ?? 'UTC'}`;
+}
+
 export function EmailTasksListPage() {
   const { t } = i18n;
   const db = useDatabase();
@@ -51,22 +54,13 @@ export function EmailTasksListPage() {
     return config ? getScheduleConfigLabel(config) : configId;
   }
 
-  async function removeTask(task: EmailTask): Promise<void> {
-    confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
-      await db.emailTasks.delete(task.id);
-      await loadAllEmailTasks(db);
+  async function toggleDisabled(task: EmailTask): Promise<void> {
+    await db.emailTasks.put({
+      ...task,
+      disabled: !task.disabled,
+      modifiedAt: Date.now(),
     });
-  }
-
-  async function triggerSendNow(task: EmailTask): Promise<void> {
-    if (!capability.canAutoSend) return;
-    try {
-      await sendEmailTaskNow(task.id);
-      await loadAllEmailTasks(db);
-      toast.success(t('emailTaskSendNowSuccess'));
-    } catch (err) {
-      toast.error(`${t('emailTaskSendNowFailed')}: ${String(err)}`);
-    }
+    await loadAllEmailTasks(db);
   }
 
   async function toggleSkipNext(task: EmailTask): Promise<void> {
@@ -97,9 +91,7 @@ export function EmailTasksListPage() {
             items={tasks}
             columns={[
               { header: t('emailTaskConfig') },
-              { header: t('emailTaskDays') },
-              { header: t('emailTaskSendTime') },
-              { header: t('emailTaskTimezone') },
+              { header: t('emailTaskCadence') },
               { header: t('emailTaskEmails') },
               { header: t('modifiedAt') },
             ]}
@@ -107,10 +99,13 @@ export function EmailTasksListPage() {
             getKey={(task) => task.id}
             renderDesktopRow={(task) => (
               <>
-                <td class={s.td}>{findConfigLabel(task.configId)}</td>
-                <td class={s.td}>{summarizeDays(task.daysOfWeek)}</td>
-                <td class={s.td}>{task.sendTime ?? '09:00'}</td>
-                <td class={s.td}>{task.timezone ?? 'UTC'}</td>
+                <td class={s.td}>
+                  <div class={s.flexGapXs}>
+                    <span>{findConfigLabel(task.configId)}</span>
+                    {task.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
+                  </div>
+                </td>
+                <td class={s.td}>{summarizeCadence(task)}</td>
                 <td class={s.td}>{summarizeEmails(task)}</td>
                 <td class={s.td}>{task.modifiedAt ? new Date(task.modifiedAt).toLocaleString() : '—'}</td>
               </>
@@ -118,13 +113,14 @@ export function EmailTasksListPage() {
             renderMobileCard={(task) => (
               <>
                 <div class={dataStyles.mobileHeader}>
-                  <div class={dataStyles.mobileTitle}>{findConfigLabel(task.configId)}</div>
-                  <div class={dataStyles.mobileSubtitle}>{task.modifiedAt ? new Date(task.modifiedAt).toLocaleString() : '—'}</div>
+                  <div>
+                    <div class={dataStyles.mobileTitle}>{findConfigLabel(task.configId)}</div>
+                    <div class={dataStyles.mobileSubtitle}>{task.modifiedAt ? new Date(task.modifiedAt).toLocaleString() : '—'}</div>
+                  </div>
+                  {task.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
                 </div>
                 <div class={dataStyles.mobileFields}>
-                  <ResponsiveDataField label={t('emailTaskDays')}>{summarizeDays(task.daysOfWeek)}</ResponsiveDataField>
-                  <ResponsiveDataField label={t('emailTaskSendTime')}>{task.sendTime ?? '09:00'}</ResponsiveDataField>
-                  <ResponsiveDataField label={t('emailTaskTimezone')}>{task.timezone ?? 'UTC'}</ResponsiveDataField>
+                  <ResponsiveDataField label={t('emailTaskCadence')}>{summarizeCadence(task)}</ResponsiveDataField>
                   <ResponsiveDataField label={t('emailTaskEmails')}>{summarizeEmails(task)}</ResponsiveDataField>
                 </div>
               </>
@@ -132,15 +128,14 @@ export function EmailTasksListPage() {
             renderActions={(task) => (
               <>
                 <Button variant="ghost" onClick={() => navigate(`/email-tasks/edit/${task.id}`)}>{t('edit')}</Button>
+                <Button variant="ghost" onClick={() => void toggleDisabled(task)}>
+                  {task.disabled ? t('enable') : t('disable')}
+                </Button>
                 {capability.canAutoSend && (
-                  <>
-                    <Button variant="secondary" onClick={() => void triggerSendNow(task)}>{t('emailTaskSendNow')}</Button>
-                    <Button variant="ghost" onClick={() => void toggleSkipNext(task)}>
-                      {task.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
-                    </Button>
-                  </>
+                  <Button variant="ghost" onClick={() => void toggleSkipNext(task)}>
+                    {task.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
+                  </Button>
                 )}
-                <Button variant="danger" onClick={() => void removeTask(task)}>{t('delete')}</Button>
               </>
             )}
           />

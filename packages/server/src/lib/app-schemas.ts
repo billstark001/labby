@@ -59,6 +59,7 @@ export const solverIncrementalInputSchema = z.object({
   previousPlanId: z.string().min(1),
   changeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   index: z.number().int().nonnegative().optional(),
+  mode: z.enum(['full', 'questioners-only']).optional(),
   personIds: z.array(z.string()).optional(),
 }).refine(
   value => value.changeDate !== undefined || value.index !== undefined,

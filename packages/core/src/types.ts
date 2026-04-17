@@ -69,6 +69,8 @@ export interface ScheduleConfig {
 export interface EmailTask {
   id: string;
   configId: string;
+  disabled?: boolean;
+  notes?: string;
   /** 0=Sun..6=Sat */
   daysOfWeek: number[];
   /** Daily local send time in HH:mm for the selected timezone. */
@@ -78,6 +80,8 @@ export interface EmailTask {
   emails: string[];
   /** 0 means unlimited sends for each recipient. */
   recentTimes: number;
+  /** Optional template source for the human-friendly sender display name. */
+  senderNameTemplate?: string;
   /** Optional subject template source text for email title rendering. */
   subjectTemplate?: string;
   /** Template source text, parsed by the template module. */
@@ -202,8 +206,11 @@ export interface IncrementalSolverInput extends SolverInput {
   sessions: Session[]; // current sessions to be mutated
   index?: number; // session index to change (0-based)
   changeDate?: string; // ISO date – sessions on or after this date are re-scheduled
+  mode?: IncrementalSolveMode; // full = presenters+questioners, questioners-only = keep presenters fixed
   useHamming?: boolean; // whether to apply Hamming penalty to changes from previousPlan
 }
+
+export type IncrementalSolveMode = 'full' | 'questioners-only';
 
 /** Triplet comparison query presented to the user. */
 export interface TripletQuery {

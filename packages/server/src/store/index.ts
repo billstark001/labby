@@ -11,9 +11,11 @@ import { migratePostgres } from './migrate/postgres.js';
 import { migrateSqlite } from './migrate/sqlite.js';
 
 import type {
+  EntityListSortBy,
   EmailTask,
   Keyword,
   KeywordVector,
+  ListSortDirection,
   Person,
   PersonUnavailability,
   ScheduleConfig,
@@ -137,12 +139,83 @@ type PostgresDrizzleDb = ReturnType<typeof drizzlePostgres>;
 const LATENT_DIM = 64;
 const PROJECTION_DIM = 2;
 
+type EntityListSort = {
+  sortBy: EntityListSortBy;
+  sortDirection: ListSortDirection;
+};
+
+type SortableEntity = {
+  id: string;
+  modifiedAt?: number;
+  name?: string;
+  notes?: string;
+};
+
 function normalizeIdentity(identity: string): string {
   return identity.trim().toLowerCase();
 }
 
 function nowMs(): number {
   return Date.now();
+}
+
+function normalizeEntitySort(sort?: Partial<EntityListSort>): EntityListSort {
+  const sortBy = sort?.sortBy ?? 'modifiedAt';
+  const sortDirection = sort?.sortDirection ?? (sortBy === 'modifiedAt' ? 'desc' : 'asc');
+  return { sortBy, sortDirection };
+}
+
+function normalizeSortText(value: string | undefined): string {
+  return (value ?? '').trim().toLocaleLowerCase();
+}
+
+function compareText(left: string | undefined, right: string | undefined, direction: ListSortDirection): number {
+  const leftValue = normalizeSortText(left);
+  const rightValue = normalizeSortText(right);
+  const diff = leftValue.localeCompare(rightValue);
+  return direction === 'asc' ? diff : -diff;
+}
+
+function compareNumber(left: number | undefined, right: number | undefined, direction: ListSortDirection): number {
+  const leftValue = left ?? 0;
+  const rightValue = right ?? 0;
+  const diff = leftValue - rightValue;
+  return direction === 'asc' ? diff : -diff;
+}
+
+function compareSortableEntities<T extends SortableEntity>(
+  left: T,
+  right: T,
+  sort?: Partial<EntityListSort>,
+): number {
+  const resolved = normalizeEntitySort(sort);
+  const comparators: Array<(leftItem: T, rightItem: T) => number> = [];
+
+  if (resolved.sortBy === 'modifiedAt') {
+    comparators.push((leftItem, rightItem) => compareNumber(leftItem.modifiedAt, rightItem.modifiedAt, resolved.sortDirection));
+  }
+  if (resolved.sortBy === 'name') {
+    comparators.push((leftItem, rightItem) => compareText(leftItem.name, rightItem.name, resolved.sortDirection));
+  }
+  if (resolved.sortBy === 'notes') {
+    comparators.push((leftItem, rightItem) => compareText(leftItem.notes, rightItem.notes, resolved.sortDirection));
+  }
+
+  comparators.push(
+    (leftItem, rightItem) => compareNumber(leftItem.modifiedAt, rightItem.modifiedAt, 'desc'),
+    (leftItem, rightItem) => compareText(leftItem.name, rightItem.name, 'asc'),
+    (leftItem, rightItem) => compareText(leftItem.notes, rightItem.notes, 'asc'),
+    (leftItem, rightItem) => compareText(leftItem.id, rightItem.id, 'asc'),
+  );
+
+  for (const comparator of comparators) {
+    const diff = comparator(left, right);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+
+  return 0;
 }
 
 function toSqlitePath(input: string): string {
@@ -606,9 +679,10 @@ export class SqliteStore {
     return this.getPayload<Person>(sql`SELECT payload FROM persons WHERE id = ${id}`);
   }
 
-  async listPersons(): Promise<Person[]> {
+  async listPersons(sort?: Partial<EntityListSort>): Promise<Person[]> {
     await this.ensureReady();
-    return this.listPayloads<Person>(sql`SELECT payload FROM persons ORDER BY updated_at DESC, id DESC`);
+    const persons = await this.listPayloads<Person>(sql`SELECT payload FROM persons`);
+    return persons.sort((left, right) => compareSortableEntities(left, right, sort));
   }
 
   async putPerson(person: Person): Promise<void> {
@@ -639,9 +713,10 @@ export class SqliteStore {
     return this.getPayload<Keyword>(sql`SELECT payload FROM keywords WHERE id = ${id}`);
   }
 
-  async listKeywords(): Promise<Keyword[]> {
+  async listKeywords(sort?: Partial<EntityListSort>): Promise<Keyword[]> {
     await this.ensureReady();
-    return this.listPayloads<Keyword>(sql`SELECT payload FROM keywords ORDER BY updated_at DESC, id DESC`);
+    const keywords = await this.listPayloads<Keyword>(sql`SELECT payload FROM keywords`);
+    return keywords.sort((left, right) => compareSortableEntities(left, right, sort));
   }
 
   async putKeyword(keyword: Keyword): Promise<void> {

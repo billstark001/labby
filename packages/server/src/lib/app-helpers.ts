@@ -1,4 +1,4 @@
-import type { Person } from '@labby/core';
+import type { EntityListSortBy, ListSortDirection, Person } from '@labby/core';
 
 export function parsePagination(input: { offset?: string; limit?: string }): { offset: number; limit: number } {
   const rawOffset = Number.parseInt(input.offset ?? '0', 10);
@@ -7,6 +7,20 @@ export function parsePagination(input: { offset?: string; limit?: string }): { o
     offset: Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0,
     limit: Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 20,
   };
+}
+
+export function parseEntityListSort(input: { sortBy?: string; sortDirection?: string }): {
+  sortBy: EntityListSortBy;
+  sortDirection: ListSortDirection;
+} {
+  const sortBy = input.sortBy === 'name' || input.sortBy === 'notes' || input.sortBy === 'modifiedAt'
+    ? input.sortBy
+    : 'modifiedAt';
+  const sortDirection = input.sortDirection === 'asc' || input.sortDirection === 'desc'
+    ? input.sortDirection
+    : (sortBy === 'modifiedAt' ? 'desc' : 'asc');
+
+  return { sortBy, sortDirection };
 }
 
 export function toPage<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; offset: number; limit: number } {

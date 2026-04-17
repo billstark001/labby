@@ -16,7 +16,14 @@ interface ScheduleViewProps {
   selectedConfigId: string;
   personMap: Map<string, Person>;
   manualEditMode: boolean;
-  onManualEdit: (target: { mode: 'presenter' | 'questioner'; sessionDate: string; presIndex: number; questIndex?: number }) => void;
+  onManualEdit: (target: {
+    mode: 'presenter' | 'questioner';
+    action?: 'replace' | 'add';
+    sessionDate: string;
+    presIndex: number;
+    questIndex?: number;
+  }) => void;
+  onDeleteQuestioner: (target: { sessionDate: string; presIndex: number; questIndex: number }) => void;
   onShowMetricsForSession: (plan: SchedulePlan, date: string) => void;
   onOpenSessionMutation: (mode: 'insert' | 'delete', date: string) => void;
   onOpenPresentationMutation: (sessionDate: string, presentationIndex: number) => void;
@@ -28,6 +35,7 @@ export function ScheduleView({
   personMap,
   manualEditMode,
   onManualEdit,
+  onDeleteQuestioner,
   onShowMetricsForSession,
   onOpenSessionMutation,
   onOpenPresentationMutation,
@@ -129,12 +137,24 @@ export function ScheduleView({
                                 <MenuItem onSelect={() => onManualEdit({ mode: 'questioner', sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
                                   {t('selectNewQuestioner')}
                                 </MenuItem>
+                                <MenuItem onSelect={() => onDeleteQuestioner({ sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
+                                  {t('delete')}
+                                </MenuItem>
                               </MenuContent>
                             </Menu>
                           ) : (
                             <span key={`${qid}-${qi}`} class={s.badge}>{name}</span>
                           );
                         })}
+                        {manualEditMode && (
+                          <button
+                            type="button"
+                            class={`${s.badgeButton} ${s.editableCell}`}
+                            onClick={() => onManualEdit({ mode: 'questioner', action: 'add', sessionDate: sess.date, presIndex: pi })}
+                          >
+                            +
+                          </button>
+                        )}
                       </div>
                     </td>
                   </>
@@ -165,12 +185,24 @@ export function ScheduleView({
                                   <MenuItem onSelect={() => onManualEdit({ mode: 'questioner', sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
                                     {t('selectNewQuestioner')}
                                   </MenuItem>
+                                  <MenuItem onSelect={() => onDeleteQuestioner({ sessionDate: sess.date, presIndex: pi, questIndex: qi })}>
+                                    {t('delete')}
+                                  </MenuItem>
                                 </MenuContent>
                               </Menu>
                             ) : (
                               <span key={`${qid}-${qi}`} class={s.badge}>{name}</span>
                             );
                           })}
+                          {manualEditMode && (
+                            <button
+                              type="button"
+                              class={`${s.badgeButton} ${s.editableCell}`}
+                              onClick={() => onManualEdit({ mode: 'questioner', action: 'add', sessionDate: sess.date, presIndex: pi })}
+                            >
+                              +
+                            </button>
+                          )}
                         </div>
                       </ResponsiveDataField>
                     </div>

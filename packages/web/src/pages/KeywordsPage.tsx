@@ -12,7 +12,7 @@ export function KeywordsPage() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const firstPage = await listKeywordsPage(db, 0, 20);
+      const firstPage = await listKeywordsPage(db, { offset: 0, limit: 20 });
       if (cancelled) return;
       keywordsSignal.value = firstPage.items;
       const keywordIds = firstPage.items.map((item) => item.id);

@@ -40,6 +40,7 @@ export interface MailAttachment {
 export interface SendMailInput {
   to: string | string[];
   subject: string;
+  fromName?: string;
   text?: string;
   html?: string;
   attachments?: MailAttachment[];
@@ -75,7 +76,7 @@ export class Mailer {
 
   async send(input: SendMailInput): Promise<void> {
     const mailOptions: SendMailOptions = {
-      from: this.from,
+      from: buildFromHeader(this.from, input.fromName),
       to: Array.isArray(input.to) ? input.to.join(', ') : input.to,
       subject: input.subject,
       text: input.text,
@@ -94,6 +95,29 @@ export class Mailer {
       return false;
     }
   }
+}
+
+function extractFromAddress(from: string): string {
+  const trimmed = from.trim();
+  const angleMatch = trimmed.match(/<([^<>]+)>/);
+  if (angleMatch?.[1]) {
+    return angleMatch[1].trim();
+  }
+  return trimmed;
+}
+
+function escapeDisplayName(input: string): string {
+  return input.replace(/"/g, '\\"').trim();
+}
+
+function buildFromHeader(defaultFrom: string, fromName: string | undefined): string {
+  const normalizedName = fromName?.trim();
+  if (!normalizedName) {
+    return defaultFrom;
+  }
+
+  const address = extractFromAddress(defaultFrom);
+  return `"${escapeDisplayName(normalizedName)}" <${address}>`;
 }
 
 function tryParseRefreshToken(token: string): string | null {

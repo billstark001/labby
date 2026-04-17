@@ -23,7 +23,14 @@ import {
   useDatabase,
 } from '@/db/index';
 import { computeScheduleMetrics, explainScheduleMetrics, mutatePresentations, mutateSessions } from '@labby/core';
-import type { ScheduleConfig, SchedulePlan, PersonUnavailability, MetricExplanation, ScheduleMetrics } from '@labby/core';
+import type {
+  IncrementalSolveMode,
+  MetricExplanation,
+  PersonUnavailability,
+  ScheduleConfig,
+  ScheduleMetrics,
+  SchedulePlan,
+} from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import {
@@ -77,11 +84,13 @@ export function SchedulePage() {
   const [editingConfig, setEditingConfig] = useState<ScheduleConfig | null>(null);
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
   const [changeDate, setChangeDate] = useState('');
+  const [incrementalMode, setIncrementalMode] = useState<IncrementalSolveMode>('full');
   const [showUnavailForm, setShowUnavailForm] = useState(false);
   const [editingUnavail, setEditingUnavail] = useState<PersonUnavailability | null>(null);
   const [editingNotes, setEditingNotes] = useState<SchedulePlan | null>(null);
   const [manualEditTarget, setManualEditTarget] = useState<{
     mode: 'presenter' | 'questioner';
+    action?: 'replace' | 'add';
     sessionDate: string;
     presIndex: number;
     questIndex?: number;
@@ -331,7 +340,7 @@ export function SchedulePage() {
     const tid = toast.loading(t('computing'));
     try {
       await new Promise<void>(resolve => setTimeout(resolve, 50));
-      const result = await backend.runIncremental(config, current, changeDate, solverCtx(config.id));
+      const result = await backend.runIncremental(config, current, changeDate, solverCtx(config.id), incrementalMode);
       await handleSolveResult(result);
       toast.dismiss(tid);
       toast.success(t('computeSuccess'));
@@ -421,6 +430,55 @@ export function SchedulePage() {
     await db.schedules.put(updated);
     await refreshScheduleScopedData(plan.configId);
     if (currentScheduleSignal.value?.id === plan.id) currentScheduleSignal.value = updated;
+  }
+
+  async function handleDuplicateHistory(plan: SchedulePlan) {
+    const timestamp = Date.now();
+    const duplicate: SchedulePlan = {
+      ...plan,
+      id: nanoid(),
+      createdAt: timestamp,
+      modifiedAt: timestamp,
+    };
+
+    await db.schedules.put(duplicate);
+    await refreshScheduleScopedData(duplicate.configId);
+    currentScheduleSignal.value = duplicate;
+  }
+
+  async function handleDeleteQuestioner(target: { sessionDate: string; presIndex: number; questIndex: number }) {
+    if (!current) return;
+
+    const session = current.sessions.find(item => item.date === target.sessionDate);
+    const presentation = session?.presentations[target.presIndex];
+    if (!session || !presentation || target.questIndex < 0 || target.questIndex >= presentation.questionerIds.length) {
+      toast.error(t('mutationTargetNotFound'));
+      return;
+    }
+
+    const nextSessions = current.sessions.map((item) => {
+      if (item.date !== target.sessionDate) return item;
+      return {
+        ...item,
+        presentations: item.presentations.map((entry, index) => {
+          if (index !== target.presIndex) return entry;
+          return {
+            ...entry,
+            questionerIds: entry.questionerIds.filter((_, questionerIndex) => questionerIndex !== target.questIndex),
+          };
+        }),
+      };
+    });
+
+    const updated: SchedulePlan = {
+      ...current,
+      sessions: nextSessions,
+      modifiedAt: Date.now(),
+    };
+
+    await db.schedules.put(updated);
+    await refreshScheduleScopedData(updated.configId);
+    currentScheduleSignal.value = updated;
   }
 
   // #endregion
@@ -691,6 +749,14 @@ export function SchedulePage() {
               value={changeDate}
               onInput={e => setChangeDate((e.target as HTMLInputElement).value)}
             />
+            <select
+              class={`${s.input} ${s.autoWidthInput}`}
+              value={incrementalMode}
+              onChange={event => setIncrementalMode((event.target as HTMLSelectElement).value as IncrementalSolveMode)}
+            >
+              <option value="full">{t('incrementalModeFull')}</option>
+              <option value="questioners-only">{t('incrementalModeQuestionersOnly')}</option>
+            </select>
             <Button variant="secondary" onClick={handleIncremental} disabled={isComputing || !changeDate}>
               {t('incrementalReschedule')}
             </Button>
@@ -717,6 +783,7 @@ export function SchedulePage() {
           selectedHistoryIds={selectedHistoryIds}
           currentSchedule={current}
           onSelectHistory={plan => { currentScheduleSignal.value = plan; }}
+          onDuplicateHistory={(plan) => void handleDuplicateHistory(plan)}
           onToggleHistory={toggleHistorySelection}
           onSelectAll={() => setSelectedHistoryIds(new Set(sortedHistoryPlans.map(p => p.id)))}
           onClearSelection={() => setSelectedHistoryIds(new Set())}
@@ -770,6 +837,7 @@ export function SchedulePage() {
         personMap={personMap}
         manualEditMode={manualEditMode}
         onManualEdit={setManualEditTarget}
+        onDeleteQuestioner={(target) => void handleDeleteQuestioner(target)}
         onShowMetricsForSession={(plan, date) => void showMetricsForSession(plan, date)}
         onOpenSessionMutation={openSessionMutationDialog}
         onOpenPresentationMutation={openPresentationMutationDialog}

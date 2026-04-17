@@ -217,8 +217,14 @@ test('SqliteStore keeps modifiedAt sorting and standalone constraints persistenc
 
   try {
     const older = samplePerson('p-old');
+    older.name = 'Zulu';
+    older.names.en = 'Zulu';
+    older.notes = 'later note';
     older.modifiedAt = 10;
     const newer = samplePerson('p-new');
+    newer.name = 'Alpha';
+    newer.names.en = 'Alpha';
+    newer.notes = 'earlier note';
     newer.modifiedAt = 20;
     await store.putPerson(older);
     await store.putPerson(newer);
@@ -226,6 +232,35 @@ test('SqliteStore keeps modifiedAt sorting and standalone constraints persistenc
     const persons = await store.listPersons();
     assert.equal(persons[0]?.id, 'p-new');
     assert.equal(persons[1]?.id, 'p-old');
+
+    const personsByName = await store.listPersons({ sortBy: 'name', sortDirection: 'asc' });
+    assert.equal(personsByName[0]?.id, 'p-new');
+    assert.equal(personsByName[1]?.id, 'p-old');
+
+    const personsByNotes = await store.listPersons({ sortBy: 'notes', sortDirection: 'asc' });
+    assert.equal(personsByNotes[0]?.id, 'p-new');
+    assert.equal(personsByNotes[1]?.id, 'p-old');
+
+    const keywordZeta = sampleKeyword('k-zeta');
+    keywordZeta.name = 'Zeta';
+    keywordZeta.names.en = 'Zeta';
+    keywordZeta.notes = 'zzz';
+    keywordZeta.modifiedAt = 5;
+    const keywordAlpha = sampleKeyword('k-alpha');
+    keywordAlpha.name = 'Alpha';
+    keywordAlpha.names.en = 'Alpha';
+    keywordAlpha.notes = 'aaa';
+    keywordAlpha.modifiedAt = 15;
+    await store.putKeyword(keywordZeta);
+    await store.putKeyword(keywordAlpha);
+
+    const keywordsByName = await store.listKeywords({ sortBy: 'name', sortDirection: 'asc' });
+    assert.equal(keywordsByName[0]?.id, 'k-alpha');
+    assert.equal(keywordsByName[1]?.id, 'k-zeta');
+
+    const keywordsByNotes = await store.listKeywords({ sortBy: 'notes', sortDirection: 'asc' });
+    assert.equal(keywordsByNotes[0]?.id, 'k-alpha');
+    assert.equal(keywordsByNotes[1]?.id, 'k-zeta');
 
     const config = sampleConfig('cfg-constraints');
     await store.putConfig(config);

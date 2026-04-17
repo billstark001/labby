@@ -12,7 +12,13 @@ import type {
 export interface ListQuery {
   offset: number;
   limit: number;
+  sortBy?: EntityListSortBy;
+  sortDirection?: ListSortDirection;
 }
+
+export type EntityListSortBy = 'modifiedAt' | 'name' | 'notes';
+
+export type ListSortDirection = 'asc' | 'desc';
 
 export interface PaginatedResult<T> {
   items: T[];

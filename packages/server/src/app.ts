@@ -42,6 +42,7 @@ import {
 import {
   defaultDisplayName,
   defaultIncrementalDate,
+  parseEntityListSort,
   parsePagination,
   toPage,
 } from "./lib/app-helpers.js";
@@ -510,8 +511,10 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   });
 
   app.get("/api/v1/db/persons", async (c) => {
-    const { offset, limit } = parsePagination(c.req.query());
-    return ok(c, toPage(await store.listPersons(), offset, limit));
+    const query = c.req.query();
+    const { offset, limit } = parsePagination(query);
+    const sort = parseEntityListSort(query);
+    return ok(c, toPage(await store.listPersons(sort), offset, limit));
   });
   app.get("/api/v1/db/persons/:id", async (c) => ok(c, (await store.getPerson(c.req.param("id"))) ?? null));
   app.put("/api/v1/db/persons/:id", async (c) => {
@@ -525,8 +528,10 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   });
 
   app.get("/api/v1/db/keywords", async (c) => {
-    const { offset, limit } = parsePagination(c.req.query());
-    return ok(c, toPage(await store.listKeywords(), offset, limit));
+    const query = c.req.query();
+    const { offset, limit } = parsePagination(query);
+    const sort = parseEntityListSort(query);
+    return ok(c, toPage(await store.listKeywords(sort), offset, limit));
   });
   app.get("/api/v1/db/keywords/:id", async (c) => ok(c, (await store.getKeyword(c.req.param("id"))) ?? null));
   app.put("/api/v1/db/keywords/:id", async (c) => {
@@ -769,6 +774,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       mutations: previousPlan.sessionMutations,
       index: body.index,
       changeDate: resolvedChangeDate,
+      mode: body.mode,
       constraints,
     });
     const plan: SchedulePlan = {

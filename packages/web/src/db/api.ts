@@ -32,6 +32,8 @@ function normalizeListQuery(query: ListQuery): ListQuery {
   return {
     offset: Math.max(0, Math.floor(query.offset)),
     limit: Math.max(1, Math.floor(query.limit)),
+    sortBy: query.sortBy,
+    sortDirection: query.sortDirection,
   };
 }
 
@@ -47,6 +49,12 @@ function createEntityStore<T extends { id: string }>(client: ApiClient, path: st
         offset: String(normalized.offset),
         limit: String(normalized.limit),
       });
+      if (normalized.sortBy) {
+        params.set('sortBy', normalized.sortBy);
+      }
+      if (normalized.sortDirection) {
+        params.set('sortDirection', normalized.sortDirection);
+      }
       return client.request<PaginatedResult<T>>(`${path}?${params.toString()}`, { method: 'GET' });
     },
     put: (value: T) => client.request<T>(`${path}/${value.id}`, {

@@ -73,6 +73,16 @@ incrementalReschedule:
   zh-CN: 增量重排
   ja-JP: 差分再スケジュール
 
+incrementalModeFull:
+  en: Full Reshuffle
+  zh-CN: 完整重排
+  ja-JP: 全体再配置
+
+incrementalModeQuestionersOnly:
+  en: Questioners Only
+  zh-CN: 仅重排提问人
+  ja-JP: 質問者のみ再配置
+
 exportHtml:
   en: Export HTML
   zh-CN: 导出 HTML
@@ -663,6 +673,11 @@ selectNewQuestioner:
   zh-CN: 选择新的提问人
   ja-JP: 新しい質問者を選択
 
+addQuestioner:
+  en: Add Questioner
+  zh-CN: 添加提问人
+  ja-JP: 質問者を追加
+
 similarity:
   en: Similarity
   zh-CN: 相似度
@@ -693,6 +708,11 @@ emailTaskTimezone:
   en: Timezone (IANA)
   zh-CN: 时区（IANA）
   ja-JP: タイムゾーン（IANA）
+
+emailTaskCadence:
+  en: Cadence
+  zh-CN: 发送周期
+  ja-JP: 送信周期
 
 newEmailTask:
   en: New Email Task
@@ -798,6 +818,16 @@ emailTaskRecentTimes:
   en: recentTimes (0 = unlimited per recipient)
   zh-CN: recentTimes（0=每个收件人无限）
   ja-JP: recentTimes（0=受信者ごと無制限）
+
+senderNameTemplate:
+  en: Sender Name Template
+  zh-CN: 发件人姓名模板
+  ja-JP: 送信者名テンプレート
+
+senderNamePreview:
+  en: Sender Preview
+  zh-CN: 发件人预览
+  ja-JP: 送信者プレビュー
 
 emailTaskServeScheduleIcs:
   en: Public ICS Link

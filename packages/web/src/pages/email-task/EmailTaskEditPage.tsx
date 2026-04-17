@@ -27,6 +27,18 @@ import { configsSignal, emailTasksSignal, personsSignal, schedulesSignal } from 
 import * as s from '@/styles/components.css';
 import { AttachmentSettingsDialog, type EmailAttachmentType } from './AttachmentSettingsDialog';
 
+const DEFAULT_TIMEZONE = 'UTC';
+
+const SUPPORTED_TIMEZONES = (() => {
+  const intlWithSupportedValuesOf = Intl as typeof Intl & {
+    supportedValuesOf?: (key: 'timeZone') => string[];
+  };
+  const values = intlWithSupportedValuesOf.supportedValuesOf?.('timeZone') ?? [];
+  return values.includes(DEFAULT_TIMEZONE)
+    ? [DEFAULT_TIMEZONE, ...values.filter((value) => value !== DEFAULT_TIMEZONE)]
+    : [DEFAULT_TIMEZONE, ...values];
+})();
+
 const DAY_OPTIONS = [
   { value: 0, label: 'Sun' },
   { value: 1, label: 'Mon' },
@@ -118,16 +130,19 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
   const [selectedTaskId, setSelectedTaskId] = useState<string>(taskId ?? '');
   const [configId, setConfigId] = useState('');
+  const [isDisabled, setIsDisabled] = useState(false);
   const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]);
   const [sendTime, setSendTime] = useState('09:00');
-  const [taskTimezone, setTaskTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [taskTimezone, setTaskTimezone] = useState(DEFAULT_TIMEZONE);
   const [emailsText, setEmailsText] = useState('');
   const [recentTimes, setRecentTimes] = useState(0);
+  const [senderNameTemplate, setSenderNameTemplate] = useState('');
   const [subjectTemplate, setSubjectTemplate] = useState('');
   const [templateText, setTemplateText] = useState('');
   const [templateFormat, setTemplateFormat] = useState<TemplateFormat>('markdown');
   const [injectionLanguage, setInjectionLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
   const [dateGranularity, setDateGranularity] = useState<ScheduleDateGranularity>('date');
+  const [notes, setNotes] = useState('');
   const [serveScheduleIcs, setServeScheduleIcs] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [showDaysDialog, setShowDaysDialog] = useState(false);
@@ -192,19 +207,32 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     [subjectTemplate, previewContext, t],
   );
 
+  const previewSenderName = useMemo(
+    () => senderNameTemplate ? renderTemplate(senderNameTemplate, previewContext) : { output: '', errors: [] },
+    [senderNameTemplate, previewContext],
+  );
+
+  const timezoneOptions = useMemo(
+    () => [...new Set([taskTimezone || DEFAULT_TIMEZONE, ...SUPPORTED_TIMEZONES])],
+    [taskTimezone],
+  );
+
   function applyTaskToForm(task: EmailTask): void {
     setSelectedTaskId(task.id);
     setConfigId(task.configId);
+    setIsDisabled(task.disabled ?? false);
     setSelectedDays(task.daysOfWeek);
     setSendTime(task.sendTime ?? '09:00');
     setTaskTimezone(task.timezone ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : 'UTC'));
     setEmailsText(task.emails.join(', '));
     setRecentTimes(task.recentTimes);
+    setSenderNameTemplate(task.senderNameTemplate ?? '');
     setSubjectTemplate(task.subjectTemplate ?? '');
     setTemplateText(task.templateText);
     setTemplateFormat(((task.metadata?.format as TemplateFormat | undefined) ?? 'markdown'));
     setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
     setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
+    setNotes(task.notes ?? '');
     setServeScheduleIcs((task.metadata?.serveScheduleIcs as boolean | undefined) ?? false);
     const metadataAttachmentTypes = task.metadata?.attachmentTypes;
     if (Array.isArray(metadataAttachmentTypes)) {
@@ -221,16 +249,19 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   function resetForm(nextConfigId?: string): void {
     setSelectedTaskId('');
     setConfigId(nextConfigId ?? configs[0]?.id ?? '');
+    setIsDisabled(false);
     setSelectedDays([1, 3, 5]);
     setSendTime('09:00');
-    setTaskTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+    setTaskTimezone(DEFAULT_TIMEZONE);
     setEmailsText('');
     setRecentTimes(0);
+    setSenderNameTemplate('');
     setSubjectTemplate('');
     setTemplateText(DEFAULT_TEMPLATE_PRESETS[0]?.content ?? '');
     setTemplateFormat(DEFAULT_TEMPLATE_PRESETS[0]?.format ?? 'markdown');
     setInjectionLanguage(i18n.lang.value);
     setDateGranularity('date');
+    setNotes('');
     setServeScheduleIcs(false);
     setAttachmentTypes(['schedule-semester-csv', 'schedule-semester-ics']);
     setIsDirty(false);
@@ -296,11 +327,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     const task: EmailTask = {
       id: nextId,
       configId,
+      disabled: isDisabled,
+      notes: notes.trim() || undefined,
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
       sendTime,
       timezone: taskTimezone || 'UTC',
       emails: parseEmails(emailsText),
       recentTimes,
+      senderNameTemplate,
       subjectTemplate,
       templateText,
       modifiedAt: Date.now(),
@@ -370,6 +404,18 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     }).join(', ');
   }, [attachmentTypes, t]);
 
+  async function toggleDisabled(): Promise<void> {
+    const current = tasks.find((item) => item.id === selectedTaskId);
+    if (!current) return;
+    await db.emailTasks.put({
+      ...current,
+      disabled: !current.disabled,
+      modifiedAt: Date.now(),
+    });
+    await loadAllEmailTasks(db);
+    setIsDisabled((prev) => !prev);
+  }
+
   function toggleDay(day: number): void {
     setIsDirty(true);
     setSelectedDays((prev) => prev.includes(day)
@@ -393,6 +439,11 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('emailTaskEditorTitle')}</h2>
         <div class={s.flexGapSm}>
+          {selectedTaskId && (
+            <Button variant="ghost" onClick={() => void toggleDisabled()}>
+              {currentTask?.disabled ? t('enable') : t('disable')}
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => navigate('/email-tasks')}>{t('backToList')}</Button>
           {selectedTaskId && <Button variant="danger" onClick={() => void removeTask()}>{t('delete')}</Button>}
         </div>
@@ -431,6 +482,18 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         </div>
 
         <div class={s.formGroup}>
+          <label class={s.label}>{t('disabled')}</label>
+          <label class={s.flexGapSm}>
+            <input
+              type="checkbox"
+              checked={isDisabled}
+              onChange={(e) => { setIsDirty(true); setIsDisabled((e.target as HTMLInputElement).checked); }}
+            />
+            <span class={`${s.text12} ${s.textMuted}`}>{isDisabled ? t('disabled') : t('enable')}</span>
+          </label>
+        </div>
+
+        <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskDays')}</label>
           <div class={s.flexGapSm}>
             <Button variant="secondary" onClick={() => setShowDaysDialog(true)}>{t('selectWeekdays')}</Button>
@@ -452,17 +515,38 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskTimezone')}</label>
-          <input
+          <select
             class={s.input}
             value={taskTimezone}
-            onInput={(e) => { setIsDirty(true); setTaskTimezone((e.target as HTMLInputElement).value); }}
-            placeholder="Asia/Shanghai"
-          />
+            onChange={(e) => { setIsDirty(true); setTaskTimezone((e.target as HTMLSelectElement).value || DEFAULT_TIMEZONE); }}
+          >
+            {timezoneOptions.map((timeZone) => (
+              <option key={timeZone} value={timeZone}>{timeZone}</option>
+            ))}
+          </select>
         </div>
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskEmails')}</label>
           <input class={s.input} value={emailsText} onInput={(e) => { setIsDirty(true); setEmailsText((e.target as HTMLInputElement).value); }} />
+        </div>
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('senderNameTemplate')}</label>
+          <input
+            class={s.input}
+            value={senderNameTemplate}
+            onInput={(e) => { setIsDirty(true); setSenderNameTemplate((e.target as HTMLInputElement).value); }}
+            placeholder="{{ configId }}"
+          />
+          <div class={`${s.text12} ${s.textMuted}`}>{t('senderNamePreview')}: {previewSenderName.output || '—'}</div>
+          {previewSenderName.errors.length > 0 && (
+            <div class={s.textDanger}>
+              {previewSenderName.errors.map((err) => (
+                <div key={`${err.start}-${err.end}-${err.message}`}>{err.kind}: {err.message}</div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div class={s.formGroup}>
@@ -558,6 +642,16 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             <Button variant="secondary" onClick={() => setShowAttachmentDialog(true)}>{t('emailTaskAttachmentDialogOpen')}</Button>
             <span class={`${s.text12} ${s.textMuted}`}>{attachmentSummary}</span>
           </div>
+        </div>
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('notes')}</label>
+          <textarea
+            class={s.input}
+            rows={3}
+            value={notes}
+            onInput={(e) => { setIsDirty(true); setNotes((e.target as HTMLTextAreaElement).value); }}
+          />
         </div>
 
         <div class={s.formGroup}>

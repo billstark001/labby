@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import type { Person, Keyword } from '@labby/core';
+import type { EntityListSortBy, Keyword, ListSortDirection, Person } from '@labby/core';
 
 import { personsSignal, keywordsSignal, keywordMapSignal } from '@/store';
 import { fallbackEntityId, displayName, i18n } from '@/i18n';
@@ -160,8 +160,14 @@ export function PersonsTab() {
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
+  const [sortDirection, setSortDirection] = useState<ListSortDirection>('desc');
   const [totalItems, setTotalItems] = useState(0);
   const [personReferenceCount, setPersonReferenceCount] = useState<Map<string, number>>(new Map());
+
+  function defaultSortDirection(nextSortBy: EntityListSortBy): ListSortDirection {
+    return nextSortBy === 'modifiedAt' ? 'desc' : 'asc';
+  }
 
   async function refreshForeignKeyContext(personIds: string[]) {
     if (personIds.length === 0) {
@@ -174,10 +180,20 @@ export function PersonsTab() {
     setPersonReferenceCount(buildPersonReferenceCount(bundle));
   }
 
-  async function refreshPersonsPage(targetPage = page, targetPageSize = pageSize) {
+  async function refreshPersonsPage(
+    targetPage = page,
+    targetPageSize = pageSize,
+    targetSortBy = sortBy,
+    targetSortDirection = sortDirection,
+  ) {
     const safePage = Math.max(1, targetPage);
     const offset = (safePage - 1) * targetPageSize;
-    const result = await listPersonsPage(db, offset, targetPageSize);
+    const result = await listPersonsPage(db, {
+      offset,
+      limit: targetPageSize,
+      sortBy: targetSortBy,
+      sortDirection: targetSortDirection,
+    });
     personsSignal.value = result.items;
     await refreshForeignKeyContext(result.items.map((item) => item.id));
     setTotalItems(result.total);
@@ -194,7 +210,7 @@ export function PersonsTab() {
 
   useEffect(() => {
     void refreshPersonsPage(page, pageSize);
-  }, [db, page, pageSize]);
+  }, [db, page, pageSize, sortBy, sortDirection]);
 
   function isPersonReferenced(id: string): boolean {
     return (personReferenceCount.get(id) ?? 0) > 0;
@@ -229,6 +245,36 @@ export function PersonsTab() {
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navPersons')}</h2>
         <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
+      </div>
+
+      <div class={`${s.toolbar} ${s.mb8}`}>
+        <div class={s.flexGapSm}>
+          <select
+            class={`${s.input} ${s.autoWidthInput}`}
+            value={sortBy}
+            onChange={(event) => {
+              const nextSortBy = (event.target as HTMLSelectElement).value as EntityListSortBy;
+              setSortBy(nextSortBy);
+              setSortDirection(defaultSortDirection(nextSortBy));
+              setPage(1);
+            }}
+          >
+            <option value="modifiedAt">{t('modifiedAt')}</option>
+            <option value="name">{t('name')}</option>
+            <option value="notes">{t('notes')}</option>
+          </select>
+          <select
+            class={`${s.input} ${s.autoWidthInput}`}
+            value={sortDirection}
+            onChange={(event) => {
+              setSortDirection((event.target as HTMLSelectElement).value as ListSortDirection);
+              setPage(1);
+            }}
+          >
+            <option value="asc">ASC</option>
+            <option value="desc">DESC</option>
+          </select>
+        </div>
       </div>
 
       {editing && (

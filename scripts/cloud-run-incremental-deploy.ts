@@ -110,18 +110,18 @@ function timestampTag(): string {
 function main(): void {
   const root = runText('git', ['rev-parse', '--show-toplevel']);
   loadDotenv({ path: `${root}/.env`, override: false });
-  const changedFiles = getChangedFiles(root);
+  // const changedFiles = getChangedFiles(root);
 
-  if (changedFiles.length === 0) {
-    console.log('[deploy] No changed files in diff range; skip Cloud Run deploy.');
-    return;
-  }
+  // if (changedFiles.length === 0) {
+  //   console.log('[deploy] No changed files in diff range; skip Cloud Run deploy.');
+  //   return;
+  // }
 
-  const decision = shouldDeploy(changedFiles);
-  if (!decision.deploy) {
-    console.log('[deploy] Changes do not affect deployable targets; skip Cloud Run deploy.');
-    return;
-  }
+  // const decision = shouldDeploy(changedFiles);
+  // if (!decision.deploy) {
+  //   console.log('[deploy] Changes do not affect deployable targets; skip Cloud Run deploy.');
+  //   return;
+  // }
 
   const projectId = requiredEnv('CLOUD_RUN_PROJECT_ID');
   const region = requiredEnv('CLOUD_RUN_REGION');
@@ -129,7 +129,7 @@ function main(): void {
   const service = requiredEnv('CLOUD_RUN_SERVICE');
 
   const image = `${region}-docker.pkg.dev/${projectId}/${repository}/${service}:${timestampTag()}-amd64`;
-  console.log(`[deploy] Changed files requiring deploy: ${decision.matched.join(', ')}`);
+  // console.log(`[deploy] Changed files requiring deploy: ${decision.matched.join(', ')}`);
   console.log(`[deploy] Building image: ${image}`);
 
   run('docker', [

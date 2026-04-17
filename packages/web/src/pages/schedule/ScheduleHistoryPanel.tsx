@@ -5,7 +5,6 @@ import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '@/components/ui/Menu';
-import { toast } from '@/components/ui/Toast';
 import { HistoryNotesDialog } from './forms';
 
 interface ScheduleHistoryPanelProps {
@@ -13,6 +12,7 @@ interface ScheduleHistoryPanelProps {
   selectedHistoryIds: Set<string>;
   currentSchedule: SchedulePlan | null;
   onSelectHistory: (plan: SchedulePlan) => void;
+  onDuplicateHistory: (plan: SchedulePlan) => void;
   onToggleHistory: (id: string) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
@@ -31,6 +31,7 @@ export function ScheduleHistoryPanel({
   selectedHistoryIds,
   currentSchedule,
   onSelectHistory,
+  onDuplicateHistory,
   onToggleHistory,
   onSelectAll,
   onClearSelection,
@@ -82,13 +83,7 @@ export function ScheduleHistoryPanel({
                   </button>
                 </MenuTrigger>
                 <MenuContent>
-                  <MenuItem onSelect={() => {
-                    const txt = `${new Date(p.createdAt).toLocaleString()}${p.notes ? ' — ' + p.notes : ''}`;
-                    navigator.clipboard?.writeText(txt).then(
-                      () => toast.success(t('copyToClipboard')),
-                      () => toast.error(t('importError')),
-                    );
-                  }}>
+                  <MenuItem onSelect={() => onDuplicateHistory(p)}>
                     {t('copySchedule')}
                   </MenuItem>
                   <MenuItem onSelect={() => onEditNotes(p)}>

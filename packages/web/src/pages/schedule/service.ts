@@ -6,6 +6,7 @@ import {
   solveIncremental,
 } from '@labby/core';
 import type {
+  IncrementalSolveMode,
   Person,
   ScheduleConfig,
   ScheduleConstraint,
@@ -104,6 +105,7 @@ export interface ISolverBackend {
     currentPlan: SchedulePlan,
     changeDate: string,
     ctx: SolverContext,
+    mode?: IncrementalSolveMode,
   ): Promise<unknown>;
 
   computeMetricsForPlan(
@@ -145,6 +147,7 @@ export class LocalSolverBackend implements ISolverBackend {
     currentPlan: SchedulePlan,
     changeDate: string,
     ctx: SolverContext,
+    mode: IncrementalSolveMode = 'full',
   ): Promise<unknown> {
     return {
       plan: {
@@ -158,6 +161,7 @@ export class LocalSolverBackend implements ISolverBackend {
           sessions: currentPlan.sessions,
           mutations: currentPlan.sessionMutations,
           changeDate,
+          mode,
           unavailabilities: ctx.unavailabilities,
           constraints: ctx.constraints,
         }),
@@ -219,12 +223,14 @@ export class ServerSolverBackend implements ISolverBackend {
     currentPlan: SchedulePlan,
     changeDate: string,
     ctx: SolverContext,
+    mode: IncrementalSolveMode = 'full',
   ): Promise<unknown> {
     return await api.runIncremental(
       config,
       currentPlan,
       changeDate,
       ctx.persons.map(p => p.id),
+      mode,
     );
   }
 

@@ -315,6 +315,44 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     expect(frozenNext).toEqual(frozenPrev);
   });
 
+  test('questioners-only incremental mode keeps dates and presenters while reshuffling questioners', () => {
+    const persons = makePersons();
+    const config = makeConfig({
+      startDate: '2026-04-01',
+      endDate: '2026-04-24',
+      daysOfWeek: [1, 5],
+    });
+    const baseInput: SolverInput = {
+      persons,
+      similarities: makeSimilarities(),
+      config,
+    };
+
+    const prevSessions = withSeed(11, () => solveFull(baseInput));
+    const changeDate = '2026-04-13';
+    const nextSessions = withSeed(37, () =>
+      solveIncremental({
+        ...baseInput,
+        sessions: prevSessions,
+        changeDate,
+        mode: 'questioners-only',
+      }),
+    );
+
+    const previousActive = prevSessions.filter((session) => session.date >= changeDate);
+    const nextActive = nextSessions.filter((session) => session.date >= changeDate);
+
+    expect(nextActive.map((session) => session.date)).toEqual(previousActive.map((session) => session.date));
+    expect(nextActive.map((session) => session.presentations.map((presentation) => presentation.presenterId))).toEqual(
+      previousActive.map((session) => session.presentations.map((presentation) => presentation.presenterId)),
+    );
+    expect(nextActive.some((session, sessionIndex) =>
+      session.presentations.some((presentation, presentationIndex) =>
+        presentation.questionerIds.join('|') !== (previousActive[sessionIndex]?.presentations[presentationIndex]?.questionerIds.join('|') ?? ''),
+      ),
+    )).toBe(true);
+  });
+
   test('frequency-multiplier constraint is accepted with configurable role scopes', () => {
     const persons = makePersons();
     const config = makeConfig({

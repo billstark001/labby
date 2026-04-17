@@ -13,7 +13,7 @@ import {
   responsiveDataStyles as dataStyles,
 } from './ui/index';
 import { Dialog, confirmDialog } from './ui/Dialog';
-import type { Keyword } from '@labby/core';
+import type { EntityListSortBy, Keyword, ListSortDirection } from '@labby/core';
 import { i18n } from '@/i18n';
 
 interface KeywordFormProps {
@@ -95,8 +95,14 @@ export function KeywordList() {
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
+  const [sortDirection, setSortDirection] = useState<ListSortDirection>('desc');
   const [totalItems, setTotalItems] = useState(0);
   const [keywordReferenceCount, setKeywordReferenceCount] = useState<Map<string, number>>(new Map());
+
+  function defaultSortDirection(nextSortBy: EntityListSortBy): ListSortDirection {
+    return nextSortBy === 'modifiedAt' ? 'desc' : 'asc';
+  }
 
   async function refreshForeignKeyContext(keywordIds: string[]) {
     if (keywordIds.length === 0) {
@@ -111,10 +117,20 @@ export function KeywordList() {
     setKeywordReferenceCount(buildKeywordReferenceCount(bundle));
   }
 
-  async function refreshKeywordsPage(targetPage = page, targetPageSize = pageSize) {
+  async function refreshKeywordsPage(
+    targetPage = page,
+    targetPageSize = pageSize,
+    targetSortBy = sortBy,
+    targetSortDirection = sortDirection,
+  ) {
     const safePage = Math.max(1, targetPage);
     const offset = (safePage - 1) * targetPageSize;
-    const result = await listKeywordsPage(db, offset, targetPageSize);
+    const result = await listKeywordsPage(db, {
+      offset,
+      limit: targetPageSize,
+      sortBy: targetSortBy,
+      sortDirection: targetSortDirection,
+    });
     setPagedKeywords(result.items);
     await refreshForeignKeyContext(result.items.map((item) => item.id));
     setTotalItems(result.total);
@@ -131,7 +147,7 @@ export function KeywordList() {
 
   useEffect(() => {
     void refreshKeywordsPage(page, pageSize);
-  }, [db, page, pageSize]);
+  }, [db, page, pageSize, sortBy, sortDirection]);
 
   /** Check if a keyword is referenced by any person */
   function isKeywordReferenced(id: string): boolean {
@@ -166,6 +182,36 @@ export function KeywordList() {
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navKeywords')}</h2>
         <Button onClick={() => setEditing('new')}>{t('addKeyword')}</Button>
+      </div>
+
+      <div class={`${s.toolbar} ${s.mb8}`}>
+        <div class={s.flexGapSm}>
+          <select
+            class={`${s.input} ${s.autoWidthInput}`}
+            value={sortBy}
+            onChange={(event) => {
+              const nextSortBy = (event.target as HTMLSelectElement).value as EntityListSortBy;
+              setSortBy(nextSortBy);
+              setSortDirection(defaultSortDirection(nextSortBy));
+              setPage(1);
+            }}
+          >
+            <option value="modifiedAt">{t('modifiedAt')}</option>
+            <option value="name">{t('name')}</option>
+            <option value="notes">{t('notes')}</option>
+          </select>
+          <select
+            class={`${s.input} ${s.autoWidthInput}`}
+            value={sortDirection}
+            onChange={(event) => {
+              setSortDirection((event.target as HTMLSelectElement).value as ListSortDirection);
+              setPage(1);
+            }}
+          >
+            <option value="asc">ASC</option>
+            <option value="desc">DESC</option>
+          </select>
+        </div>
       </div>
 
       {editing && (
