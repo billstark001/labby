@@ -99,9 +99,7 @@ export function SchedulePage() {
   const [metricsDialog, setMetricsDialog] = useState<MetricsDialogState | null>(null);
   const [sessionMutationDialog, setSessionMutationDialog] = useState<SessionMutationDialogState | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
-  const [insertPosition, setInsertPosition] = useState<'before' | 'after'>('after');
   const [sessionMutationTactic, setSessionMutationTactic] = useState<'shift' | 'keep'>('keep');
-  const [sessionMutationCount, setSessionMutationCount] = useState(1);
   const [presentationMutationDialog, setPresentationMutationDialog] = useState<PresentationMutationDialogState | null>(null);
   const [presentationMutationOperation, setPresentationMutationOperation] = useState<'insert' | 'delete'>('insert');
   const [presentationMutationCount, setPresentationMutationCount] = useState(1);
@@ -509,10 +507,8 @@ export function SchedulePage() {
 
   function openSessionMutationDialog(mode: 'insert' | 'delete', sessionDate: string) {
     setSessionMutationDialog({ mode, sessionDate });
-    setInsertedSessionDate(sessionDate);
-    setInsertPosition('after');
+    setInsertedSessionDate('');
     setSessionMutationTactic('keep');
-    setSessionMutationCount(1);
   }
 
   function openPresentationMutationDialog(sessionDate: string, presentationIndex: number) {
@@ -529,11 +525,12 @@ export function SchedulePage() {
       return;
     }
     const { mode, sessionDate } = sessionMutationDialog;
-    const targetIndex = current.sessions.findIndex(item => item.date === sessionDate);
-    if (targetIndex < 0) { toast.error(t('mutationTargetNotFound')); return; }
+    if (mode === 'delete' && !current.sessions.some(item => item.date === sessionDate)) {
+      toast.error(t('mutationTargetNotFound'));
+      return;
+    }
 
     const existingMutations = current.sessionMutations ?? [];
-    const count = Math.max(1, Math.floor(sessionMutationCount));
     let mutationDate = sessionDate;
     if (mode === 'insert') {
       if (!insertedSessionDate) { toast.error(t('mutationInsertedDateRequired')); return; }
@@ -543,57 +540,53 @@ export function SchedulePage() {
         return;
       }
       if (mutationDate < selectedConfig.startDate || mutationDate > selectedConfig.endDate) {
-        toast.error(`date must be within ${selectedConfig.startDate} ~ ${selectedConfig.endDate}`);
+        toast.error(t('mutationDateOutOfRange', selectedConfig.startDate, selectedConfig.endDate));
+        return;
+      }
+      if (current.sessions.some(item => item.date === mutationDate)) {
+        toast.error(t('mutationInsertedDateOverlap', mutationDate));
         return;
       }
     }
 
-    if (mode === 'delete') {
-      if (sessionMutationTactic === 'keep' && targetIndex + count > current.sessions.length) {
-        toast.error('delete range exceeds available sessions');
-        return;
-      }
-      if (sessionMutationTactic === 'shift' && count > current.sessions.length) {
-        toast.error('delete count exceeds available sessions');
-        return;
-      }
+    let next: ReturnType<typeof mutateSessions>;
+    try {
+      next = mode === 'delete'
+        ? mutateSessions(
+          current.sessions,
+          {
+            config: selectedConfig,
+            persons,
+            mutations: existingMutations,
+            unavailabilities,
+            constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
+          },
+          { operation: 'delete', date: sessionDate, tactic: sessionMutationTactic },
+        )
+        : mutateSessions(
+          current.sessions,
+          {
+            config: selectedConfig,
+            persons,
+            mutations: existingMutations,
+            unavailabilities,
+            constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
+          },
+          {
+            operation: 'insert',
+            date: mutationDate,
+            tactic: sessionMutationTactic,
+          },
+        );
+    } catch (err) {
+      toast.error(String(err));
+      return;
     }
-
-    const next = mode === 'delete'
-      ? mutateSessions(
-        current.sessions,
-        {
-          config: selectedConfig,
-          persons,
-          mutations: existingMutations,
-          unavailabilities,
-          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
-        },
-        { operation: 'delete', index: targetIndex, count, tactic: sessionMutationTactic },
-      )
-      : mutateSessions(
-        current.sessions,
-        {
-          config: selectedConfig,
-          persons,
-          mutations: existingMutations,
-          unavailabilities,
-          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
-        },
-        {
-          operation: 'insert',
-          index: sessionMutationTactic === 'shift'
-            ? 0
-            : (insertPosition === 'before' ? targetIndex : targetIndex + 1),
-          dates: [mutationDate],
-          tactic: sessionMutationTactic,
-        },
-      );
 
     const createdAt = Date.now();
     const mutationNote = mode === 'delete'
-      ? `[temporary-delete] date=${sessionDate}`
-      : `[temporary-insert-${insertPosition}] date=${sessionDate} inserted=${mutationDate}`;
+      ? `[temporary-delete:${sessionMutationTactic}] date=${sessionDate}`
+      : `[temporary-insert:${sessionMutationTactic}] inserted=${mutationDate}`;
 
     const mutated: SchedulePlan = {
       ...current,
@@ -627,7 +620,7 @@ export function SchedulePage() {
     const currentLen = current.sessions[sessionIndex]?.presentations.length ?? 0;
     if (presentationMutationOperation === 'delete') {
       if (presentationIndex + count > currentLen) {
-        toast.error('delete count exceeds available presentations');
+        toast.error(t('mutationDeletePresentationRangeExceeded'));
         return;
       }
     }
@@ -806,15 +799,11 @@ export function SchedulePage() {
       <SessionMutationDialog
         state={sessionMutationDialog}
         insertedSessionDate={insertedSessionDate}
-        insertPosition={insertPosition}
         tactic={sessionMutationTactic}
-        count={sessionMutationCount}
         minDate={selectedConfig?.startDate}
         maxDate={selectedConfig?.endDate}
         onInsertedDateChange={setInsertedSessionDate}
-        onInsertPositionChange={setInsertPosition}
         onTacticChange={setSessionMutationTactic}
-        onCountChange={setSessionMutationCount}
         onApply={() => void handleApplySessionMutation()}
         onClose={() => setSessionMutationDialog(null)}
       />

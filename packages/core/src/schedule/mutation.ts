@@ -8,11 +8,10 @@ const dummySimilarityLookup: SimilarityLookup = {
 }
 
 export type MutateSessionsOptions = {
-  index: number;
   tactic?: 'shift' | 'keep';
 } & (
-    | { operation: 'insert'; dates: string[]; count?: never }
-    | { operation: 'delete'; count: number; dates?: never }
+    | { operation: 'insert'; date: string }
+    | { operation: 'delete'; date: string }
   )
 
 export type ReplaySessionMutationOptions = {
@@ -34,20 +33,23 @@ function assertPositiveCount(count: number): void {
   }
 }
 
-function assertUniqueDates(dates: string[]): void {
-  if (dates.length === 0) {
-    throw new Error('Dates must not be empty');
+function assertNonEmptyDate(date: string): void {
+  if (!date) {
+    throw new Error('Date must be non-empty');
   }
-  const seen = new Set<string>();
-  for (const date of dates) {
-    if (!date) {
-      throw new Error('Date must be non-empty');
-    }
-    if (seen.has(date)) {
-      throw new Error(`Duplicate date in insert payload: ${date}`);
-    }
-    seen.add(date);
-  }
+}
+
+function findInsertIndexByDate(sessions: Session[], date: string): number {
+  const index = sessions.findIndex(session => session.date.localeCompare(date) > 0);
+  return index >= 0 ? index : sessions.length;
+}
+
+function sortSessionsByDate(sessions: Session[]): Session[] {
+  return [...sessions].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function clonePresentations(session: Session): Presentation[] {
+  return structuredClone(session.presentations);
 }
 
 function buildGeneratorContext(
@@ -127,70 +129,77 @@ export function mutateSessions(
   sessions: Session[];
   mutations: ScheduleSessionMutationRecord[];
 } {
-  const { index, operation, tactic = 'keep' } = options;
+  const { operation, tactic = 'keep' } = options;
 
   const { mutations = [] } = solverInput;
+  const sortedSessions = sortSessionsByDate(structuredClone(sessions));
 
-  const isInsert = operation === 'insert';
-  const isKeep = tactic === 'keep';
-  const count = isInsert ? options.dates.length : options.count;
+  assertNonEmptyDate(options.date);
 
-  if (!Number.isInteger(index) || index < 0) {
-    throw new Error('Index must be a non-negative integer');
-  }
-  assertPositiveCount(count);
+  const { ctx, personIds, unavailMap } = buildGeneratorContext(solverInput);
 
-  if (isInsert) {
-    assertUniqueDates(options.dates);
-  }
-
-  if ((isInsert && isKeep && index > sessions.length) || (!isInsert && isKeep && index >= sessions.length)) {
-    throw new Error('Index out of bounds');
-  }
-
-  if (!isInsert && count > sessions.length) {
-    throw new Error('Count exceeds session length');
+  function generateSession(date: string, historySessions: Session[]): Session {
+    return buildRandomSchedule(
+      personIds,
+      [date],
+      solverInput.config,
+      ctx,
+      historySessions,
+      unavailMap,
+    )[0]!;
   }
 
-  const newSessions = structuredClone(sessions);
-
-  if (!isInsert) {
-    if (count > (isKeep ? (newSessions.length - index) : newSessions.length)) {
-      throw new Error('Count exceeds removable range');
+  if (operation === 'delete') {
+    const originalSortedSessions = structuredClone(sortedSessions);
+    const targetIndex = sortedSessions.findIndex(session => session.date === options.date);
+    if (targetIndex < 0) {
+      throw new Error(`Session date not found: ${options.date}`);
     }
 
-    const removeStart = isKeep ? index : (newSessions.length - count);
-    const removed = newSessions.splice(removeStart, count);
+    const removed = sortedSessions.splice(targetIndex, 1);
+
+    if (tactic === 'shift') {
+      for (let index = targetIndex; index < sortedSessions.length; index += 1) {
+        sortedSessions[index]!.presentations = clonePresentations(originalSortedSessions[index]!);
+      }
+    }
+
     const mutationsToAdd = buildDeleteMutations(removed);
 
     return {
-      sessions: newSessions,
+      sessions: sortedSessions,
       mutations: mergeMutationRecords(mutations, mutationsToAdd),
     };
   }
 
-  const dates = options.dates;
-  const { ctx, personIds, unavailMap } = buildGeneratorContext(solverInput);
-  const historySessions = isKeep ? newSessions.slice(0, index) : newSessions;
-  const generated = buildRandomSchedule(personIds, dates, solverInput.config, ctx, historySessions, unavailMap);
+  if (sortedSessions.some(session => session.date === options.date)) {
+    throw new Error(`Session date already exists: ${options.date}`);
+  }
 
+  const insertIndex = findInsertIndexByDate(sortedSessions, options.date);
   let mergedSessions: Session[];
-  if (isKeep) {
-    mergedSessions = [
-      ...newSessions.slice(0, index),
-      ...generated,
-      ...newSessions.slice(index),
-    ];
+
+  if (tactic === 'shift') {
+    mergedSessions = structuredClone(sortedSessions);
+    mergedSessions.splice(insertIndex, 0, { date: options.date, presentations: [] });
+
+    for (let index = insertIndex; index < sortedSessions.length; index += 1) {
+      mergedSessions[index]!.presentations = clonePresentations(sortedSessions[index]!);
+    }
+
+    const tailIndex = mergedSessions.length - 1;
+    mergedSessions[tailIndex] = generateSession(mergedSessions[tailIndex]!.date, mergedSessions.slice(0, tailIndex));
   } else {
-    mergedSessions = [...newSessions, ...generated];
+    const generated = generateSession(options.date, sortedSessions.slice(0, insertIndex));
+    mergedSessions = sortSessionsByDate([...sortedSessions, generated]);
   }
 
   const createdAt = Date.now();
-  const newMutations = dates.map(d => ({
-    date: d,
+  const newMutations = [{
+    date: options.date,
     action: 'insert' as const,
     createdAt,
-  }));
+  }];
 
   return {
     sessions: mergedSessions,

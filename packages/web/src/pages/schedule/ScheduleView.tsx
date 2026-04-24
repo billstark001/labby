@@ -60,7 +60,7 @@ export function ScheduleView({
                     <span class={s.flexGapXs}>
                       <Calendar size={16} />
                       {sess.date}
-                      {dateMeta ? <span class={s.badge} title="Mutated session">M</span> : null}
+                      {dateMeta ? <span class={s.badge} title={t('mutationSessionBadgeTitle')}>M</span> : null}
                     </span>
                   </MenuTrigger>
                   <MenuContent>
@@ -76,7 +76,7 @@ export function ScheduleView({
                 <span class={s.flexGapXs}>
                   <Calendar size={16} />
                   {sess.date}
-                  {dateMeta ? <span class={s.badge} title="Mutated session">M</span> : null}
+                  {dateMeta ? <span class={s.badge} title={t('mutationSessionBadgeTitle')}>M</span> : null}
                 </span>
               )}
               <div class={s.flexGapXs}>
@@ -115,7 +115,7 @@ export function ScheduleView({
                               {t('selectNewPresenter')}
                             </MenuItem>
                             <MenuItem onSelect={() => onOpenPresentationMutation(sess.date, pi)}>
-                              Edit Presentation Mutation
+                              {t('presentationMutationDialogTitle')}
                             </MenuItem>
                           </MenuContent>
                         </Menu>

@@ -151,8 +151,14 @@ Temporary operations apply to the current history chain only (new snapshot), not
 
 Supported strategies:
 
-- shift: apply insertion/deletion by shifting session sequence
-- in-place replan: mutate only the selected index locally
+- in-place replan: only the target session date is changed; insertion generates a fresh presenter set for that date, and deletion removes the presenters assigned to that date
+- shift: presenter blocks after the insertion/deletion point keep their relative order and are moved onto the neighboring dates; insertion regenerates only the final shifted date, while deletion drops the final shifted block
+
+Session insertion and deletion are date-driven rather than reference-index-driven:
+
+- inserted dates must not overlap existing session dates
+- inserted sessions are merged back in calendar order
+- deleting a session removes the selected date itself, not the tail of the history
 
 These operations are intentionally non-destructive to previous history snapshots.
 

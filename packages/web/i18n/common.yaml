@@ -959,6 +959,41 @@ mutationStrategyInPlace:
   zh-CN: 就地重排
   ja-JP: その場で再配置
 
+mutationStrategyLabel:
+  en: Strategy
+  zh-CN: 策略
+  ja-JP: 方針
+
+mutationOperationLabel:
+  en: Operation
+  zh-CN: 操作
+  ja-JP: 操作
+
+mutationCountLabel:
+  en: Count
+  zh-CN: 数量
+  ja-JP: 件数
+
+sessionMutationInsertInPlaceHint:
+  en: Generate new presenters for the inserted session only.
+  zh-CN: 仅为新插入的组会生成新的发表者，其他日期保持不变。
+  ja-JP: 挿入した回にだけ新しい発表者を割り当て、他の日付は変えません。
+
+sessionMutationInsertShiftHint:
+  en: Shift later presenter blocks onto the inserted date, then regenerate only the final shifted date.
+  zh-CN: 将后续组会的发表者整体顺延到新日期上，只重生成最后一个被顺延的日期。
+  ja-JP: 後続の回の発表者を挿入日に順送りし、最後にずれた日付だけを再生成します。
+
+sessionMutationDeleteInPlaceHint:
+  en: Remove the deleted session and keep presenter assignments on other dates unchanged.
+  zh-CN: 删除该组会，并保持其他日期上的发表者不变。
+  ja-JP: この回だけ削除し、他の日付の発表者割り当ては変えません。
+
+sessionMutationDeleteShiftHint:
+  en: Pull later presenter blocks forward onto earlier dates after the deletion.
+  zh-CN: 删除后把后续组会的发表者整体前移到更早的日期上。
+  ja-JP: 削除後は後続の回の発表者を前の日付へ順送りします。
+
 applyMutation:
   en: Apply
   zh-CN: 执行
@@ -998,6 +1033,56 @@ mutationDeleteDialogTitle:
   en: Delete Session
   zh-CN: 删除组会
   ja-JP: 回を削除
+
+presentationMutationDialogTitle:
+  en: Edit Presenter Mutation
+  zh-CN: 调整发表者变更
+  ja-JP: 発表者変更を調整
+
+presentationMutationInsertTitle:
+  en: Insert Presenter
+  zh-CN: 插入发表者
+  ja-JP: 発表者を挿入
+
+presentationMutationDeleteTitle:
+  en: Delete Presenter
+  zh-CN: 删除发表者
+  ja-JP: 発表者を削除
+
+presentationMutationInsertAction:
+  en: Insert Presenter
+  zh-CN: 插入发表者
+  ja-JP: 発表者を挿入
+
+presentationMutationDeleteAction:
+  en: Delete Presenter
+  zh-CN: 删除发表者
+  ja-JP: 発表者を削除
+
+presentationIndexLabel:
+  en: Presentation Index
+  zh-CN: 发表序号
+  ja-JP: 発表番号
+
+presentationMutationModeLabel:
+  en: Presenter Strategy
+  zh-CN: 发表策略
+  ja-JP: 発表者方針
+
+presentationMutationModeResize:
+  en: Resize Current Session
+  zh-CN: 调整当前组会人数
+  ja-JP: 現在の回を増減
+
+presentationMutationModeShift:
+  en: Shift Across Sessions
+  zh-CN: 跨组会顺延
+  ja-JP: 回をまたいで順延
+
+presentationMutationModeRefill:
+  en: Refill Current Session
+  zh-CN: 仅补齐当前组会
+  ja-JP: 現在の回だけ補充
 
 mutationInsertedDate:
   en: Inserted Date
@@ -1183,6 +1268,31 @@ mutationInsertedDateRequired:
   en: Please select a date to insert.
   zh-CN: 请选择要插入的日期。
   ja-JP: 挿入する日付を選択してください。
+
+mutationInsertedDateOverlap:
+  en: A session already exists on {0}.
+  zh-CN: '{0} 已存在组会日期。'
+  ja-JP: '{0} には既に回があります。'
+
+mutationDateOutOfRange:
+  en: Date must be within {0} to {1}.
+  zh-CN: 日期必须在 {0} 到 {1} 之间。
+  ja-JP: 日付は {0} から {1} の範囲で指定してください。
+
+mutationDeleteSessionRangeExceeded:
+  en: Delete range exceeds available sessions.
+  zh-CN: 删除范围超出了可用组会。
+  ja-JP: 削除範囲が利用可能な回数を超えています。
+
+mutationDeletePresentationRangeExceeded:
+  en: Delete count exceeds available presentations.
+  zh-CN: 删除数量超出了可用发表者数。
+  ja-JP: 削除件数が利用可能な発表数を超えています。
+
+mutationSessionBadgeTitle:
+  en: Mutated session
+  zh-CN: 已变更的组会
+  ja-JP: 変更済みの回
 
 viewMetrics:
   en: View Metrics

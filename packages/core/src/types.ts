@@ -134,11 +134,10 @@ export interface MetricExplanation {
 
 export interface ScheduleMutationInput {
   previousPlan: SchedulePlan;
-  /** Target session date in the previous plan. */
+  /** Session date to insert or delete. */
   date: string;
   action: 'insert' | 'delete';
-  insertedDate?: string;
-  position?: 'before' | 'after';
+  tactic?: 'shift' | 'keep';
 }
 
 /** Immutable snapshot of a generated schedule. */
