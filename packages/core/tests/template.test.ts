@@ -65,6 +65,14 @@ describe('template renderer', () => {
     expect(rendered.errors[0]?.kind).toBe('eval');
   });
 
+  test('allows functions provided by template context', () => {
+    const rendered = renderTemplate('Next: {{ nextSessionDateText() }}', {
+      nextSessionDateText: () => '2026-06-08',
+    });
+    expect(rendered.errors).toHaveLength(0);
+    expect(rendered.output).toBe('Next: 2026-06-08');
+  });
+
   test('stops in strict mode on first error', () => {
     const rendered = renderTemplate('A {{ unknown }} B {{ 1 + 1 }}', {}, { strict: true });
     expect(rendered.errors).toHaveLength(1);

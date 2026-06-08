@@ -30,6 +30,7 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "marked": "^17.0.6"
+    "marked": "^17.0.6",
+    "pure-expr": "^0.2.0"
   }
 }

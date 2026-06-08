@@ -6,6 +6,7 @@ import { loadAllConfigs, loadAllEmailTasks, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
 import { setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
+import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { configsSignal, emailTasksSignal } from '@/store';
@@ -75,6 +76,12 @@ export function EmailTasksListPage() {
     }
   }
 
+  async function copyIcsLink(task: EmailTask): Promise<void> {
+    if (!capability.canAutoSend) return;
+    await navigator.clipboard.writeText(getPublicEmailTaskIcsUrl(task.id));
+    toast.success(t('emailTaskIcsLinkCopied'));
+  }
+
   return (
     <div>
       <div class={s.toolbar}>
@@ -132,9 +139,16 @@ export function EmailTasksListPage() {
                   {task.disabled ? t('enable') : t('disable')}
                 </Button>
                 {capability.canAutoSend && (
-                  <Button variant="ghost" onClick={() => void toggleSkipNext(task)}>
-                    {task.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
-                  </Button>
+                  <>
+                    {(task.metadata?.serveScheduleIcs as boolean | undefined) === true && (
+                      <Button variant="ghost" onClick={() => void copyIcsLink(task)}>
+                        {t('emailTaskCopyIcsLink')}
+                      </Button>
+                    )}
+                    <Button variant="ghost" onClick={() => void toggleSkipNext(task)}>
+                      {task.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
+                    </Button>
+                  </>
                 )}
               </>
             )}

@@ -1,6 +1,7 @@
 import { GoogleAuth } from 'google-auth-library';
 
 import type { CronJobDefinition, SchedulerMirror } from './scheduler.js';
+import { validateHttpUrl } from '../lib/runtime-config.js';
 
 interface CloudSchedulerMirrorConfig {
   projectId: string;
@@ -203,11 +204,12 @@ export function createCloudSchedulerMirrorFromEnv(): CloudSchedulerMirror | null
   }
 
   const jobPrefix = process.env.CLOUD_SCHEDULER_JOB_PREFIX?.trim() || 'labby';
+  const dispatchUrlName = explicitDispatchUrl ? 'CLOUD_SCHEDULER_DISPATCH_URL' : 'PUBLIC_BASE_URL';
 
   return new CloudSchedulerMirror({
     projectId,
     location,
-    dispatchUrl,
+    dispatchUrl: validateHttpUrl(dispatchUrlName, dispatchUrl),
     dispatchApiKey,
     jobPrefix,
   });

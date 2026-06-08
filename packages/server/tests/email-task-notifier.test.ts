@@ -101,7 +101,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
   }
 });
 
-test('EmailTaskNotifier skips scheduled delivery when no new schedule is generated', async () => {
+test('EmailTaskNotifier sends scheduled delivery on every matching run', async () => {
   const dbPath = createTempDbPath('labby-email-task-stale');
   const store = new SqliteStore({ dialect: 'sqlite', path: dbPath });
   const scheduler = new FakeScheduler();
@@ -153,7 +153,7 @@ test('EmailTaskNotifier skips scheduled delivery when no new schedule is generat
     await notifier.runTask('task-stale');
     await notifier.runTask('task-stale');
 
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 2);
   } finally {
     await store.close();
   }
@@ -220,9 +220,9 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
     assert.equal(afterFirstScheduled?.skipNextRun, false);
     assert.equal(typeof afterFirstScheduled?.lastSkippedAt, 'number');
 
-    // Later scheduled runs may still skip due to unchanged schedule, but skip-next must stay cleared.
+    // Later scheduled runs can send again once skip-next has been consumed.
     await notifier.runTask('task-skip-next');
-    assert.equal(sent.length, 1);
+    assert.equal(sent.length, 2);
     const afterSecondScheduled = await store.getEmailTask('task-skip-next');
     assert.equal(afterSecondScheduled?.skipNextRun, false);
   } finally {
@@ -339,6 +339,78 @@ test('EmailTaskNotifier skips disabled scheduled runs but allows manual send wit
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0]?.to, ['disabled@example.com']);
     assert.equal(sent[0]?.fromName, 'Labby cfg-disabled');
+  } finally {
+    await store.close();
+  }
+});
+
+test('EmailTaskNotifier allows schedule helper functions and fails manual send on template errors', async () => {
+  const dbPath = createTempDbPath('labby-email-task-template-errors');
+  const store = new SqliteStore({ dialect: 'sqlite', path: dbPath });
+  const scheduler = new FakeScheduler();
+  const sent: Array<{ to: string[]; text?: string }> = [];
+
+  const mailer = {
+    send: async (input: { to: string[]; text?: string }) => {
+      sent.push({ to: input.to, text: input.text });
+    },
+  } as unknown as Mailer;
+
+  try {
+    await store.putConfig({
+      id: 'cfg-template-errors',
+      daysOfWeek: [1],
+      timeRange: ['09:00', '10:00'],
+      presentersPerSession: 1,
+      questionersPerPresenter: 1,
+      targetSimilarityRadius: 0.5,
+      startDate: '2026-01-01',
+      endDate: '2099-01-31',
+      metadata: {},
+    });
+
+    await store.putSchedule({
+      id: 'plan-template-errors',
+      createdAt: Date.now(),
+      configId: 'cfg-template-errors',
+      sessions: [{ date: '2026-01-05', presentations: [] }],
+    });
+
+    await store.putEmailTask({
+      id: 'task-template-helper',
+      configId: 'cfg-template-errors',
+      daysOfWeek: [1],
+      emails: ['helper@example.com'],
+      recentTimes: 0,
+      templateText: 'Next {{ nextSessionDateText() }}',
+      metadata: {},
+    });
+
+    const notifier = new EmailTaskNotifier({
+      scheduler: scheduler as unknown as any,
+      mailer,
+      store,
+      defaultHour: 9,
+    });
+
+    await notifier.runTaskNow('task-template-helper');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]?.text ?? '', /2026/);
+
+    await store.putEmailTask({
+      id: 'task-template-error',
+      configId: 'cfg-template-errors',
+      daysOfWeek: [1],
+      emails: ['error@example.com'],
+      recentTimes: 0,
+      templateText: 'Broken {{ missingValue }}',
+      metadata: {},
+    });
+
+    await assert.rejects(
+      () => notifier.runTaskNow('task-template-error'),
+      /failed for 1 recipient/,
+    );
   } finally {
     await store.close();
   }

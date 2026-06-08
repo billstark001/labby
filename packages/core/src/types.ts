@@ -100,19 +100,6 @@ export interface EmailTask {
 
 export type TemplateFormat = 'markdown' | 'html';
 
-export interface TemplateRenderError {
-  expression: string;
-  message: string;
-  start: number;
-  end: number;
-  kind: 'lex' | 'parse' | 'eval' | 'template';
-}
-
-export interface TemplateRenderResult {
-  output: string;
-  errors: TemplateRenderError[];
-}
-
 export interface ScheduleMetrics {
   uniformityPenalty: number;
   questionerPenalty: number;

@@ -839,6 +839,26 @@ emailTaskServeScheduleIcsHint:
   zh-CN: 当服务端环境允许时，将该任务最新排班公开为 ICS 端点。
   ja-JP: サーバー環境で許可されている場合、このタスクの最新スケジュールを公開 ICS エンドポイントとして公開します。
 
+emailTaskCopyIcsLink:
+  en: Copy ICS Link
+  zh-CN: 复制 ICS 链接
+  ja-JP: ICS リンクをコピー
+
+emailTaskIcsLinkCopied:
+  en: ICS link copied
+  zh-CN: 已复制 ICS 链接
+  ja-JP: ICS リンクをコピーしました
+
+emailTaskInsertIcsLink:
+  en: Insert ICS Link
+  zh-CN: 插入 ICS 链接
+  ja-JP: ICS リンクを挿入
+
+emailTaskIcsLinkLabel:
+  en: Schedule ICS
+  zh-CN: 排班 ICS
+  ja-JP: スケジュール ICS
+
 emailTaskAttachments:
   en: Email Attachments
   zh-CN: 邮件附件

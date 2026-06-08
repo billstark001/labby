@@ -127,6 +127,8 @@ The scheduler can run in three modes using `SCHEDULER_MODE`:
 
 In `cloud`/`hybrid`, the server keeps Cloud Scheduler jobs synchronized with internal job registration and uses `POST /internal/scheduler/dispatch` + `SCHEDULER_DISPATCH_API_KEY` for secure execution.
 
+Current limitation: mirrored scheduler dispatch assumes a single live server instance. Job definitions are held in memory, so multi-instance Cloud Run deployments can route a callback to an instance that has not synced the latest job set.
+
 When `ENABLE_PUBLIC_EMAIL_TASK_ICS=true`, each email task can opt in via metadata (`serveScheduleIcs`) to expose its latest schedule at:
 
 - `GET /public/email-tasks/:taskId/schedule.ics`

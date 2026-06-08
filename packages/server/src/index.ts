@@ -5,12 +5,17 @@ import { createCloudSchedulerMirrorFromEnv } from "./cron/cloud-scheduler.js";
 import { createAuthMaintenanceServiceFromEnv } from "./cron/auth-maintenance.js";
 import { resolveSchedulerMode, scheduler, type SchedulerMode } from "./cron/scheduler.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
-import type { StoreConnectionConfig } from "./store/index.js";
 import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-task-notifier.js";
+import { resolvePublicBaseUrl, resolveStoreConnectionConfig } from "./lib/runtime-config.js";
 
 import { config } from "dotenv";
 
 config();
+
+const port = Number(process.env.PORT ?? 4410);
+const dbConfig = resolveStoreConnectionConfig(process.env);
+const enablePublicEmailTaskIcs = /^(1|true|yes)$/i.test(process.env.ENABLE_PUBLIC_EMAIL_TASK_ICS ?? '');
+const publicBaseUrl = resolvePublicBaseUrl(process.env, port);
 
 const requestedSchedulerMode = resolveSchedulerMode(process.env.SCHEDULER_MODE);
 let schedulerMode: SchedulerMode = requestedSchedulerMode;
@@ -18,35 +23,14 @@ if (requestedSchedulerMode !== 'cron') {
   const mirror = createCloudSchedulerMirrorFromEnv();
   if (mirror) {
     scheduler.setMirror(mirror);
-  } else if (requestedSchedulerMode === 'cloud') {
-    schedulerMode = 'cron';
-    console.warn('[scheduler] SCHEDULER_MODE=cloud but cloud scheduler env is incomplete, falling back to cron mode.');
   } else {
-    console.warn('[scheduler] SCHEDULER_MODE=hybrid but cloud scheduler env is incomplete, cloud sync is disabled.');
+    throw new Error(
+      `SCHEDULER_MODE=${requestedSchedulerMode} requires CLOUD_SCHEDULER_PROJECT_ID, `
+      + 'CLOUD_SCHEDULER_LOCATION, SCHEDULER_DISPATCH_API_KEY, and either PUBLIC_BASE_URL or CLOUD_SCHEDULER_DISPATCH_URL',
+    );
   }
 }
 scheduler.setMode(schedulerMode);
-
-const port = Number(process.env.PORT ?? 4410);
-const dbPath = process.env.DB_PATH ?? "./run/labby.db";
-const dbDriver = process.env.DB_DRIVER?.trim().toLowerCase();
-const enablePublicEmailTaskIcs = /^(1|true|yes)$/i.test(process.env.ENABLE_PUBLIC_EMAIL_TASK_ICS ?? '');
-const publicBaseUrl = (process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${port}`);
-
-const dbConfig: StoreConnectionConfig = dbDriver === "postgres"
-  ? {
-    dialect: "postgres",
-    connectionString: process.env.DATABASE_URL ?? "",
-    ssl: process.env.DATABASE_SSL === "1" || process.env.DATABASE_SSL === "true",
-  }
-  : {
-    dialect: "sqlite",
-    path: dbPath,
-  };
-
-if (dbConfig.dialect === "postgres" && !dbConfig.connectionString) {
-  throw new Error("DATABASE_URL is required when DB_DRIVER=postgres");
-}
 
 let emailTaskNotifier: EmailTaskNotifierType | null = null;
 const mailer = createMailerFromEnv();

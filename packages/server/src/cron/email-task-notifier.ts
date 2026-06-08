@@ -192,8 +192,16 @@ type TaskExecutionDecision =
   | { kind: 'skip-ended' }
   | { kind: 'skip-next' }
   | { kind: 'skip-no-schedule' }
-  | { kind: 'skip-stale-schedule' }
   | { kind: 'send' };
+
+interface TaskDeliveryFailure {
+  recipient: string;
+  reason: string;
+}
+
+function summarizeTemplateErrors(errors: Array<{ kind: string; message: string }>): string {
+  return errors.map((error) => `${error.kind}: ${error.message}`).join('; ');
+}
 
 export class EmailTaskNotifier {
   constructor(private readonly options: EmailTaskNotifierOptions) {}
@@ -246,10 +254,6 @@ export class EmailTaskNotifier {
 
     if (!context.latest) {
       return { kind: 'skip-no-schedule' };
-    }
-
-    if (!options.manual && task.lastRunAt && context.latest.createdAt <= task.lastRunAt) {
-      return { kind: 'skip-stale-schedule' };
     }
 
     return { kind: 'send' };
@@ -361,11 +365,6 @@ export class EmailTaskNotifier {
       return;
     }
 
-    if (decision.kind === 'skip-stale-schedule') {
-      await this.persistScheduledSkip(task, runAt);
-      return;
-    }
-
     if (!config || !latest) {
       return;
     }
@@ -380,6 +379,9 @@ export class EmailTaskNotifier {
       locale,
       persons,
     });
+
+    const failures: TaskDeliveryFailure[] = [];
+    let sentAny = false;
 
     for (const recipient of task.emails) {
       const currentSent = sentCounts[recipient] ?? 0;
@@ -402,6 +404,10 @@ export class EmailTaskNotifier {
       });
       if (rendered.errors.length > 0) {
         console.warn(`[email-task] template render errors for task ${task.id}:`, rendered.errors);
+        failures.push({
+          recipient,
+          reason: `body template failed (${summarizeTemplateErrors(rendered.errors)})`,
+        });
         continue;
       }
 
@@ -410,6 +416,11 @@ export class EmailTaskNotifier {
         : { output: '', errors: [] };
       if (renderedSubject.errors.length > 0) {
         console.warn(`[email-task] subject template render errors for task ${task.id}:`, renderedSubject.errors);
+        failures.push({
+          recipient,
+          reason: `subject template failed (${summarizeTemplateErrors(renderedSubject.errors)})`,
+        });
+        continue;
       }
 
       const renderedSenderName = task.senderNameTemplate
@@ -417,24 +428,47 @@ export class EmailTaskNotifier {
         : { output: '', errors: [] };
       if (renderedSenderName.errors.length > 0) {
         console.warn(`[email-task] sender name template render errors for task ${task.id}:`, renderedSenderName.errors);
+        failures.push({
+          recipient,
+          reason: `sender name template failed (${summarizeTemplateErrors(renderedSenderName.errors)})`,
+        });
+        continue;
       }
 
-      await this.options.mailer.send({
-        to: [recipient],
-        subject: renderedSubject.output.trim() || `[Labby] Scheduled Email ${task.id}`,
-        fromName: renderedSenderName.output.trim() || undefined,
-        text: rendered.output,
-        html: rendered.html,
-        attachments,
-      });
+      try {
+        await this.options.mailer.send({
+          to: [recipient],
+          subject: renderedSubject.output.trim() || `[Labby] Scheduled Email ${task.id}`,
+          fromName: renderedSenderName.output.trim() || undefined,
+          text: rendered.output,
+          html: rendered.html,
+          attachments,
+        });
+      } catch (error) {
+        failures.push({
+          recipient,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
 
       sentCounts[recipient] = currentSent + 1;
+      sentAny = true;
     }
 
-    await this.persistTask(task, {
-      sentCounts,
-      lastRunAt: runAt,
-    });
+    if (sentAny || failures.length === 0) {
+      await this.persistTask(task, {
+        sentCounts,
+        lastRunAt: runAt,
+      });
+    }
+
+    if (failures.length > 0) {
+      const summary = failures
+        .map((failure) => `${failure.recipient}: ${failure.reason}`)
+        .join('; ');
+      throw new Error(`Email task ${task.id} failed for ${failures.length} recipient(s): ${summary}`);
+    }
   }
 
   private buildTemplateContext(

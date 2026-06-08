@@ -1,16 +1,16 @@
-import { JSEvalError, JSLexError, JSParseError, evaluate } from '../expr/index.js';
 import { marked } from 'marked';
+import { defaultCallPermissionPolicy, type JSCallPermissionPolicy } from 'pure-expr/expr';
+import {
+  renderTemplate as renderPureTemplate,
+  type RenderTemplateOptions as PureRenderTemplateOptions,
+  type TemplateRenderResult,
+} from 'pure-expr/template';
 import type {
   TemplateFormat,
-  TemplateRenderError,
-  TemplateRenderResult,
 } from '../types.js';
-import { parseTemplate } from './parser.js';
 
-export interface RenderTemplateOptions {
-  format?: TemplateFormat;
-  /** When true, stop on first evaluation error. */
-  strict?: boolean;
+export interface RenderTemplateOptions extends Omit<PureRenderTemplateOptions, 'format'> {
+  format?: TemplateFormat | PureRenderTemplateOptions['format'];
 }
 
 export interface RenderTemplateHtmlResult extends TemplateRenderResult {
@@ -40,26 +40,39 @@ function wrapMarkdownHtml(html: string): string {
   return `<style>${MARKDOWN_EMAIL_CSS}</style><div class="labby-md-mail">${html}</div>`;
 }
 
-function classifyError(error: unknown): TemplateRenderError['kind'] {
-  if (error instanceof JSLexError) return 'lex';
-  if (error instanceof JSParseError) return 'parse';
-  if (error instanceof JSEvalError) return 'eval';
-  return 'template';
+function collectContextCallables(value: unknown, allowed: Set<CallableFunction>, seen: WeakSet<object>): void {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) return;
+  if (typeof value === 'function') {
+    allowed.add(value as CallableFunction);
+    return;
+  }
+  if (seen.has(value)) return;
+  seen.add(value);
+
+  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+    return;
+  }
+
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    collectContextCallables(child, allowed, seen);
+  }
 }
 
-function toStringValue(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  return String(value);
+function buildContextCallPolicy(
+  context: Record<string, unknown>,
+  userPolicy?: JSCallPermissionPolicy,
+): JSCallPermissionPolicy {
+  const allowed = new Set<CallableFunction>();
+  collectContextCallables(context, allowed, new WeakSet());
+
+  return (details) =>
+    allowed.has(details.fn)
+    || userPolicy?.(details) === true
+    || defaultCallPermissionPolicy(details);
 }
 
-function escapeHtml(raw: string): string {
-  return raw
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+function toPureFormat(format: RenderTemplateOptions['format']): PureRenderTemplateOptions['format'] {
+  return format === 'html' ? 'html' : 'text';
 }
 
 export function renderTemplate(
@@ -67,39 +80,15 @@ export function renderTemplate(
   context: Record<string, unknown>,
   options: RenderTemplateOptions = {},
 ): TemplateRenderResult {
-  const parsed = parseTemplate(source);
-  const errors = [...parsed.errors];
-  const out: string[] = [];
-  const isHtml = options.format === 'html';
-
-  for (const segment of parsed.segments) {
-    if (segment.type === 'text') {
-      out.push(segment.value);
-      continue;
-    }
-
-    try {
-      const value = evaluate(segment.expr, context);
-      const text = toStringValue(value);
-      out.push(isHtml ? escapeHtml(text) : text);
-    } catch (error) {
-      errors.push({
-        expression: segment.expr,
-        message: error instanceof Error ? error.message : 'unknown template error',
-        start: segment.start,
-        end: segment.end,
-        kind: classifyError(error),
-      });
-      if (options.strict) {
-        break;
-      }
-    }
-  }
-
-  return {
-    output: out.join(''),
-    errors,
-  };
+  const { format, evalOptions, ...rest } = options;
+  return renderPureTemplate(source, context, {
+    ...rest,
+    format: toPureFormat(format),
+    evalOptions: {
+      ...evalOptions,
+      isCallableAllowed: buildContextCallPolicy(context, evalOptions?.isCallableAllowed),
+    },
+  });
 }
 
 export function renderTemplateToHtml(

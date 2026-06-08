@@ -1,10 +1,17 @@
 export {
   parseTemplate,
+  compileTemplate,
+  type CompiledTemplate,
+  type CompiledTemplateRenderOptions,
+  type CompileTemplateOptions,
   type TemplateSegment,
   type TemplateParseResult,
+  type TemplateParseOptions,
   type TemplateExpressionSegment,
   type TemplateTextSegment,
-} from './parser.js';
+  type TemplateRenderError,
+  type TemplateRenderResult,
+} from 'pure-expr/template';
 
 export {
   renderTemplate,

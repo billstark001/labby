@@ -138,6 +138,7 @@ The server can maintain periodic full-database backups through the same cron run
 - GitHub Pages and Netlify workflows now force the web app into frontend-only deployment mode.
 - Both workflows build Rust wasm artifacts before frontend build.
 - GCP server deployment guidance and Cloud Run workflow are documented in `docs/deploy-gcp.md`.
+- Cloud Scheduler mirroring currently assumes a single live server instance because dispatch looks up in-memory registered jobs. Keep Cloud Run at one instance for scheduler-backed deployments until this is externalized.
 
 ## Project Structure
 

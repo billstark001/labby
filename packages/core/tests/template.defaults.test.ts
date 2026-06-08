@@ -18,7 +18,9 @@ describe('default template presets', () => {
     };
 
     for (const preset of DEFAULT_TEMPLATE_PRESETS) {
-      const result = renderTemplate(preset.content, context, { format: preset.format });
+      const result = renderTemplate(preset.content, context, {
+        format: preset.format === 'html' ? 'html' : 'text',
+      });
       expect(result.errors).toHaveLength(0);
       expect(result.output.length).toBeGreaterThan(0);
     }

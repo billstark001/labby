@@ -149,6 +149,33 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     const getTaskJson = await getTaskRes.json() as { data: { id: string } };
     assert.equal(getTaskJson.data.id, 'et-1');
 
+    const failingRuntime = await createApp({
+      db: { dialect: 'sqlite', path: createTempDbPath('labby-app-send-now-fail') },
+      rootUsername: 'root',
+      rootPassword: 'root-pass',
+      runEmailTaskNow: async () => {
+        throw new Error('template render failed');
+      },
+    });
+    try {
+      const failingToken = await login(failingRuntime.app);
+      const failingTaskRes = await failingRuntime.app.request('/api/v1/db/email-tasks/et-fail', {
+        method: 'PUT',
+        headers: makeHeaders(failingToken),
+        body: JSON.stringify(taskBody),
+      });
+      assert.ok(failingTaskRes.status === 200 || failingTaskRes.status === 201);
+      const sendNowRes = await failingRuntime.app.request('/api/v1/db/email-tasks/et-fail/send-now', {
+        method: 'POST',
+        headers: makeHeaders(failingToken),
+      });
+      assert.equal(sendNowRes.status, 400);
+      const sendNowJson = await sendNowRes.json() as { message: string };
+      assert.match(sendNowJson.message, /template render failed/);
+    } finally {
+      await failingRuntime.close();
+    }
+
     const metricsRes = await runtime.app.request('/api/v1/solver/metrics', {
       method: 'POST',
       headers: makeHeaders(token),

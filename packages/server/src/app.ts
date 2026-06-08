@@ -666,7 +666,12 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     if (!options.runEmailTaskNow) {
       throw new AppError('INTERNAL_ERROR', 'email sender is not configured on server', 503);
     }
-    await options.runEmailTaskNow(taskId);
+    try {
+      await options.runEmailTaskNow(taskId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AppError('VALIDATION_ERROR', message, 400);
+    }
     return ok(c, { ok: true });
   });
   app.post('/api/v1/db/email-tasks/:id/skip-next', async (c) => {
@@ -860,7 +865,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       ...body.context,
       language: body.language ?? (body.context.language as string | undefined) ?? 'en',
     }, {
-      format: body.format,
+      format: body.format === 'html' ? 'html' : 'text',
     });
     return ok(c, result);
   });

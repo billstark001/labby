@@ -21,6 +21,7 @@ import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, us
 import { i18n } from '@/i18n';
 import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
+import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { configsSignal, emailTasksSignal, personsSignal, schedulesSignal } from '@/store';
@@ -367,6 +368,12 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     await navigator.clipboard.writeText(previewResult.html);
   }
 
+  async function copyPublicIcsLink(): Promise<void> {
+    if (!selectedTaskId) return;
+    await navigator.clipboard.writeText(getPublicEmailTaskIcsUrl(selectedTaskId));
+    toast.success(t('emailTaskIcsLinkCopied'));
+  }
+
   async function triggerSendNow(): Promise<void> {
     if (!selectedTaskId || !capability.canAutoSend) return;
     try {
@@ -430,6 +437,16 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       return;
     }
     setTemplateText((prev) => `${prev}\n\n| Date | Presenter | Questioners |\n| --- | --- | --- |\n| {{ now }} | {{ recipient }} | {{ summary }} |`.trim());
+  }
+
+  function insertIcsLinkSnippet(): void {
+    setIsDirty(true);
+    const label = t('emailTaskIcsLinkLabel');
+    if (templateFormat === 'html') {
+      setTemplateText((prev) => `${prev}\n\n<p><a href="{{ scheduleIcsUrl }}">${label}</a></p>`.trim());
+      return;
+    }
+    setTemplateText((prev) => `${prev}\n\n[${label}]({{ scheduleIcsUrl }})`.trim());
   }
 
   const taskNotFound = Boolean(taskId) && !tasks.some((item) => item.id === taskId);
@@ -634,6 +651,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
             />
             <span class={`${s.text12} ${s.textMuted}`}>{t('emailTaskServeScheduleIcsHint')}</span>
           </label>
+          <div class={s.flexGapSm}>
+            <Button variant="secondary" disabled={!selectedTaskId || !serveScheduleIcs || !capability.canAutoSend} onClick={() => void copyPublicIcsLink()}>
+              {t('emailTaskCopyIcsLink')}
+            </Button>
+            <Button variant="ghost" onClick={insertIcsLinkSnippet}>
+              {t('emailTaskInsertIcsLink')}
+            </Button>
+          </div>
         </div>
 
         <div class={s.formGroup}>
@@ -660,6 +685,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
           <div class={`${s.text12} ${s.textMuted}`}>{t('templateSyntaxHint')}</div>
           <div class={s.flexGapSm}>
             <Button variant="ghost" onClick={insertScheduleTableSnippet}>{t('insertScheduleTableTemplate')}</Button>
+            <Button variant="ghost" onClick={insertIcsLinkSnippet}>{t('emailTaskInsertIcsLink')}</Button>
             <Button variant="ghost" onClick={() => { setDocLanguage(i18n.lang.value); setShowVarDialog(true); }}>
               {t('templateVariableReference')}
             </Button>

@@ -20,6 +20,9 @@ importers:
       marked:
         specifier: ^17.0.6
         version: 17.0.6
+      pure-expr:
+        specifier: ^0.2.0
+        version: 0.2.0
     devDependencies:
       tsx:
         specifier: ^4.21.0
@@ -2156,6 +2159,10 @@ packages:
 
   pump@3.0.4:
     resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
+
+  pure-expr@0.2.0:
+    resolution: {integrity: sha512-AJjB5EwGeuPvMw/JuwGRm4v4ymTjsDnBHP0dThttVEMS6AAwUXrF2ZuiUg3aFbIfghO5wznm7ONVnBVCpPiFCw==}
+    engines: {node: '>=18'}
 
   rc@1.2.8:
     resolution: {integrity: sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw==}
@@ -4390,6 +4397,8 @@ snapshots:
     dependencies:
       end-of-stream: 1.4.5
       once: 1.4.0
+
+  pure-expr@0.2.0: {}
 
   rc@1.2.8:
     dependencies:
