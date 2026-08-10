@@ -37,6 +37,7 @@ export {
 
 export { COST_WEIGHTS } from './constraints.js';
 export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing.js';
+export { solveConstrained } from './constrained.js';
 
 // ---------------------------------------------------------------------------
 // Date / ID utilities

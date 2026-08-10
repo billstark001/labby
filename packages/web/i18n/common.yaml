@@ -3,6 +3,146 @@ appTitle:
   zh-CN: Labby 排班系统
   ja-JP: Labby スケジューラ
 
+setAutoPresenter:
+  en: Change to Auto presenter
+  zh-CN: 改为自动发表人
+  ja-JP: 自動発表者に変更
+
+choosePresenter:
+  en: Choose presenter…
+  zh-CN: 选择发表人…
+  ja-JP: 発表者を選択…
+
+chooseQuestioner:
+  en: Choose questioner…
+  zh-CN: 选择提问人…
+  ja-JP: 質問者を選択…
+
+searchPerson:
+  en: Search people
+  zh-CN: 搜索人员
+  ja-JP: 参加者を検索
+
+autoPresenter:
+  en: Auto presenter
+  zh-CN: 自动发表人
+  ja-JP: 自動発表者
+
+autoQuestioner:
+  en: Auto
+  zh-CN: 自动
+  ja-JP: 自動
+
+deletePresentation:
+  en: Delete this presentation
+  zh-CN: 删除此次发表
+  ja-JP: この発表を削除
+
+deleteQuestioner:
+  en: Delete this questioner
+  zh-CN: 删除此提问人
+  ja-JP: この質問者を削除
+
+insertSessionBefore:
+  en: Insert session before
+  zh-CN: 在此前插入组会
+  ja-JP: 前にセッションを挿入
+
+insertSessionAfter:
+  en: Insert session after
+  zh-CN: 在此后插入组会
+  ja-JP: 後にセッションを挿入
+
+insertSession:
+  en: Insert session
+  zh-CN: 插入组会
+  ja-JP: セッションを挿入
+
+deleteSession:
+  en: Delete this session
+  zh-CN: 删除此次组会
+  ja-JP: このセッションを削除
+
+moveBoundaryUp:
+  en: Move boundary up one row
+  zh-CN: 将边界上移一行
+  ja-JP: 境界を1行上へ
+
+moveBoundaryDown:
+  en: Move boundary down one row
+  zh-CN: 将边界下移一行
+  ja-JP: 境界を1行下へ
+
+shiftSessionsUp:
+  en: Shift this and later sessions up one row
+  zh-CN: 将此次及后续组会整体上移一行
+  ja-JP: この回以降を1行上へシフト
+
+shiftSessionsDown:
+  en: Shift this and later sessions down one row
+  zh-CN: 将此次及后续组会整体下移一行
+  ja-JP: この回以降を1行下へシフト
+
+discardBefore:
+  en: Before schedule · removed on commit
+  zh-CN: 排期前 · 提交时从本排班移除
+  ja-JP: スケジュール前・確定時に除外
+
+discardAfter:
+  en: After schedule · removed on commit
+  zh-CN: 排期后 · 提交时从本排班移除
+  ja-JP: スケジュール後・確定時に除外
+
+discardCount:
+  en: "{0} presentations"
+  zh-CN: "{0} 条发表安排"
+  ja-JP: "発表 {0} 件"
+
+discardEmpty:
+  en: No presentations awaiting removal
+  zh-CN: 没有待移除的发表安排
+  ja-JP: 除外予定の発表はありません
+
+commitDiscardWarning:
+  en: "{0} presentations will be removed from this schedule"
+  zh-CN: "提交时将从本排班移除 {0} 条发表安排"
+  ja-JP: "確定時に発表 {0} 件を除外します"
+
+insertPresentationHere:
+  en: Insert an Auto presentation here
+  zh-CN: 在此插入一条自动发表
+  ja-JP: ここに自動発表を挿入
+
+scheduleActions:
+  en: Session actions
+  zh-CN: 组会操作
+  ja-JP: セッション操作
+
+invalidQuestionerDrop:
+  en: This questioner cannot be assigned to the target presentation
+  zh-CN: 此提问人不能分配到目标发表
+  ja-JP: この質問者は移動先の発表に割り当てられません
+
+boundaryAdjacentOnly:
+  en: A date boundary can only move within its adjacent sessions
+  zh-CN: 日期边界只能在相邻组会之间移动
+  ja-JP: 日付境界は隣接セッション内でのみ移動できます
+
+draftMetrics:
+  en: Draft preview metrics
+  zh-CN: 草稿预览指标
+  ja-JP: 下書きプレビュー指標
+
+undo:
+  en: Undo
+  zh-CN: 撤销
+  ja-JP: 元に戻す
+
+redo:
+  en: Redo
+  zh-CN: 重做
+  ja-JP: やり直す
+
 loginIdentity:
   en: Username or Email
   zh-CN: 用户名或邮箱
@@ -168,6 +308,36 @@ languageLabel:
   zh-CN: 语言
   ja-JP: 言語
 
+systemTimezoneTitle:
+  en: System Timezone
+  zh-CN: 系统时区
+  ja-JP: システムのタイムゾーン
+
+systemTimezone:
+  en: Timezone
+  zh-CN: 时区
+  ja-JP: タイムゾーン
+
+systemTimezoneDefault:
+  en: Default (environment timezone)
+  zh-CN: 默认（环境时区）
+  ja-JP: デフォルト（環境のタイムゾーン）
+
+systemSettingsSaved:
+  en: System settings saved
+  zh-CN: 系统设置已保存
+  ja-JP: システム設定を保存しました
+
+systemSettingsLoadFailed:
+  en: Failed to load system settings
+  zh-CN: 读取系统设置失败
+  ja-JP: システム設定の読み込みに失敗しました
+
+systemSettingsSaveFailed:
+  en: Failed to save system settings
+  zh-CN: 保存系统设置失败
+  ja-JP: システム設定の保存に失敗しました
+
 localBackupHint:
   en: These tools export or import browser-managed data directly on the current device.
   zh-CN: 这些工具直接在当前设备上导出或导入浏览器管理的数据。
@@ -253,6 +423,16 @@ backupTargetOneDrive:
   zh-CN: OneDrive
   ja-JP: OneDrive
 
+emailTaskAutoSendService:
+  en: Email Task Auto Send
+  zh-CN: 邮件任务自动发送
+  ja-JP: メールタスク自動送信
+
+emailTaskPublicIcsService:
+  en: Public Schedule ICS
+  zh-CN: 公开排班 ICS
+  ja-JP: 公開スケジュール ICS
+
 available:
   en: Available
   zh-CN: 可用
@@ -333,6 +513,16 @@ configTime:
   en: Time Range
   zh-CN: 时间段
   ja-JP: 時間帯
+
+scheduleTimezone:
+  en: Schedule Timezone
+  zh-CN: 排班表时区
+  ja-JP: スケジュールのタイムゾーン
+
+scheduleTimezoneDefault:
+  en: Default (system timezone)
+  zh-CN: 默认（系统时区）
+  ja-JP: デフォルト（システムのタイムゾーン）
 
 configPresenters:
   en: Presenters / Session
@@ -654,25 +844,30 @@ manualEdit:
   zh-CN: 手动编辑
   ja-JP: 手動編集
 
-manualEditMode:
-  en: Edit Mode On
-  zh-CN: 编辑模式开启
-  ja-JP: 編集モード ON
+commitManualEdits:
+  en: Commit Edits
+  zh-CN: 提交编辑
+  ja-JP: 編集を確定
 
-selectNewPresenter:
-  en: Select New Presenter
-  zh-CN: 选择新的发表人
-  ja-JP: 新しい発表者を選択
+cancelManualEdits:
+  en: Cancel Edits
+  zh-CN: 取消编辑
+  ja-JP: 編集を破棄
 
-selectNewQuestioner:
-  en: Select New Questioner
-  zh-CN: 选择新的提问人
-  ja-JP: 新しい質問者を選択
+manualEditDraftMode:
+  en: Draft changes are not saved until committed.
+  zh-CN: 当前是草稿，提交后才会保存并补齐空白。
+  ja-JP: 下書きです。確定するまで保存されず、空欄も補完されません。
 
 addQuestioner:
   en: Add Questioner
   zh-CN: 添加提问人
   ja-JP: 質問者を追加
+
+zeroQuestioners:
+  en: 0 questioners
+  zh-CN: 0 个提问人
+  ja-JP: 質問者 0 人
 
 similarity:
   en: Similarity
@@ -704,6 +899,26 @@ emailTaskTimezone:
   en: Timezone (IANA)
   zh-CN: 时区（IANA）
   ja-JP: タイムゾーン（IANA）
+
+emailTaskTimezoneDefault:
+  en: Default (task → schedule → system → environment)
+  zh-CN: 默认（邮件任务 → 排班表 → 系统 → 环境）
+  ja-JP: デフォルト（タスク → スケジュール → システム → 環境）
+
+emailTaskTimezoneSchedule:
+  en: Same as schedule timezone
+  zh-CN: 与排班表时区相同
+  ja-JP: スケジュールのタイムゾーンに合わせる
+
+emailTaskTimezoneSystem:
+  en: Same as system timezone
+  zh-CN: 与系统时区相同
+  ja-JP: システムのタイムゾーンに合わせる
+
+resolvedTimezone:
+  en: Resolved timezone
+  zh-CN: 实际时区
+  ja-JP: 解決後のタイムゾーン
 
 emailTaskCadence:
   en: Cadence
@@ -950,71 +1165,6 @@ defaultPlusOneWeek:
   zh-CN: 默认（+7天）
   ja-JP: 既定（+7日）
 
-temporarySessionMutation:
-  en: Temporary Insert/Delete Session
-  zh-CN: 临时插入/删除组会
-  ja-JP: 一時的な回の挿入/削除
-
-mutationInsert:
-  en: Insert
-  zh-CN: 插入
-  ja-JP: 挿入
-
-mutationDelete:
-  en: Delete
-  zh-CN: 删除
-  ja-JP: 削除
-
-mutationStrategyShift:
-  en: Shift
-  zh-CN: 顺延
-  ja-JP: 後ろにシフト
-
-mutationStrategyInPlace:
-  en: In-place Replan
-  zh-CN: 就地重排
-  ja-JP: その場で再配置
-
-mutationStrategyLabel:
-  en: Strategy
-  zh-CN: 策略
-  ja-JP: 方針
-
-mutationOperationLabel:
-  en: Operation
-  zh-CN: 操作
-  ja-JP: 操作
-
-mutationCountLabel:
-  en: Count
-  zh-CN: 数量
-  ja-JP: 件数
-
-sessionMutationInsertInPlaceHint:
-  en: Generate new presenters for the inserted session only.
-  zh-CN: 仅为新插入的组会生成新的发表者，其他日期保持不变。
-  ja-JP: 挿入した回にだけ新しい発表者を割り当て、他の日付は変えません。
-
-sessionMutationInsertShiftHint:
-  en: Shift later presenter blocks onto the inserted date, then regenerate only the final shifted date.
-  zh-CN: 将后续组会的发表者整体顺延到新日期上，只重生成最后一个被顺延的日期。
-  ja-JP: 後続の回の発表者を挿入日に順送りし、最後にずれた日付だけを再生成します。
-
-sessionMutationDeleteInPlaceHint:
-  en: Remove the deleted session and keep presenter assignments on other dates unchanged.
-  zh-CN: 删除该组会，并保持其他日期上的发表者不变。
-  ja-JP: この回だけ削除し、他の日付の発表者割り当ては変えません。
-
-sessionMutationDeleteShiftHint:
-  en: Pull later presenter blocks forward onto earlier dates after the deletion.
-  zh-CN: 删除后把后续组会的发表者整体前移到更早的日期上。
-  ja-JP: 削除後は後続の回の発表者を前の日付へ順送りします。
-
-applyMutation:
-  en: Apply
-  zh-CN: 执行
-  ja-JP: 適用
-
 selectWeekdays:
   en: Select Weekdays
   zh-CN: 选择星期
@@ -1039,76 +1189,6 @@ invertSelection:
   en: Invert Selection
   zh-CN: 反选
   ja-JP: 反転選択
-
-mutationInsertDialogTitle:
-  en: Insert Session
-  zh-CN: 插入组会
-  ja-JP: 回を挿入
-
-mutationDeleteDialogTitle:
-  en: Delete Session
-  zh-CN: 删除组会
-  ja-JP: 回を削除
-
-presentationMutationDialogTitle:
-  en: Edit Presenter Mutation
-  zh-CN: 调整发表者变更
-  ja-JP: 発表者変更を調整
-
-presentationMutationInsertTitle:
-  en: Insert Presenter
-  zh-CN: 插入发表者
-  ja-JP: 発表者を挿入
-
-presentationMutationDeleteTitle:
-  en: Delete Presenter
-  zh-CN: 删除发表者
-  ja-JP: 発表者を削除
-
-presentationMutationInsertAction:
-  en: Insert Presenter
-  zh-CN: 插入发表者
-  ja-JP: 発表者を挿入
-
-presentationMutationDeleteAction:
-  en: Delete Presenter
-  zh-CN: 删除发表者
-  ja-JP: 発表者を削除
-
-presentationIndexLabel:
-  en: Presentation Index
-  zh-CN: 发表序号
-  ja-JP: 発表番号
-
-presentationMutationModeLabel:
-  en: Presenter Strategy
-  zh-CN: 发表策略
-  ja-JP: 発表者方針
-
-presentationMutationModeResize:
-  en: Resize Current Session
-  zh-CN: 调整当前组会人数
-  ja-JP: 現在の回を増減
-
-presentationMutationModeShift:
-  en: Shift Across Sessions
-  zh-CN: 跨组会顺延
-  ja-JP: 回をまたいで順延
-
-presentationMutationModeRefill:
-  en: Refill Current Session
-  zh-CN: 仅补齐当前组会
-  ja-JP: 現在の回だけ補充
-
-mutationInsertedDate:
-  en: Inserted Date
-  zh-CN: 插入日期
-  ja-JP: 挿入日
-
-mutationInsertPosition:
-  en: Position
-  zh-CN: 插入位置
-  ja-JP: 位置
 
 accountSecurityTitle:
   en: Account Security

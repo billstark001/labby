@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { nanoid } from 'nanoid';
-import { Pencil } from 'lucide-preact';
+import { Pencil, Redo2, Undo2 } from 'lucide-preact';
 import {
   personsSignal,
   keywordsSignal,
@@ -22,7 +22,7 @@ import {
   readScheduleForeignKeys,
   useDatabase,
 } from '@/db/index';
-import { computeScheduleMetrics, explainScheduleMetrics, mutatePresentations, mutateSessions } from '@labby/core';
+import { computeScheduleMetrics, explainScheduleMetrics, solveConstrained } from '@labby/core';
 import type {
   IncrementalSolveMode,
   MetricExplanation,
@@ -48,13 +48,27 @@ import { ConfigPanel } from './ConfigPanel';
 import { ScheduleHistoryPanel } from './ScheduleHistoryPanel';
 import { ScheduleView } from './ScheduleView';
 import {
-  ManualEditDialog,
+  addQuestioner,
+  createScheduleDraft,
+  deletePresentation,
+  deleteQuestioner,
+  deleteSession,
+  discardedPresentationCount,
+  insertPresentation,
+  insertSession,
+  moveBoundary,
+  movePresentationTo,
+  moveQuestioner,
+  reorderPresentations,
+  replacePresenter,
+  replaceQuestioner,
+  shiftSessionSuffix,
+  type ScheduleDraft,
+} from './schedule-editor';
+import {
+  InsertSessionDialog,
   MetricsDialog,
-  PresentationMutationDialog,
-  SessionMutationDialog,
   type MetricsDialogState,
-  type PresentationMutationDialogState,
-  type SessionMutationDialogState,
 } from './dialogs';
 import {
   createSolverBackend,
@@ -88,22 +102,13 @@ export function SchedulePage() {
   const [showUnavailForm, setShowUnavailForm] = useState(false);
   const [editingUnavail, setEditingUnavail] = useState<PersonUnavailability | null>(null);
   const [editingNotes, setEditingNotes] = useState<SchedulePlan | null>(null);
-  const [manualEditTarget, setManualEditTarget] = useState<{
-    mode: 'presenter' | 'questioner';
-    action?: 'replace' | 'add';
-    sessionDate: string;
-    presIndex: number;
-    questIndex?: number;
-  } | null>(null);
   const [manualEditMode, setManualEditMode] = useState(false);
+  const [draftSchedule, setDraftSchedule] = useState<ScheduleDraft | null>(null);
+  const [undoStack, setUndoStack] = useState<ScheduleDraft[]>([]);
+  const [redoStack, setRedoStack] = useState<ScheduleDraft[]>([]);
   const [metricsDialog, setMetricsDialog] = useState<MetricsDialogState | null>(null);
-  const [sessionMutationDialog, setSessionMutationDialog] = useState<SessionMutationDialogState | null>(null);
+  const [insertSessionIndex, setInsertSessionIndex] = useState<number | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
-  const [sessionMutationTactic, setSessionMutationTactic] = useState<'shift' | 'keep'>('keep');
-  const [presentationMutationDialog, setPresentationMutationDialog] = useState<PresentationMutationDialogState | null>(null);
-  const [presentationMutationOperation, setPresentationMutationOperation] = useState<'insert' | 'delete'>('insert');
-  const [presentationMutationCount, setPresentationMutationCount] = useState(1);
-  const [presentationMutationMode, setPresentationMutationMode] = useState<'session-resize' | 'shift-chain' | 'session-refill'>('session-resize');
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
 
   // Transient clipboard-feedback flags are component-local; signals avoid
@@ -124,6 +129,8 @@ export function SchedulePage() {
   );
   const personMap = personMapSignal.value;
   const configUnavails = unavailabilities.filter(u => u.configId === selectedConfigId);
+  const readOnlyDraft = useMemo(() => current ? createScheduleDraft(current) : null, [current]);
+  const visibleDraft = manualEditMode ? draftSchedule : readOnlyDraft;
 
   // #region Effects
 
@@ -179,10 +186,12 @@ export function SchedulePage() {
     if (!selectedConfigId) {
       currentScheduleSignal.value = null;
       setSelectedHistoryIds(new Set());
+      cancelManualEdit();
       return;
     }
     localStorage.setItem(LAST_SELECTED_CONFIG_STORAGE_KEY, selectedConfigId);
     setSelectedHistoryIds(new Set());
+    cancelManualEdit();
   }, [selectedConfigId]);
 
   useEffect(() => {
@@ -213,6 +222,119 @@ export function SchedulePage() {
       unavailabilities,
       constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === configId),
     };
+  }
+
+  function updateDraft(mutator: (draft: ScheduleDraft) => ScheduleDraft): void {
+    setDraftSchedule((previous) => {
+      if (!previous) return previous;
+      const next = mutator(previous);
+      if (next === previous) return previous;
+      setUndoStack(stack => [...stack, previous]);
+      setRedoStack([]);
+      return next;
+    });
+  }
+
+  function beginManualEdit(): void {
+    if (!current) return;
+    setDraftSchedule(createScheduleDraft(current));
+    setUndoStack([]);
+    setRedoStack([]);
+    setManualEditMode(true);
+  }
+
+  function cancelManualEdit(): void {
+    setInsertSessionIndex(null);
+    setDraftSchedule(null);
+    setUndoStack([]);
+    setRedoStack([]);
+    setManualEditMode(false);
+  }
+
+  function undoDraft(): void {
+    const previous = undoStack.at(-1);
+    if (!previous || !draftSchedule) return;
+    setUndoStack(stack => stack.slice(0, -1));
+    setRedoStack(stack => [...stack, draftSchedule]);
+    setDraftSchedule(previous);
+  }
+
+  function redoDraft(): void {
+    const next = redoStack.at(-1);
+    if (!next || !draftSchedule) return;
+    setRedoStack(stack => stack.slice(0, -1));
+    setUndoStack(stack => [...stack, draftSchedule]);
+    setDraftSchedule(next);
+  }
+
+  function isQuestionerPlacementValid(draft: ScheduleDraft, presentationId: string, personId: string): boolean {
+    for (const session of draft.sessions) {
+      const presentation = session.presentations.find(item => item.id === presentationId);
+      if (!presentation) continue;
+      if (presentation.presenter.kind === 'fixed' && presentation.presenter.personId === personId) return false;
+      const unavailable = unavailabilities.some(item => {
+        if (item.configId !== draft.configId || session.date < item.startDate || session.date > item.endDate) return false;
+        const ids = item.personIds?.length ? item.personIds : item.personId ? [item.personId] : [];
+        return ids.includes(personId);
+      });
+      if (unavailable) return false;
+      if (presentation.presenter.kind === 'fixed') {
+        const presenterId = presentation.presenter.personId;
+        return !constraintsSignal.value.some(constraint =>
+          constraint.type === 'no-overlap'
+          && (!constraint.configId || constraint.configId === draft.configId)
+          && constraint.personIds.includes(personId)
+          && constraint.personIds.includes(presenterId),
+        );
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function solveDraft(draft: ScheduleDraft, config: ScheduleConfig) {
+    return solveConstrained({
+      config,
+      persons,
+      similarities: similarityLookupSignal.value,
+      unavailabilities,
+      constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id),
+      template: draft.sessions.map(session => ({
+        date: session.date,
+        presentations: session.presentations.map(presentation => ({
+          presenterId: presentation.presenter.kind === 'fixed' ? presentation.presenter.personId : null,
+          questionerIds: presentation.questioners.map(slot => slot.kind === 'fixed' ? slot.personId : null),
+        })),
+      })),
+    });
+  }
+
+  async function commitManualEdit(): Promise<void> {
+    if (!draftSchedule || !selectedConfig) return;
+    try {
+      const createdAt = Date.now();
+      const sessions = solveDraft(draftSchedule, selectedConfig);
+      const updated: SchedulePlan = {
+        id: nanoid(),
+        createdAt,
+        modifiedAt: createdAt,
+        configId: draftSchedule.configId,
+        sessions,
+        sessionMutations: draftSchedule.sessionMutations,
+        sessionDateMeta: buildSessionDateMeta(sessions, draftSchedule.sessionMutations, draftSchedule.sessionDateMeta),
+        notes: `${draftSchedule.notes ?? current?.notes ?? ''}\n[batch-edit] committed=${new Date(createdAt).toISOString()}`.trim(),
+      };
+      await db.schedules.put(updated);
+      await refreshScheduleScopedData(updated.configId);
+      currentScheduleSignal.value = updated;
+      setDraftSchedule(null);
+      setManualEditMode(false);
+      setUndoStack([]);
+      setRedoStack([]);
+      maybeShowLocalMetrics(updated, t('metricsAfterMutationTitle'));
+    } catch (err) {
+      toast.error(String(err));
+    }
   }
 
   /**
@@ -444,39 +566,86 @@ export function SchedulePage() {
     currentScheduleSignal.value = duplicate;
   }
 
-  async function handleDeleteQuestioner(target: { sessionDate: string; presIndex: number; questIndex: number }) {
-    if (!current) return;
+  function handleMoveQuestioner(sourcePresentationId: string, slotId: string, targetPresentationId: string, targetIndex: number): void {
+    updateDraft((draft) => {
+      const source = [...draft.discardedBefore, ...draft.sessions.flatMap(session => session.presentations), ...draft.discardedAfter]
+        .find(presentation => presentation.id === sourcePresentationId);
+      const slot = source?.questioners.find(item => item.id === slotId);
+      if (slot?.kind === 'fixed' && !isQuestionerPlacementValid(draft, targetPresentationId, slot.personId)) {
+        toast.error(t('invalidQuestionerDrop'));
+        return draft;
+      }
+      return moveQuestioner(draft, sourcePresentationId, slotId, targetPresentationId, targetIndex);
+    });
+  }
 
-    const session = current.sessions.find(item => item.date === target.sessionDate);
-    const presentation = session?.presentations[target.presIndex];
-    if (!session || !presentation || target.questIndex < 0 || target.questIndex >= presentation.questionerIds.length) {
-      toast.error(t('mutationTargetNotFound'));
+  function handleMoveBoundaryTo(boundaryIndex: number, targetSessionIndex: number, targetPresentationIndex: number): void {
+    updateDraft((draft) => {
+      let next = draft;
+      if (targetSessionIndex === boundaryIndex) {
+        for (let step = 0; step < targetPresentationIndex; step += 1) next = moveBoundary(next, boundaryIndex, 'down');
+        return next;
+      }
+      if (targetSessionIndex === boundaryIndex - 1) {
+        const previousLength = draft.sessions[targetSessionIndex]?.presentations.length ?? 0;
+        for (let step = targetPresentationIndex; step < previousLength; step += 1) next = moveBoundary(next, boundaryIndex, 'up');
+        return next;
+      }
+      toast.error(t('boundaryAdjacentOnly'));
+      return draft;
+    });
+  }
+
+  function openInsertSession(index: number): void {
+    setInsertSessionIndex(index);
+    setInsertedSessionDate('');
+  }
+
+  function applyInsertSession(): void {
+    if (insertSessionIndex === null || !draftSchedule || !selectedConfig) return;
+    const date = insertedSessionDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      toast.error(t('mutationInsertedDateRequired'));
       return;
     }
-
-    const nextSessions = current.sessions.map((item) => {
-      if (item.date !== target.sessionDate) return item;
-      return {
-        ...item,
-        presentations: item.presentations.map((entry, index) => {
-          if (index !== target.presIndex) return entry;
-          return {
-            ...entry,
-            questionerIds: entry.questionerIds.filter((_, questionerIndex) => questionerIndex !== target.questIndex),
-          };
-        }),
-      };
+    if (date < selectedConfig.startDate || date > selectedConfig.endDate) {
+      toast.error(t('mutationDateOutOfRange', selectedConfig.startDate, selectedConfig.endDate));
+      return;
+    }
+    if (draftSchedule.sessions.some(session => session.date === date)) {
+      toast.error(t('mutationInsertedDateOverlap', date));
+      return;
+    }
+    updateDraft((draft) => {
+      const next = insertSession(
+        draft,
+        insertSessionIndex,
+        date,
+        selectedConfig.presentersPerSession,
+        selectedConfig.questionersPerPresenter,
+      );
+      next.sessionMutations = [
+        ...(draft.sessionMutations ?? []).filter(mutation => mutation.date !== date),
+        { date, action: 'insert' as const, createdAt: Date.now() },
+      ].sort((left, right) => left.date.localeCompare(right.date));
+      return next;
     });
+    setInsertSessionIndex(null);
+    setInsertedSessionDate('');
+  }
 
-    const updated: SchedulePlan = {
-      ...current,
-      sessions: nextSessions,
-      modifiedAt: Date.now(),
-    };
-
-    await db.schedules.put(updated);
-    await refreshScheduleScopedData(updated.configId);
-    currentScheduleSignal.value = updated;
+  function handleDeleteSession(sessionId: string): void {
+    updateDraft((draft) => {
+      const session = draft.sessions.find(item => item.id === sessionId);
+      if (!session) return draft;
+      const next = deleteSession(draft, sessionId);
+      const existing = draft.sessionMutations ?? [];
+      next.sessionMutations = existing.some(mutation => mutation.date === session.date && mutation.action === 'insert')
+        ? existing.filter(mutation => mutation.date !== session.date)
+        : [...existing.filter(mutation => mutation.date !== session.date), { date: session.date, action: 'delete' as const, createdAt: Date.now() }]
+          .sort((left, right) => left.date.localeCompare(right.date));
+      return next;
+    });
   }
 
   // #endregion
@@ -503,181 +672,40 @@ export function SchedulePage() {
 
   // #endregion
 
-  // #region Session mutations
-
-  function openSessionMutationDialog(mode: 'insert' | 'delete', sessionDate: string) {
-    setSessionMutationDialog({ mode, sessionDate });
-    setInsertedSessionDate('');
-    setSessionMutationTactic('keep');
-  }
-
-  function openPresentationMutationDialog(sessionDate: string, presentationIndex: number) {
-    setPresentationMutationDialog({ sessionDate, presentationIndex });
-    setPresentationMutationOperation('insert');
-    setPresentationMutationCount(1);
-    setPresentationMutationMode('session-resize');
-  }
-
-  async function handleApplySessionMutation(): Promise<void> {
-    if (!current || !sessionMutationDialog) return;
-    if (!selectedConfig) {
-      toast.error(t('computeError'));
-      return;
-    }
-    const { mode, sessionDate } = sessionMutationDialog;
-    if (mode === 'delete' && !current.sessions.some(item => item.date === sessionDate)) {
-      toast.error(t('mutationTargetNotFound'));
-      return;
-    }
-
-    const existingMutations = current.sessionMutations ?? [];
-    let mutationDate = sessionDate;
-    if (mode === 'insert') {
-      if (!insertedSessionDate) { toast.error(t('mutationInsertedDateRequired')); return; }
-      mutationDate = insertedSessionDate;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(mutationDate)) {
-        toast.error(t('mutationInsertedDateRequired'));
-        return;
-      }
-      if (mutationDate < selectedConfig.startDate || mutationDate > selectedConfig.endDate) {
-        toast.error(t('mutationDateOutOfRange', selectedConfig.startDate, selectedConfig.endDate));
-        return;
-      }
-      if (current.sessions.some(item => item.date === mutationDate)) {
-        toast.error(t('mutationInsertedDateOverlap', mutationDate));
-        return;
-      }
-    }
-
-    let next: ReturnType<typeof mutateSessions>;
-    try {
-      next = mode === 'delete'
-        ? mutateSessions(
-          current.sessions,
-          {
-            config: selectedConfig,
-            persons,
-            mutations: existingMutations,
-            unavailabilities,
-            constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
-          },
-          { operation: 'delete', date: sessionDate, tactic: sessionMutationTactic },
-        )
-        : mutateSessions(
-          current.sessions,
-          {
-            config: selectedConfig,
-            persons,
-            mutations: existingMutations,
-            unavailabilities,
-            constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
-          },
-          {
-            operation: 'insert',
-            date: mutationDate,
-            tactic: sessionMutationTactic,
-          },
-        );
-    } catch (err) {
-      toast.error(String(err));
-      return;
-    }
-
-    const createdAt = Date.now();
-    const mutationNote = mode === 'delete'
-      ? `[temporary-delete:${sessionMutationTactic}] date=${sessionDate}`
-      : `[temporary-insert:${sessionMutationTactic}] inserted=${mutationDate}`;
-
-    const mutated: SchedulePlan = {
-      ...current,
-      id: nanoid(),
-      createdAt,
-      modifiedAt: createdAt,
-      sessions: next.sessions,
-      sessionMutations: next.mutations,
-      sessionDateMeta: buildSessionDateMeta(next.sessions, next.mutations, current.sessionDateMeta),
-      notes: `${current.notes ?? ''}\n${mutationNote}`.trim(),
-    };
-
-    await db.schedules.put(mutated);
-    await refreshScheduleScopedData(mutated.configId);
-    currentScheduleSignal.value = mutated;
-    setSessionMutationDialog(null);
-    setInsertedSessionDate('');
-    maybeShowLocalMetrics(mutated, t('metricsAfterMutationTitle'));
-  }
-
-  async function handleApplyPresentationMutation(): Promise<void> {
-    if (!current || !presentationMutationDialog || !selectedConfig) return;
-    const { sessionDate, presentationIndex } = presentationMutationDialog;
-    const sessionIndex = current.sessions.findIndex(item => item.date === sessionDate);
-    if (sessionIndex < 0) {
-      toast.error(t('mutationTargetNotFound'));
-      return;
-    }
-
-    const count = Math.max(1, Math.floor(presentationMutationCount));
-    const currentLen = current.sessions[sessionIndex]?.presentations.length ?? 0;
-    if (presentationMutationOperation === 'delete') {
-      if (presentationIndex + count > currentLen) {
-        toast.error(t('mutationDeletePresentationRangeExceeded'));
-        return;
-      }
-    }
-
-    let nextSessions: SchedulePlan['sessions'];
-    try {
-      nextSessions = mutatePresentations(
-        current.sessions,
-        {
-          config: selectedConfig,
-          persons,
-          mutations: current.sessionMutations,
-          unavailabilities,
-          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === selectedConfig.id),
-        },
-        {
-          sessionIndex,
-          index: presentationIndex,
-          operation: presentationMutationOperation,
-          count,
-          mode: presentationMutationMode,
-        },
-      );
-    } catch (err) {
-      toast.error(String(err));
-      return;
-    }
-
-    const createdAt = Date.now();
-    const mutated: SchedulePlan = {
-      ...current,
-      id: nanoid(),
-      createdAt,
-      modifiedAt: createdAt,
-      sessions: nextSessions,
-      notes: `${current.notes ?? ''}\n[presentation-mutation] session=${sessionDate} index=${presentationIndex + 1}`.trim(),
-    };
-
-    await db.schedules.put(mutated);
-    await refreshScheduleScopedData(mutated.configId);
-    currentScheduleSignal.value = mutated;
-    setPresentationMutationDialog(null);
-    maybeShowLocalMetrics(mutated, t('metricsAfterMutationTitle'));
-  }
-
-  // #endregion
-
   // #region Render
 
   return (
     <div>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navSchedule')}</h2>
-        <Button variant={manualEditMode ? 'primary' : 'ghost'} onClick={() => setManualEditMode(m => !m)}>
-          <Pencil size={14} />
-          {manualEditMode ? t('manualEditMode') : t('manualEdit')}
-        </Button>
+        <div class={s.flexGapSm}>
+          {!manualEditMode ? (
+            <Button variant="ghost" onClick={beginManualEdit} disabled={!current}>
+              <Pencil size={14} />
+              {t('manualEdit')}
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={undoDraft} disabled={undoStack.length === 0} title={t('undo')}>
+                <Undo2 size={14} />
+              </Button>
+              <Button variant="ghost" onClick={redoDraft} disabled={redoStack.length === 0} title={t('redo')}>
+                <Redo2 size={14} />
+              </Button>
+              <Button variant="primary" onClick={() => void commitManualEdit()}>
+                {t('commitManualEdits')}
+              </Button>
+              <Button variant="secondary" onClick={cancelManualEdit}>
+                {t('cancelManualEdits')}
+              </Button>
+              <span class={`${s.text12} ${draftSchedule && discardedPresentationCount(draftSchedule) > 0 ? s.textDanger : s.textMuted}`}>
+                {draftSchedule && discardedPresentationCount(draftSchedule) > 0
+                  ? t('commitDiscardWarning', String(discardedPresentationCount(draftSchedule)))
+                  : t('manualEditDraftMode')}
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       <ConfigPanel
@@ -775,7 +803,7 @@ export function SchedulePage() {
           sortedHistoryPlans={sortedHistoryPlans}
           selectedHistoryIds={selectedHistoryIds}
           currentSchedule={current}
-          onSelectHistory={plan => { currentScheduleSignal.value = plan; }}
+          onSelectHistory={plan => { cancelManualEdit(); currentScheduleSignal.value = plan; }}
           onDuplicateHistory={(plan) => void handleDuplicateHistory(plan)}
           onToggleHistory={toggleHistorySelection}
           onSelectAll={() => setSelectedHistoryIds(new Set(sortedHistoryPlans.map(p => p.id)))}
@@ -792,44 +820,62 @@ export function SchedulePage() {
       )}
 
       {/* Dialogs */}
-      {manualEditTarget && (
-        <ManualEditDialog {...manualEditTarget} onClose={() => setManualEditTarget(null)} />
-      )}
       <MetricsDialog state={metricsDialog} onClose={() => setMetricsDialog(null)} />
-      <SessionMutationDialog
-        state={sessionMutationDialog}
+      <InsertSessionDialog
+        open={insertSessionIndex !== null}
         insertedSessionDate={insertedSessionDate}
-        tactic={sessionMutationTactic}
         minDate={selectedConfig?.startDate}
         maxDate={selectedConfig?.endDate}
         onInsertedDateChange={setInsertedSessionDate}
-        onTacticChange={setSessionMutationTactic}
-        onApply={() => void handleApplySessionMutation()}
-        onClose={() => setSessionMutationDialog(null)}
-      />
-      <PresentationMutationDialog
-        state={presentationMutationDialog}
-        operation={presentationMutationOperation}
-        count={presentationMutationCount}
-        mode={presentationMutationMode}
-        onOperationChange={setPresentationMutationOperation}
-        onCountChange={setPresentationMutationCount}
-        onModeChange={setPresentationMutationMode}
-        onApply={() => void handleApplyPresentationMutation()}
-        onClose={() => setPresentationMutationDialog(null)}
+        onApply={applyInsertSession}
+        onClose={() => setInsertSessionIndex(null)}
       />
 
-      {/* Schedule tables */}
+      {/* Direct schedule tape */}
       <ScheduleView
-        current={current}
-        selectedConfigId={selectedConfigId}
+        draft={visibleDraft}
         personMap={personMap}
+        similarities={similarityLookupSignal.value}
         manualEditMode={manualEditMode}
-        onManualEdit={setManualEditTarget}
-        onDeleteQuestioner={(target) => void handleDeleteQuestioner(target)}
-        onShowMetricsForSession={(plan, date) => void showMetricsForSession(plan, date)}
-        onOpenSessionMutation={openSessionMutationDialog}
-        onOpenPresentationMutation={openPresentationMutationDialog}
+        onInsertPresentation={(sessionIndex, presentationIndex) => {
+          if (!selectedConfig) return;
+          updateDraft(draft => insertPresentation(draft, sessionIndex, presentationIndex, selectedConfig.questionersPerPresenter));
+        }}
+        onDeletePresentation={presentationId => updateDraft(draft => deletePresentation(draft, presentationId))}
+        onReplacePresenter={(presentationId, personId) => updateDraft(draft => replacePresenter(draft, presentationId, personId))}
+        onAddQuestioner={(presentationId, personId) => updateDraft(draft => addQuestioner(draft, presentationId, personId))}
+        onReplaceQuestioner={(presentationId, slotId, personId) => updateDraft(draft => replaceQuestioner(draft, presentationId, slotId, personId))}
+        onDeleteQuestioner={(presentationId, slotId) => updateDraft(draft => deleteQuestioner(draft, presentationId, slotId))}
+        onMoveQuestioner={handleMoveQuestioner}
+        onReorderPresentations={(sourceId, targetId, placement) => updateDraft(draft => reorderPresentations(draft, sourceId, targetId, placement))}
+        onMovePresentationTo={(sourceId, targetSessionIndex, targetPresentationIndex) => updateDraft(draft => movePresentationTo(draft, sourceId, targetSessionIndex, targetPresentationIndex))}
+        onMoveBoundary={(sessionIndex, direction) => updateDraft(draft => moveBoundary(draft, sessionIndex, direction))}
+        onMoveBoundaryTo={handleMoveBoundaryTo}
+        onShiftSuffix={(sessionIndex, direction) => {
+          if (!selectedConfig) return;
+          updateDraft(draft => shiftSessionSuffix(draft, sessionIndex, direction, selectedConfig.questionersPerPresenter));
+        }}
+        onInsertSession={openInsertSession}
+        onDeleteSession={handleDeleteSession}
+        onShowMetricsForSession={date => {
+          if (!manualEditMode && current) {
+            void showMetricsForSession(current, date);
+            return;
+          }
+          if (!draftSchedule || !selectedConfig) return;
+          try {
+            const preview: SchedulePlan = {
+              id: draftSchedule.id,
+              createdAt: draftSchedule.createdAt,
+              configId: draftSchedule.configId,
+              sessions: solveDraft(draftSchedule, selectedConfig),
+            };
+            const local = localMetricsForPlan({ ...preview, sessions: preview.sessions.filter(session => session.date === date) });
+            if (local) openMetricsDialog(`${date} · ${t('draftMetrics')}`, local.metrics, local.explanations);
+          } catch (error) {
+            toast.error(String(error));
+          }
+        }}
       />
     </div>
   );

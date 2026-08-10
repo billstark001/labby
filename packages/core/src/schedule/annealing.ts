@@ -53,6 +53,8 @@ export const MUTATION_WEIGHTS = {
 /** Simulated annealing hyperparameters. */
 export const ANNEALING_CONFIG = {
   maxIter: 5000,
+  /** Stop once the best score has not improved for this many iterations. */
+  maxStagnantIter: 80,
   initialTemp: 1.0,
   coolingRate: 0.995,
   /** Hamming penalty weight applied during incremental solves. */
@@ -610,6 +612,7 @@ export function simulatedAnnealing(
   let currentCost = totalCost(current);
   let best = deepCloneSessions(current);
   let bestCost = currentCost;
+  let stagnantIterations = 0;
 
   for (let iter = 0; iter < maxIter; iter++) {
     const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
@@ -623,7 +626,16 @@ export function simulatedAnnealing(
       if (currentCost < bestCost) {
         best = deepCloneSessions(current);
         bestCost = currentCost;
+        stagnantIterations = 0;
+      } else {
+        stagnantIterations += 1;
       }
+    } else {
+      stagnantIterations += 1;
+    }
+
+    if (stagnantIterations >= ANNEALING_CONFIG.maxStagnantIter) {
+      break;
     }
   }
   return best;
@@ -649,6 +661,7 @@ export function simulatedAnnealingQuestionersOnly(
   let currentCost = totalCost(current);
   let best = deepCloneSessions(current);
   let bestCost = currentCost;
+  let stagnantIterations = 0;
 
   for (let iter = 0; iter < maxIter; iter++) {
     const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
@@ -662,7 +675,16 @@ export function simulatedAnnealingQuestionersOnly(
       if (currentCost < bestCost) {
         best = deepCloneSessions(current);
         bestCost = currentCost;
+        stagnantIterations = 0;
+      } else {
+        stagnantIterations += 1;
       }
+    } else {
+      stagnantIterations += 1;
+    }
+
+    if (stagnantIterations >= ANNEALING_CONFIG.maxStagnantIter) {
+      break;
     }
   }
 

@@ -37,6 +37,7 @@ interface MenuContextValue {
   open: Signal<boolean>;
   position: Signal<MenuPosition>;
   mode: MenuMode;
+  show: () => void;
   close: () => void;
 }
 
@@ -49,9 +50,14 @@ interface MenuProps {
 
 export function Menu({ children, mode = 'dropdown' }: MenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuId = useRef(Symbol('menu'));
   const open = useMemo(() => signal(false), []);
   const position = useMemo(() => signal<MenuPosition>({ x: 0, y: 0 }), []);
   const close = () => { open.value = false; };
+  const show = () => {
+    document.dispatchEvent(new CustomEvent('labby-menu-open', { detail: menuId.current }));
+    open.value = true;
+  };
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -63,17 +69,29 @@ export function Menu({ children, mode = 'dropdown' }: MenuProps) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
+    const onOtherMenuOpen = (event: Event) => {
+      if ((event as CustomEvent).detail !== menuId.current) close();
+    };
+    const onViewportChange = () => close();
 
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('labby-menu-open', onOtherMenuOpen);
+    window.addEventListener('blur', onViewportChange);
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('labby-menu-open', onOtherMenuOpen);
+      window.removeEventListener('blur', onViewportChange);
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
     };
   }, []);
 
   return (
-    <MenuCtx.Provider value={{ open, position, mode, close }}>
+    <MenuCtx.Provider value={{ open, position, mode, show, close }}>
       <div ref={rootRef} data-menu-root style={{ position: 'relative', display: 'inline-block' }}>
         {children}
       </div>
@@ -94,7 +112,7 @@ export function MenuTrigger({ children }: MenuTriggerProps) {
         onContextMenu={(e: MouseEvent) => {
           e.preventDefault();
           ctx.position.value = { x: e.clientX, y: e.clientY };
-          ctx.open.value = true;
+          ctx.show();
         }}
       >
         {children}
@@ -103,7 +121,7 @@ export function MenuTrigger({ children }: MenuTriggerProps) {
   }
 
   // dropdown mode
-  const toggle = () => { ctx.open.value = !ctx.open.value; };
+  const toggle = () => { ctx.open.value ? ctx.close() : ctx.show(); };
   return (
     <div
       onClick={toggle}
@@ -128,6 +146,8 @@ export function MenuContent({ children, align = 'start' }: MenuContentProps) {
     return (
       <div
         role="menu"
+        onClick={(event: MouseEvent) => event.stopPropagation()}
+        onContextMenu={(event: MouseEvent) => event.stopPropagation()}
         style={{
           position: 'fixed',
           top: y,
@@ -144,6 +164,8 @@ export function MenuContent({ children, align = 'start' }: MenuContentProps) {
   return (
     <div
       role="menu"
+      onClick={(event: MouseEvent) => event.stopPropagation()}
+      onContextMenu={(event: MouseEvent) => event.stopPropagation()}
       style={{
         position: 'absolute',
         top: '100%',
@@ -186,4 +208,3 @@ export function MenuItem({ children, onSelect, disabled }: MenuItemProps) {
 export function MenuSeparator() {
   return <hr />;
 }
-

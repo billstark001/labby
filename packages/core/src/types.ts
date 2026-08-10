@@ -60,6 +60,8 @@ export interface ScheduleConfig {
   notifyAt?: string;
   /** Timezone for the notifyAt cron expression, e.g. "Asia/Tokyo". Defaults to UTC. */
   notifyTimezone?: string;
+  /** IANA timezone for this schedule config. Defaults to system/environment timezone when omitted. */
+  timezone?: string;
   /** Arbitrary extension metadata. */
   metadata?: Record<string, unknown>;
   modifiedAt?: number;
@@ -75,7 +77,7 @@ export interface EmailTask {
   daysOfWeek: number[];
   /** Daily local send time in HH:mm for the selected timezone. */
   sendTime?: string;
-  /** IANA timezone, e.g. Asia/Shanghai. Defaults to UTC when omitted. */
+  /** Explicit IANA timezone, e.g. Asia/Shanghai. Falls back through schedule/system/environment when omitted. */
   timezone?: string;
   emails: string[];
   /** 0 means unlimited sends for each recipient. */
@@ -206,6 +208,25 @@ export interface IncrementalSolverInput extends SolverInput {
 }
 
 export type IncrementalSolveMode = 'full' | 'questioners-only';
+
+/** A fixed person id or an Auto slot to be filled by the constrained solver. */
+export type ScheduleTemplatePersonId = string | null;
+
+export interface ScheduleTemplatePresentation {
+  presenterId: ScheduleTemplatePersonId;
+  questionerIds: ScheduleTemplatePersonId[];
+}
+
+export interface ScheduleTemplateSession {
+  date: string;
+  presentations: ScheduleTemplatePresentation[];
+}
+
+/** Solver input used by the direct schedule editor. Null slots are optimized; string ids remain fixed. */
+export interface ConstrainedSolverInput extends SolverInput {
+  template: ScheduleTemplateSession[];
+  historicalSessions?: Session[];
+}
 
 /** Triplet comparison query presented to the user. */
 export interface TripletQuery {

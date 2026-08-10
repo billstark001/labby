@@ -1,0 +1,28 @@
+import { style } from '@vanilla-extract/css';
+import { breakpoints, vars } from '@/styles/theme.css';
+import { card } from '@/styles/components.css';
+
+export const empty = style({ padding: vars.space.xl, color: vars.color.textMuted, textAlign: 'center' });
+export const tape = style([card, { width: '100%', padding: vars.space.xs }]);
+export const columnHeader = style({ display: 'grid', gridTemplateColumns: 'minmax(180px, 30%) 1fr', gap: vars.space.md, padding: `${vars.space.sm} ${vars.space.md}`, color: vars.color.textMuted, fontSize: vars.font.size.xs, fontWeight: vars.font.weight.bold });
+export const sessionDivider = style({ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: vars.space.xs, minHeight: '36px', margin: `${vars.space.xs} 0`, paddingLeft: vars.space.md });
+export const dashedLine = style({ position: 'absolute', left: 0, right: 0, top: '50%', borderTop: `1px dashed ${vars.color.secondary}` });
+export const dateHandle = style({ position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', flexShrink: 0, gap: vars.space.xs, padding: `4px ${vars.space.sm}`, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.full, background: vars.color.surface, fontSize: vars.font.size.sm, fontWeight: vars.font.weight.bold, whiteSpace: 'nowrap', cursor: 'grab', touchAction: 'none', boxShadow: vars.shadow.sm });
+export const boundaryButtons = style({ position: 'relative', zIndex: 1, display: 'inline-flex', gap: '2px', padding: `0 ${vars.space.xs}`, background: vars.color.surface, borderRadius: vars.radius.sm });
+export const boundaryButton = style({ display: 'inline-flex', border: 0, background: 'transparent', color: vars.color.textMuted, padding: 2, cursor: 'pointer' });
+export const moreButton = style({ position: 'relative', zIndex: 2, display: 'inline-flex', border: 0, background: vars.color.surface, color: vars.color.textMuted, padding: vars.space.xs, borderRadius: vars.radius.sm, cursor: 'pointer' });
+export const insertRail = style({ position: 'relative', height: '8px', selectors: { '&::before': { content: '', position: 'absolute', left: 0, right: 0, top: '50%', borderTop: `1px solid ${vars.color.border}`, transform: 'translateY(-50%)' } }, '@media': { [`(max-width: ${breakpoints.tablet})`]: { height: '12px' } } });
+export const insertButton = style({ position: 'absolute', zIndex: 3, left: '30%', top: '50%', transform: 'translate(-50%, -50%) scale(0.8)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, padding: 0, borderRadius: vars.radius.full, border: `1px solid ${vars.color.primary}`, color: vars.color.primary, background: vars.color.surface, opacity: 0, cursor: 'pointer', transition: 'opacity .12s, transform .12s', selectors: { [`${insertRail}:hover &`]: { opacity: 1, transform: 'translate(-50%, -50%) scale(1)' }, [`${insertRail}:focus-within &`]: { opacity: 1, transform: 'translate(-50%, -50%) scale(1)' } }, '@media': { [`(max-width: ${breakpoints.tablet})`]: { opacity: 0.65 } } });
+export const presentationRow = style({ display: 'grid', gridTemplateColumns: 'minmax(180px, 30%) 1fr', gap: vars.space.sm, minHeight: '38px', padding: `0 ${vars.space.md}`, alignItems: 'center', transition: 'opacity .12s, background .12s', selectors: { '&:hover': { background: `${vars.color.primary}08` } }, '@media': { [`(max-width: ${breakpoints.mobile})`]: { gridTemplateColumns: '1fr', gap: '2px', padding: `${vars.space.xs} ${vars.space.md}` } } });
+export const presenterCell = style({ display: 'flex', alignItems: 'center', gap: vars.space.xs, minWidth: 0 });
+export const questionerCell = style({ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: vars.space.xs, minWidth: 0 });
+export const rowGrip = style({ display: 'inline-flex', flexShrink: 0, color: vars.color.textMuted, cursor: 'grab', touchAction: 'none' });
+export const personLabel = style({ fontSize: vars.font.size.sm, color: vars.color.text });
+export const questionerToken = style({ display: 'inline-flex', padding: `1px 6px`, borderRadius: vars.radius.full, background: `${vars.color.primary}16`, color: vars.color.text, fontSize: vars.font.size.sm, cursor: 'grab', touchAction: 'none' });
+export const autoSlot = style({ display: 'inline-flex', padding: `1px 6px`, borderRadius: vars.radius.full, border: `1px dashed ${vars.color.accent}`, color: vars.color.accent, background: `${vars.color.accent}10`, fontSize: vars.font.size.sm, cursor: 'grab', touchAction: 'none' });
+export const rowMenuButton = style({ display: 'inline-flex', border: 0, background: 'transparent', color: vars.color.textMuted, padding: 2, cursor: 'pointer' });
+export const addQuestionerButton = style({ display: 'inline-flex', alignItems: 'center', gap: 2, border: `1px dashed ${vars.color.border}`, borderRadius: vars.radius.full, background: 'transparent', color: vars.color.textMuted, padding: `2px ${vars.space.sm}`, fontSize: vars.font.size.xs, cursor: 'pointer' });
+export const muted = style({ color: vars.color.textMuted, fontSize: vars.font.size.xs });
+export const discardZone = style({ margin: vars.space.sm, border: `1px solid ${vars.color.danger}55`, borderRadius: vars.radius.md, background: `${vars.color.danger}0d` });
+export const discardTitle = style({ display: 'flex', justifyContent: 'space-between', gap: vars.space.md, padding: `${vars.space.sm} ${vars.space.md}`, color: vars.color.danger, fontSize: vars.font.size.xs, fontWeight: vars.font.weight.bold });
+export const discardEmpty = style({ padding: `${vars.space.sm} ${vars.space.md}`, color: vars.color.textMuted, fontSize: vars.font.size.xs, textAlign: 'center' });
