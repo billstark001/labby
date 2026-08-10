@@ -1,4 +1,5 @@
 import type { Person, ScheduleConfig, SchedulePlan } from '../types.js';
+import { getTimeZoneOffsetMinutes, normalizeTimeZone } from '../timezone.js';
 
 export interface ScheduleTableLabels {
   date: string;
@@ -14,6 +15,7 @@ export interface ScheduleDateDisplayOptions {
   locale?: string;
   granularity?: ScheduleDateGranularity;
   includeWeekday?: boolean;
+  timeZone?: string;
 }
 
 export interface ScheduleRowBuildOptions {
@@ -63,6 +65,7 @@ export interface BuildEmailTemplateScheduleVariablesOptions {
   anchorDate?: string;
   labels?: Partial<ScheduleTableLabels>;
   displayName?: (person: Person) => string;
+  timeZone?: string;
 }
 
 interface NextSessionSummary {
@@ -129,8 +132,11 @@ function defaultDisplayName(person: Person, locale: string): string {
   return anyName || fallbackEntityId(person.id);
 }
 
-function parseDate(dateStr: string): Date {
-  return new Date(`${dateStr}T00:00:00`);
+function parseDate(dateStr: string, timeZone?: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const utcNoon = Date.UTC(year, (month ?? 1) - 1, day ?? 1, 12, 0, 0);
+  const offset = timeZone ? getTimeZoneOffsetMinutes(timeZone, new Date(utcNoon)) : 0;
+  return new Date(utcNoon - (offset ?? 0) * 60_000);
 }
 
 function parseClock(timeStr: string): { hour: number; minute: number } | null {
@@ -199,9 +205,11 @@ function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = 
   const locale = normalizeLocale(options.locale);
   const granularity = options.granularity ?? 'date';
   const includeWeekday = options.includeWeekday ?? false;
-  const date = parseDate(dateIso);
+  const timeZone = normalizeTimeZone(options.timeZone) ?? 'UTC';
+  const date = parseDate(dateIso, timeZone);
 
   const formatOptions: Intl.DateTimeFormatOptions = {
+    timeZone,
     month: '2-digit',
     day: '2-digit',
   };
@@ -343,15 +351,27 @@ function icsDateTime(dateStr: string, timeStr: string): string {
   return `${year}${pad2(month)}${pad2(day)}T${pad2(hour)}${pad2(minute)}00`;
 }
 
+function escapeIcsText(text: string): string {
+  return text
+    .replaceAll('\\', '\\\\')
+    .replaceAll('\n', '\\n')
+    .replaceAll(',', '\\,')
+    .replaceAll(';', '\\;');
+}
+
 export function buildScheduleIcs(
   plan: SchedulePlan,
   personMap: Map<string, Person>,
   displayName: (person: Person) => string,
   config: ScheduleConfig | undefined,
   labels = { presenter: 'Presenter', questioners: 'Questioners' },
+  options: { timeZone?: string } = {},
 ): string {
   const startTime = config?.timeRange[0] ?? '09:00';
   const endTime = config?.timeRange[1] ?? '10:00';
+  const timeZone = normalizeTimeZone(options.timeZone ?? config?.timezone);
+  const dtStartPrefix = timeZone ? `DTSTART;TZID=${timeZone}:` : 'DTSTART:';
+  const dtEndPrefix = timeZone ? `DTEND;TZID=${timeZone}:` : 'DTEND:';
 
   const events: string[] = [];
   for (const session of plan.sessions) {
@@ -371,11 +391,11 @@ export function buildScheduleIcs(
 
       events.push([
         'BEGIN:VEVENT',
-        `UID:${uid}`,
-        `DTSTART:${dtStart}`,
-        `DTEND:${dtEnd}`,
-        `SUMMARY:${summary}`,
-        description ? `DESCRIPTION:${description}` : '',
+        `UID:${escapeIcsText(uid)}`,
+        `${dtStartPrefix}${dtStart}`,
+        `${dtEndPrefix}${dtEnd}`,
+        `SUMMARY:${escapeIcsText(summary)}`,
+        description ? `DESCRIPTION:${escapeIcsText(description)}` : '',
         'END:VEVENT',
       ].filter(Boolean).join('\r\n'));
     }
@@ -387,9 +407,10 @@ export function buildScheduleIcs(
     'PRODID:-//Labby//Labby Scheduler//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
+    timeZone ? `X-WR-TIMEZONE:${timeZone}` : '',
     ...events,
     'END:VCALENDAR',
-  ].join('\r\n');
+  ].filter(Boolean).join('\r\n');
 }
 
 export function buildScheduleTemplateBlocks(
@@ -458,6 +479,7 @@ export function buildEmailTemplateScheduleVariables(
       locale,
       granularity: options.granularity,
       includeWeekday: options.includeWeekday,
+      timeZone: options.timeZone ?? options.config?.timezone,
     } satisfies ScheduleDateDisplayOptions,
   };
 

@@ -6,8 +6,13 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import {
   DEFAULT_TEMPLATE_PRESETS,
+  EMAIL_TASK_TIMEZONE_SCHEDULE,
+  EMAIL_TASK_TIMEZONE_SYSTEM,
   EMAIL_TEMPLATE_VARIABLE_DOCS,
+  SYSTEM_DEFAULT_TIMEZONE,
   buildEmailTemplateScheduleVariables,
+  getEnvironmentTimeZone,
+  normalizeTimeZone,
   renderTemplate,
   renderTemplateToHtml,
   type EmailTask,
@@ -17,6 +22,7 @@ import {
 
 import { Button, Dialog, toast } from '@/components/ui';
 import { confirmDialog } from '@/components/ui/Dialog';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
 import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
@@ -27,18 +33,6 @@ import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { configsSignal, emailTasksSignal, personsSignal, schedulesSignal } from '@/store';
 import * as s from '@/styles/components.css';
 import { AttachmentSettingsDialog, type EmailAttachmentType } from './AttachmentSettingsDialog';
-
-const DEFAULT_TIMEZONE = 'UTC';
-
-const SUPPORTED_TIMEZONES = (() => {
-  const intlWithSupportedValuesOf = Intl as typeof Intl & {
-    supportedValuesOf?: (key: 'timeZone') => string[];
-  };
-  const values = intlWithSupportedValuesOf.supportedValuesOf?.('timeZone') ?? [];
-  return values.includes(DEFAULT_TIMEZONE)
-    ? [DEFAULT_TIMEZONE, ...values.filter((value) => value !== DEFAULT_TIMEZONE)]
-    : [DEFAULT_TIMEZONE, ...values];
-})();
 
 const DAY_OPTIONS = [
   { value: 0, label: 'Sun' },
@@ -134,7 +128,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [isDisabled, setIsDisabled] = useState(false);
   const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]);
   const [sendTime, setSendTime] = useState('09:00');
-  const [taskTimezone, setTaskTimezone] = useState(DEFAULT_TIMEZONE);
+  const [taskTimezone, setTaskTimezone] = useState(SYSTEM_DEFAULT_TIMEZONE);
+  const [systemTimezone, setSystemTimezone] = useState<string | undefined>(undefined);
   const [emailsText, setEmailsText] = useState('');
   const [recentTimes, setRecentTimes] = useState(0);
   const [senderNameTemplate, setSenderNameTemplate] = useState('');
@@ -160,6 +155,9 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
   useEffect(() => {
     void Promise.all([loadAllConfigs(db), loadAllEmailTasks(db), loadAllPersons(db), loadAllSchedules(db)]);
+    void db.systemSettings.get().then((settings) => {
+      setSystemTimezone(settings.timezone);
+    });
   }, [db]);
 
   const selectedConfig = useMemo(
@@ -174,6 +172,18 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     [schedules, configId],
   );
 
+  const resolvedPreviewTimezone = useMemo(() => {
+    const systemOrEnv = normalizeTimeZone(systemTimezone) ?? getEnvironmentTimeZone();
+    if (taskTimezone === EMAIL_TASK_TIMEZONE_SYSTEM) return systemOrEnv;
+    if (taskTimezone === EMAIL_TASK_TIMEZONE_SCHEDULE) {
+      return normalizeTimeZone(selectedConfig?.timezone) ?? systemOrEnv;
+    }
+    if (taskTimezone === SYSTEM_DEFAULT_TIMEZONE) {
+      return normalizeTimeZone(selectedConfig?.timezone) ?? systemOrEnv;
+    }
+    return normalizeTimeZone(taskTimezone) ?? normalizeTimeZone(selectedConfig?.timezone) ?? systemOrEnv;
+  }, [taskTimezone, selectedConfig, systemTimezone]);
+
   const injectedScheduleVariables = useMemo(
     () => buildEmailTemplateScheduleVariables({
       plan: latestScheduleForConfig,
@@ -181,22 +191,51 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       config: selectedConfig,
       locale: injectionLanguage,
       granularity: dateGranularity,
-      anchorDate: new Date().toISOString().slice(0, 10),
+      anchorDate: new Intl.DateTimeFormat('en-CA', {
+        timeZone: resolvedPreviewTimezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date()),
+      timeZone: resolvedPreviewTimezone,
     }),
-    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity],
+    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity, resolvedPreviewTimezone],
   );
 
   const previewContext = useMemo(() => ({
     recipient: 'preview@example.com',
     configId: configId || 'config-preview',
     taskId: selectedTaskId || 'task-preview',
-    now: new Date().toISOString(),
+    now: new Intl.DateTimeFormat(injectionLanguage, {
+      timeZone: resolvedPreviewTimezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).format(new Date()),
+    nowIsoUtc: new Date().toISOString(),
+    nowLocal: new Intl.DateTimeFormat(injectionLanguage, {
+      timeZone: resolvedPreviewTimezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).format(new Date()),
+    runTimezone: resolvedPreviewTimezone,
     sessionCount: 4,
     summary: 'This is a local preview. In frontend-only mode, emails are not auto-sent.',
     language: injectionLanguage,
-    scheduleIcsUrl: serveScheduleIcs ? 'https://example.com/public/email-tasks/task-preview/schedule.ics' : '',
+    scheduleIcsUrl: serveScheduleIcs ? 'https://example.com/public/email-tasks/task-preview/schedule.ics' : undefined,
     ...injectedScheduleVariables,
-  }), [configId, selectedTaskId, injectionLanguage, serveScheduleIcs, injectedScheduleVariables]);
+  }), [configId, selectedTaskId, injectionLanguage, resolvedPreviewTimezone, serveScheduleIcs, injectedScheduleVariables]);
 
   const previewResult = useMemo(
     () => renderTemplateToHtml(templateText, previewContext, { format: templateFormat }),
@@ -213,18 +252,20 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     [senderNameTemplate, previewContext],
   );
 
-  const timezoneOptions = useMemo(
-    () => [...new Set([taskTimezone || DEFAULT_TIMEZONE, ...SUPPORTED_TIMEZONES])],
-    [taskTimezone],
-  );
-
   function applyTaskToForm(task: EmailTask): void {
     setSelectedTaskId(task.id);
     setConfigId(task.configId);
     setIsDisabled(task.disabled ?? false);
     setSelectedDays(task.daysOfWeek);
     setSendTime(task.sendTime ?? '09:00');
-    setTaskTimezone(task.timezone ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : 'UTC'));
+    const timezoneSource = task.metadata?.timezoneSource;
+    if (timezoneSource === 'schedule') {
+      setTaskTimezone(EMAIL_TASK_TIMEZONE_SCHEDULE);
+    } else if (timezoneSource === 'system') {
+      setTaskTimezone(EMAIL_TASK_TIMEZONE_SYSTEM);
+    } else {
+      setTaskTimezone(task.timezone ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : SYSTEM_DEFAULT_TIMEZONE));
+    }
     setEmailsText(task.emails.join(', '));
     setRecentTimes(task.recentTimes);
     setSenderNameTemplate(task.senderNameTemplate ?? '');
@@ -253,7 +294,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setIsDisabled(false);
     setSelectedDays([1, 3, 5]);
     setSendTime('09:00');
-    setTaskTimezone(DEFAULT_TIMEZONE);
+    setTaskTimezone(SYSTEM_DEFAULT_TIMEZONE);
     setEmailsText('');
     setRecentTimes(0);
     setSenderNameTemplate('');
@@ -325,6 +366,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   async function saveTask(): Promise<void> {
     if (!configId) return;
     const nextId = selectedTaskId || nanoid();
+    const timezoneSource = taskTimezone === EMAIL_TASK_TIMEZONE_SCHEDULE
+      ? 'schedule'
+      : taskTimezone === EMAIL_TASK_TIMEZONE_SYSTEM
+        ? 'system'
+        : taskTimezone === SYSTEM_DEFAULT_TIMEZONE
+          ? 'default'
+          : 'task';
+    const explicitTimezone = timezoneSource === 'task' ? taskTimezone : undefined;
     const task: EmailTask = {
       id: nextId,
       configId,
@@ -332,7 +381,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       notes: notes.trim() || undefined,
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
       sendTime,
-      timezone: taskTimezone || 'UTC',
+      timezone: explicitTimezone,
       emails: parseEmails(emailsText),
       recentTimes,
       senderNameTemplate,
@@ -346,7 +395,8 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
         dateLocale: injectionLanguage,
         serveScheduleIcs,
         attachmentTypes,
-        timezone: taskTimezone || 'UTC',
+        timezone: explicitTimezone,
+        timezoneSource,
         sendTime,
       },
     };
@@ -532,15 +582,16 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskTimezone')}</label>
-          <select
-            class={s.input}
+          <TimezoneSelect
             value={taskTimezone}
-            onChange={(e) => { setIsDirty(true); setTaskTimezone((e.target as HTMLSelectElement).value || DEFAULT_TIMEZONE); }}
-          >
-            {timezoneOptions.map((timeZone) => (
-              <option key={timeZone} value={timeZone}>{timeZone}</option>
-            ))}
-          </select>
+            defaultLabel={t('emailTaskTimezoneDefault')}
+            specialOptions={[
+              { value: EMAIL_TASK_TIMEZONE_SCHEDULE, label: t('emailTaskTimezoneSchedule') },
+              { value: EMAIL_TASK_TIMEZONE_SYSTEM, label: t('emailTaskTimezoneSystem') },
+            ]}
+            onChange={(value) => { setIsDirty(true); setTaskTimezone(value); }}
+          />
+          <div class={`${s.text12} ${s.textMuted}`}>{t('resolvedTimezone')}: {resolvedPreviewTimezone}</div>
         </div>
 
         <div class={s.formGroup}>

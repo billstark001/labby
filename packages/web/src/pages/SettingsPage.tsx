@@ -1,11 +1,15 @@
 /** Settings panel: language and config management. */
 import { useEffect, useState } from 'preact/hooks';
+import { SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
 
 import { i18n } from '../i18n';
 import type { Locale } from '../i18n';
 import * as s from '../styles/components.css';
 import { DataPanel } from '../components/DataPanel';
+import { TimezoneSelect } from '../components/TimezoneSelect';
+import { useDatabase } from '../db';
 import { deploymentMode } from '../lib/runtime';
+import { toast } from '../components/ui';
 import {
   changePassword,
   confirmEmailChange,
@@ -26,6 +30,7 @@ const localeLabels: Record<Locale, string> = {
 
 export function SettingsPage() {
   const { t, lang, setLang } = i18n.useTranslation();
+  const db = useDatabase();
   const [profile, setProfile] = useState<AuthAccountProfile | null>(null);
   const [securityMessage, setSecurityMessage] = useState<string | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
@@ -35,6 +40,7 @@ export function SettingsPage() {
   const [emailChangeCode, setEmailChangeCode] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [systemTimezone, setSystemTimezone] = useState(SYSTEM_DEFAULT_TIMEZONE);
   const isRoot = profile?.role === 2;
 
   useEffect(() => {
@@ -43,6 +49,19 @@ export function SettingsPage() {
       .then(setProfile)
       .catch((err) => setSecurityError(err instanceof Error ? err.message : String(err)));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void db.systemSettings.get()
+      .then((settings) => {
+        if (cancelled) return;
+        setSystemTimezone(settings.timezone || SYSTEM_DEFAULT_TIMEZONE);
+      })
+      .catch((err) => toast.error(`${t('systemSettingsLoadFailed')}: ${String(err)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [db, t]);
 
   async function handleRequestVerifyEmail() {
     setSecurityError(null);
@@ -107,6 +126,19 @@ export function SettingsPage() {
     }
   }
 
+  async function handleSaveSystemSettings() {
+    try {
+      await db.systemSettings.put({
+        id: 'system',
+        timezone: systemTimezone === SYSTEM_DEFAULT_TIMEZONE ? undefined : systemTimezone,
+        modifiedAt: Date.now(),
+      });
+      toast.success(t('systemSettingsSaved'));
+    } catch (err) {
+      toast.error(`${t('systemSettingsSaveFailed')}: ${String(err)}`);
+    }
+  }
+
   return (
     <div>
       <h2 class={clsx(s.sectionTitle, s.mb12)}>{t('settingsTitle')}</h2>
@@ -129,6 +161,21 @@ export function SettingsPage() {
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div class={clsx(s.card, s.sectionStack)}>
+        <h3 class={clsx(s.text15, s.fontMedium)}>{t('systemTimezoneTitle')}</h3>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('systemTimezone')}</label>
+          <TimezoneSelect
+            value={systemTimezone}
+            defaultLabel={t('systemTimezoneDefault')}
+            onChange={setSystemTimezone}
+          />
+        </div>
+        <div class={s.flexGapSm}>
+          <button class={s.btnVariants.primary} onClick={() => void handleSaveSystemSettings()}>{t('save')}</button>
         </div>
       </div>
 

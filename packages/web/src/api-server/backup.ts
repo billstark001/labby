@@ -13,6 +13,14 @@ export interface SystemCapabilities {
     targets: Record<BackupTarget, boolean>;
     formats: BackupFormat[];
   };
+  emailTasks: {
+    autoSend: boolean;
+    publicScheduleIcs: boolean;
+  };
+  system: {
+    timezone: string | null;
+    environmentTimezone: string;
+  };
   permissions: {
     canManageBackups: boolean;
     canManageUsers: boolean;

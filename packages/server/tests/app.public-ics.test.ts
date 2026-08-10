@@ -51,6 +51,7 @@ test('public email task ICS endpoint is available only when enabled and task opt
       targetSimilarityRadius: 0.5,
       startDate: '2026-01-01',
       endDate: '2026-01-31',
+      timezone: 'Asia/Tokyo',
       metadata: {},
     };
 
@@ -116,6 +117,7 @@ test('public email task ICS endpoint is available only when enabled and task opt
     const icsBody = await icsRes.text();
     assert.match(icsBody, /BEGIN:VCALENDAR/);
     assert.match(icsBody, /BEGIN:VEVENT/);
+    assert.match(icsBody, /DTSTART;TZID=Asia\/Tokyo:/);
     assert.match(icsBody, /SUMMARY:Presenter: Alice/);
 
     await runtime.app.request('/api/v1/db/email-tasks/task-ics', {

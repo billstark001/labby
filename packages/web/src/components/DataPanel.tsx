@@ -189,6 +189,7 @@ export function DataPanel() {
   }
 
   const backupCapabilities = capabilities?.backup;
+  const emailTaskCapabilities = capabilities?.emailTasks;
 
   function availabilityBadge(available: boolean) {
     return (
@@ -290,6 +291,18 @@ export function DataPanel() {
                   <span>{t('backupTargetOneDrive')}</span>
                   {availabilityBadge(backupCapabilities.targets.onedrive)}
                 </div>
+                {emailTaskCapabilities && (
+                  <>
+                    <div class={s.metricRow}>
+                      <span>{t('emailTaskAutoSendService')}</span>
+                      {availabilityBadge(emailTaskCapabilities.autoSend)}
+                    </div>
+                    <div class={s.metricRow}>
+                      <span>{t('emailTaskPublicIcsService')}</span>
+                      {availabilityBadge(emailTaskCapabilities.publicScheduleIcs)}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 

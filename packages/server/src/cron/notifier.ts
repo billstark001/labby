@@ -6,10 +6,11 @@
  * the scheduled time arrives.
  */
 
-import type { ScheduleConfig } from '@labby/core';
+import { normalizeTimeZone, type ScheduleConfig } from '@labby/core';
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
 import type { LabbyStore } from '../store/index.js';
+import { resolveScheduleTimezone } from '../lib/email-task-timezone.js';
 
 export interface ScheduleNotifierOptions {
   scheduler: CronScheduler;
@@ -31,16 +32,18 @@ export class ScheduleNotifier {
   async syncJobs(): Promise<void> {
     const { scheduler, store } = this.options;
     const configs = await store.listConfigs();
+    const systemSettings = await store.getSystemSettings();
     const activeNames = new Set<string>();
 
     for (const config of configs) {
       const notifyAt = config.notifyAt ?? (config.metadata?.['notifyAt'] as string | undefined);
       if (typeof notifyAt !== 'string' || !notifyAt.trim()) continue;
 
-      const timezone = config.notifyTimezone
+      const timezone = normalizeTimeZone(config.notifyTimezone)
         ?? (typeof config.metadata?.['notifyTimezone'] === 'string'
-          ? config.metadata['notifyTimezone'] as string
-          : 'UTC');
+          ? normalizeTimeZone(config.metadata['notifyTimezone'])
+          : undefined)
+        ?? resolveScheduleTimezone(config, systemSettings);
 
       const jobName = `schedule-notify:${config.id}`;
       activeNames.add(jobName);
@@ -50,7 +53,7 @@ export class ScheduleNotifier {
           name: jobName,
           expression: notifyAt,
           timezone,
-          handler: () => this.sendNotification(config),
+          handler: () => this.sendNotification(config, timezone),
         });
       } catch (err) {
         console.warn(`[notify] Could not register job for config ${config.id}:`, err);
@@ -65,7 +68,7 @@ export class ScheduleNotifier {
     }
   }
 
-  private async sendNotification(config: ScheduleConfig): Promise<void> {
+  private async sendNotification(config: ScheduleConfig, timezone: string): Promise<void> {
     const { mailer, store, recipients } = this.options;
     if (recipients.length === 0) return;
 
@@ -77,8 +80,21 @@ export class ScheduleNotifier {
 
     const subject = `[Labby] Schedule reminder – ${config.id}`;
     const sessionCount = latest?.sessions?.length ?? 0;
+    const createdAtText = latest
+      ? new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZoneName: 'short',
+      }).format(new Date(latest.createdAt))
+      : '';
     const text = latest
-      ? `Reminder: Schedule "${config.id}" has ${sessionCount} session(s). Latest plan created at ${new Date(latest.createdAt).toISOString()}.`
+      ? `Reminder: Schedule "${config.id}" has ${sessionCount} session(s). Latest plan created at ${createdAtText}.`
       : `Reminder: Schedule "${config.id}" has no plans generated yet.`;
 
     try {

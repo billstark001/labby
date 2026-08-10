@@ -415,3 +415,91 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
     await store.close();
   }
 });
+
+test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when available', async () => {
+  const dbPath = createTempDbPath('labby-email-task-timezone-ics-url');
+  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const scheduler = new FakeScheduler();
+  const sent: Array<{ to: string[]; text?: string; attachments?: Array<{ filename: string; content: Buffer }> }> = [];
+
+  const mailer = {
+    send: async (input: { to: string[]; text?: string; attachments?: Array<{ filename: string; content: Buffer }> }) => {
+      sent.push({ to: input.to, text: input.text, attachments: input.attachments });
+    },
+  } as unknown as Mailer;
+
+  try {
+    await store.putSystemSettings({
+      id: 'system',
+      timezone: 'Asia/Tokyo',
+    });
+
+    await store.putConfig({
+      id: 'cfg-tz',
+      daysOfWeek: [1],
+      timeRange: ['09:00', '10:00'],
+      presentersPerSession: 1,
+      questionersPerPresenter: 1,
+      targetSimilarityRadius: 0.5,
+      startDate: '2026-01-01',
+      endDate: '2099-01-31',
+      metadata: {},
+    });
+
+    await store.putPerson({
+      id: 'presenter',
+      name: 'Presenter',
+      names: { en: 'Presenter' },
+      metadata: {},
+      keywordIds: [],
+    });
+
+    await store.putSchedule({
+      id: 'plan-tz',
+      createdAt: Date.UTC(2026, 0, 1, 0, 0, 0),
+      configId: 'cfg-tz',
+      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: 'presenter', questionerIds: [] }] }],
+    });
+
+    await store.putEmailTask({
+      id: 'task-tz',
+      configId: 'cfg-tz',
+      daysOfWeek: [1],
+      emails: ['tz@example.com'],
+      recentTimes: 0,
+      templateText: '{{ runTimezone }}|{{ scheduleIcsUrl === undefined ? "missing" : scheduleIcsUrl }}',
+      metadata: {
+        timezoneSource: 'system',
+        serveScheduleIcs: true,
+      },
+    });
+
+    const notifierWithoutPublicIcs = new EmailTaskNotifier({
+      scheduler: scheduler as unknown as any,
+      mailer,
+      store,
+      defaultHour: 9,
+      enablePublicEmailTaskIcs: false,
+      publicBaseUrl: 'https://example.test',
+    });
+
+    await notifierWithoutPublicIcs.runTaskNow('task-tz');
+    assert.equal(sent[0]?.text, 'Asia/Tokyo|missing');
+    const firstIcs = sent[0]?.attachments?.find((item) => item.filename.endsWith('.ics'));
+    assert.match(firstIcs?.content.toString('utf-8') ?? '', /DTSTART;TZID=Asia\/Tokyo:/);
+
+    const notifierWithPublicIcs = new EmailTaskNotifier({
+      scheduler: scheduler as unknown as any,
+      mailer,
+      store,
+      defaultHour: 9,
+      enablePublicEmailTaskIcs: true,
+      publicBaseUrl: 'https://example.test/',
+    });
+
+    await notifierWithPublicIcs.runTaskNow('task-tz');
+    assert.equal(sent[1]?.text, 'Asia/Tokyo|https://example.test/public/email-tasks/task-tz/schedule.ics');
+  } finally {
+    await store.close();
+  }
+});

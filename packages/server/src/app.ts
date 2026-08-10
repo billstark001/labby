@@ -20,7 +20,9 @@ import {
   computeScheduleMetrics,
   explainScheduleMetrics,
   generateId,
+  getEnvironmentTimeZone,
   renderTemplate,
+  normalizeTimeZone,
   solveFull,
   solveIncremental,
   keywordVectorsToSimilarityLookup,
@@ -46,6 +48,7 @@ import {
   parsePagination,
   toPage,
 } from "./lib/app-helpers.js";
+import { resolveEmailTaskTimezone } from "./lib/email-task-timezone.js";
 import {
   backupActionSchema,
   changePasswordSchema,
@@ -241,7 +244,10 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
       const config = await store.getConfig(task.configId);
       const personMap = new Map((await store.listPersons()).map((person) => [person.id, person]));
-      const ics = buildScheduleIcs(latest, personMap, defaultDisplayName, config ?? undefined);
+      const systemSettings = await store.getSystemSettings();
+      const ics = buildScheduleIcs(latest, personMap, defaultDisplayName, config ?? undefined, undefined, {
+        timeZone: resolveEmailTaskTimezone(task, config, systemSettings),
+      });
 
       c.header('Content-Type', 'text/calendar; charset=utf-8');
       c.header('Cache-Control', 'no-store');
@@ -250,9 +256,10 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     });
   }
 
-  app.get("/api/v1/system/capabilities", (c) => {
+  app.get("/api/v1/system/capabilities", async (c) => {
     const session = getAuthSession(c);
     const backupService = getActiveBackupService();
+    const systemSettings = await store.getSystemSettings();
     return ok(c, {
       deploymentMode: 'server',
       backup: backupService?.getCapabilities() ?? {
@@ -271,7 +278,40 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         canManageBackups: session.role >= UserRole.Admin,
         canManageUsers: session.role >= UserRole.Root,
       },
+      emailTasks: {
+        autoSend: Boolean(options.mailer),
+        publicScheduleIcs: Boolean(options.enablePublicEmailTaskIcs),
+      },
+      system: {
+        timezone: systemSettings.timezone ?? null,
+        environmentTimezone: getEnvironmentTimeZone(),
+      },
     });
+  });
+
+  app.get('/api/v1/system/settings', async (c) => {
+    return ok(c, await store.getSystemSettings());
+  });
+
+  app.put('/api/v1/system/settings', requireMinRole(UserRole.Admin), async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { timezone?: unknown; metadata?: unknown };
+    const timezone = typeof body.timezone === 'string'
+      ? normalizeTimeZone(body.timezone)
+      : undefined;
+    if (typeof body.timezone === 'string' && body.timezone.trim() && !timezone) {
+      throw new AppError('VALIDATION_ERROR', 'timezone is invalid', 400);
+    }
+    const metadata = body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+      ? body.metadata as Record<string, unknown>
+      : undefined;
+    const settings = {
+      id: 'system' as const,
+      timezone,
+      metadata,
+      modifiedAt: Date.now(),
+    };
+    await store.putSystemSettings(settings);
+    return ok(c, await store.getSystemSettings());
   });
 
   app.post("/api/v1/system/backup/run", async (c) => {

@@ -12,7 +12,8 @@ export function getScheduleConfigSummary(config: ScheduleConfig): string {
   const days = config.daysOfWeek
     .map((day) => DAY_NAMES[day] ?? String(day))
     .join(', ');
-  return `${config.startDate} -> ${config.endDate} | ${days || '-'} | ${config.timeRange[0]}-${config.timeRange[1]} | ${config.presentersPerSession}x${config.questionersPerPresenter}`;
+  const timezone = config.timezone ? ` | ${config.timezone}` : '';
+  return `${config.startDate} -> ${config.endDate} | ${days || '-'} | ${config.timeRange[0]}-${config.timeRange[1]} | ${config.presentersPerSession}x${config.questionersPerPresenter}${timezone}`;
 }
 
 export function getScheduleConfigLabel(config: ScheduleConfig): string {

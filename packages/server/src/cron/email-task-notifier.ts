@@ -13,6 +13,7 @@ import {
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
 import type { LabbyStore } from '../store/index.js';
+import { resolveEmailTaskTimezone } from '../lib/email-task-timezone.js';
 
 export interface EmailTaskNotifierOptions {
   scheduler: CronScheduler;
@@ -55,14 +56,6 @@ function toCronExpression(days: number[], hour: number, minute: number): string 
   const clampedHour = Math.max(0, Math.min(23, hour));
   const clampedMinute = Math.max(0, Math.min(59, minute));
   return `${clampedMinute} ${clampedHour} * * ${dow}`;
-}
-
-function resolveTaskTimezone(task: EmailTask): string {
-  return (
-    task.timezone
-    ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : undefined)
-    ?? 'UTC'
-  );
 }
 
 function formatZonedDate(runAt: number, timeZone: string): string {
@@ -126,6 +119,7 @@ function buildScheduleAttachments(input: {
   plan: SchedulePlan;
   locale: string;
   persons: Person[];
+  timezone: string;
 }): Array<{ filename: string; content: Buffer; contentType: string }> {
   const selectedTypes = resolveAttachmentTypes(input.task);
   if (selectedTypes.length === 0) {
@@ -142,11 +136,14 @@ function buildScheduleAttachments(input: {
         locale: input.locale,
         granularity: 'date',
         includeWeekday: true,
+        timeZone: input.timezone,
       },
     })
     : null;
   const ics = selectedTypes.includes('schedule-semester-ics')
-    ? buildScheduleIcs(input.plan, personMap, displayName, input.config, icsLabelsForLocale(input.locale))
+    ? buildScheduleIcs(input.plan, personMap, displayName, input.config, icsLabelsForLocale(input.locale), {
+      timeZone: input.timezone,
+    })
     : null;
   const slug = input.config.id.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'schedule';
   const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
@@ -172,9 +169,9 @@ function hasPeriodEnded(config: ScheduleConfig, runAt: number, timezone: string)
   return today > config.endDate;
 }
 
-function latestScheduleSummary(sessions: number, createdAt: number | null): string {
+function latestScheduleSummary(sessions: number, createdAt: number | null, locale: string, timezone: string): string {
   if (!createdAt) return `No generated schedule found. Session count: ${sessions}.`;
-  return `Latest plan has ${sessions} sessions, created at ${new Date(createdAt).toISOString()}.`;
+  return `Latest plan has ${sessions} sessions, created at ${formatZonedDateTime(createdAt, locale, timezone)}.`;
 }
 
 type TaskExecutionContext = {
@@ -218,6 +215,7 @@ export class EmailTaskNotifier {
 
   private async loadExecutionContext(task: EmailTask): Promise<TaskExecutionContext> {
     const config = await this.options.store.getConfig(task.configId);
+    const systemSettings = await this.options.store.getSystemSettings();
     const persons = config ? await this.options.store.listPersons() : [];
     const latest = config
       ? (await this.options.store.listSchedules())
@@ -231,7 +229,7 @@ export class EmailTaskNotifier {
       latest,
       sentCounts: { ...(task.sentCounts ?? {}) },
       runAt: Date.now(),
-      timezone: resolveTaskTimezone(task),
+      timezone: resolveEmailTaskTimezone(task, config, systemSettings),
     };
   }
 
@@ -279,6 +277,7 @@ export class EmailTaskNotifier {
     const { scheduler, store } = this.options;
     const tasks = await store.listEmailTasks();
     const configs = new Map((await store.listConfigs()).map((config) => [config.id, config]));
+    const systemSettings = await store.getSystemSettings();
     const active = new Set<string>();
     const runAt = Date.now();
 
@@ -291,7 +290,7 @@ export class EmailTaskNotifier {
       const config = configs.get(task.configId);
       if (!config) continue;
 
-      const timezone = resolveTaskTimezone(task);
+      const timezone = resolveEmailTaskTimezone(task, config, systemSettings);
       if (hasPeriodEnded(config, runAt, timezone)) continue;
 
       const jobName = `email-task:${task.id}`;
@@ -378,6 +377,7 @@ export class EmailTaskNotifier {
       plan: latest,
       locale,
       persons,
+      timezone,
     });
 
     const failures: TaskDeliveryFailure[] = [];
@@ -398,6 +398,7 @@ export class EmailTaskNotifier {
         runAt,
         persons,
         latest,
+        timezone,
       );
       const rendered = renderTemplateToHtml(task.templateText, context, {
         format: (task.metadata?.format as 'markdown' | 'html' | undefined) ?? 'markdown',
@@ -480,12 +481,12 @@ export class EmailTaskNotifier {
     runAt: number,
     persons: Awaited<ReturnType<LabbyStore['listPersons']>>,
     latestPlan: Awaited<ReturnType<LabbyStore['listSchedules']>>[number] | undefined,
+    timeZone: string,
   ): Record<string, unknown> {
     const locale = (task.metadata?.dateLocale as string | undefined)
       ?? (task.metadata?.injectionLanguage as string | undefined)
       ?? 'en';
     const granularity = (task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date';
-    const timeZone = resolveTaskTimezone(task);
     const anchorDate = formatZonedDate(runAt, timeZone);
 
     const scheduleVariables = buildEmailTemplateScheduleVariables({
@@ -495,6 +496,7 @@ export class EmailTaskNotifier {
       locale,
       granularity,
       anchorDate,
+      timeZone,
     });
     const scheduleIcsUrl = this.buildTaskIcsUrl(task);
     const nowIsoUtc = new Date(runAt).toISOString();
@@ -504,14 +506,14 @@ export class EmailTaskNotifier {
       taskId: task.id,
       configId: config.id,
       recipient,
-      now: nowIsoUtc,
+      now: nowLocal,
       nowIsoUtc,
       nowLocal,
       runTimezone: timeZone,
       anchorDate,
       sessionCount,
       latestCreatedAt,
-      summary: latestScheduleSummary(sessionCount, latestCreatedAt),
+      summary: latestScheduleSummary(sessionCount, latestCreatedAt, locale, timeZone),
       language: (task.metadata?.injectionLanguage as string | undefined) ?? 'en',
       scheduleIcsUrl,
       ...scheduleVariables,

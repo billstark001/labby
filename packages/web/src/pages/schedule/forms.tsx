@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import type { PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
+import { SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
 
 import { personsSignal } from '@/store/index';
 import { displayName } from '@/i18n';
@@ -8,6 +9,7 @@ import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import { Dialog } from '@/components/ui/Dialog';
+import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { getScheduleConfigTitle } from '@/lib/scheduleConfigLabel';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -32,6 +34,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   const [radius, setRadius] = useState(initial?.targetSimilarityRadius ?? 0.5);
   const [startDate, setStartDate] = useState(initial?.startDate ?? '');
   const [endDate, setEndDate] = useState(initial?.endDate ?? '');
+  const [timezone, setTimezone] = useState(initial?.timezone ?? SYSTEM_DEFAULT_TIMEZONE);
 
   function handleSave() {
     if (!startDate || !endDate) return;
@@ -51,6 +54,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
       targetSimilarityRadius: radius,
       startDate,
       endDate,
+      timezone: timezone === SYSTEM_DEFAULT_TIMEZONE ? undefined : timezone,
       metadata: Object.keys(nextMetadata).length > 0 ? nextMetadata : undefined,
     });
   }
@@ -103,12 +107,20 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         </div>
       </div>
       <div class={s.formGroup}>
+        <label class={s.label}>{t('scheduleTimezone')}</label>
+        <TimezoneSelect
+          value={timezone}
+          defaultLabel={t('scheduleTimezoneDefault')}
+          onChange={setTimezone}
+        />
+      </div>
+      <div class={s.formGroup}>
         <label class={s.label}>{t('configPresenters')}</label>
         <input class={s.input} type="number" min={1} value={presenters} onInput={e => setPresenters(parseInt((e.target as HTMLInputElement).value, 10))} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configQuestioners')}</label>
-        <input class={s.input} type="number" min={1} value={questioners} onInput={e => setQuestioners(parseInt((e.target as HTMLInputElement).value, 10))} />
+        <input class={s.input} type="number" min={0} value={questioners} onInput={e => setQuestioners(parseInt((e.target as HTMLInputElement).value || '0', 10))} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configRadius')}</label>
