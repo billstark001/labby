@@ -9,6 +9,7 @@
  */
 
 import cron from 'node-cron';
+import type { ScheduledTask } from 'node-cron';
 
 export interface CronJobDefinition {
   /** Human-readable name, used for logging and deregistration. */
@@ -39,7 +40,7 @@ export interface CronJobHandle {
 }
 
 export class CronScheduler {
-  private readonly jobs = new Map<string, cron.ScheduledTask>();
+  private readonly jobs = new Map<string, ScheduledTask>();
   private readonly definitions = new Map<string, CronJobDefinition>();
   private mode: SchedulerMode = 'cron';
   private mirror: SchedulerMirror | null = null;
@@ -105,7 +106,6 @@ export class CronScheduler {
         },
         {
           timezone: definition.timezone ?? 'UTC',
-          scheduled: true,
         },
       );
 

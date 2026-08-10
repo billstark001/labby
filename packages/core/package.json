@@ -19,12 +19,12 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
-    "vitest": "^2.1.8"
+    "tsx": "^4.22.5",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "dependencies": {
-    "marked": "^17.0.6",
+    "marked": "^18.0.5",
     "pure-expr": "^0.2.0"
   }
 }
