@@ -24,6 +24,9 @@ import type {
   SchedulePlanStore,
   ListQuery,
   PaginatedResult,
+  SystemSettings,
+  SystemSettingsStore,
+  GraphSnapshot,
 } from '@labby/core';
 
 import { apiClient, ApiClient } from '@/lib/api';
@@ -84,6 +87,13 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   const schedules = createEntityStore<SchedulePlan>(client, '/db/schedules') satisfies SchedulePlanStore;
   const unavailabilities = createEntityStore<PersonUnavailability>(client, '/db/unavailabilities') satisfies PersonUnavailabilityStore;
   const emailTasks = createEntityStore<EmailTask>(client, '/db/email-tasks') satisfies EmailTaskStore;
+  const systemSettings: SystemSettingsStore = {
+    get: () => client.request<SystemSettings>('/system/settings', { method: 'GET' }),
+    put: (value: SystemSettings) => client.request<SystemSettings>('/system/settings', {
+      method: 'PUT',
+      body: JSON.stringify(value),
+    }).then(() => undefined),
+  };
 
   const normalizedUnavailabilities: PersonUnavailabilityStore = {
     ...unavailabilities,
@@ -169,7 +179,11 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     schedules,
     unavailabilities: normalizedUnavailabilities,
     emailTasks,
+    systemSettings,
     foreignKeys,
+    graph: {
+      getSnapshot: () => client.request<GraphSnapshot>('/db/graph-snapshot', { method: 'GET' }),
+    },
   };
 }
 

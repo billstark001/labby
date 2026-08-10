@@ -1,9 +1,7 @@
 /**
- * IndexedDB abstraction using the `idb` library.
- * Object stores: persons, keywords, keyword vectors, configs, schedules, unavailabilities.
+ * Database facade for browser-local PGlite, server API, or dummy mode.
  */
 
-import { IDBPDatabase } from 'idb';
 import {
   KeywordForeignKeyBundle,
   ListQuery,
@@ -14,11 +12,7 @@ import {
 } from '@labby/core';
 import { signal } from '@preact/signals';
 
-import {
-  createDB,
-  createIDB,
-  restoreIDBDatabase,
-} from './idb';
+import { createPGliteDB } from './pglite';
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
 import { personsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, constraintsSignal, schedulesSignal, unavailabilitiesSignal, emailTasksSignal } from '@/store';
@@ -29,7 +23,7 @@ const DB_CONFIG = databaseMode;
 const isDBAvailable = signal(false);
 const db = signal<LabbyDB | null>(null);
 
-let _idb: IDBPDatabase | null = null;
+let restorePGlite: ((dump: DatabaseDump) => Promise<void>) | null = null;
 const DEFAULT_PAGE_SIZE = 50;
 
 async function listAllPaginated<T>(
@@ -59,9 +53,10 @@ async function setSignalFromFirstPage<T>(
 
 export async function initDB() {
   try {
-    if (DB_CONFIG === 'idb') {
-      _idb = await createDB();
-      db.value = createIDB(_idb);
+    if (DB_CONFIG === 'pglite') {
+      const local = await createPGliteDB();
+      db.value = local.db;
+      restorePGlite = local.restore;
     } else if (DB_CONFIG === 'api') {
       db.value = createApiDB();
     } else {
@@ -69,7 +64,7 @@ export async function initDB() {
     }
     isDBAvailable.value = true;
   } catch (err) {
-    _idb = null;
+    restorePGlite = null;
     isDBAvailable.value = false;
     db.value = null;
     throw err;
@@ -87,7 +82,7 @@ export function useDatabase() {
 export async function dumpDatabase(): Promise<DatabaseDump> {
   const dbInstance = db.value;
   if (!dbInstance) throw new Error('Database is not initialized');
-  const [persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks] = await Promise.all([
+  const [persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings] = await Promise.all([
     listAllPaginated(dbInstance.persons),
     listAllPaginated(dbInstance.keywords),
     listAllPaginated(dbInstance.keywordVectors),
@@ -96,16 +91,17 @@ export async function dumpDatabase(): Promise<DatabaseDump> {
     listAllPaginated(dbInstance.schedules),
     listAllPaginated(dbInstance.unavailabilities),
     listAllPaginated(dbInstance.emailTasks),
+    dbInstance.systemSettings.get(),
   ]);
-  return { persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks };
+  return { persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings };
 }
 
 export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
-  if (DB_CONFIG === 'idb') {
-    if (!_idb) throw new Error('IndexedDB is not initialized');
-    await restoreIDBDatabase(_idb, dump);
+  if (DB_CONFIG === 'pglite') {
+    if (!restorePGlite) throw new Error('PGlite is not initialized');
+    await restorePGlite(dump);
   } else {
-    throw new Error('Restore is only supported for IndexedDB configuration');
+    throw new Error('Restore is only supported for PGlite configuration');
   }
 }
 

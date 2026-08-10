@@ -7,6 +7,7 @@ import type {
   ScheduleConfig,
   ScheduleConstraint,
   SchedulePlan,
+  SystemSettings,
 } from './types.js';
 
 export interface ListQuery {
@@ -93,6 +94,11 @@ export interface EmailTaskStore {
   clear(): Promise<void>;
 }
 
+export interface SystemSettingsStore {
+  get(): Promise<SystemSettings>;
+  put(value: SystemSettings): Promise<void>;
+}
+
 export interface ScheduleForeignKeyBundle {
   persons: Person[];
   keywords: Keyword[];
@@ -134,6 +140,23 @@ export interface ForeignKeyStore {
   readForKeyword(query: KeywordForeignKeyQuery): Promise<KeywordForeignKeyBundle>;
 }
 
+export interface GraphSnapshot {
+  revision: string;
+  keywords: Keyword[];
+  keywordVectors: KeywordVector[];
+  edges: GraphSnapshotEdge[];
+}
+
+export interface GraphSnapshotEdge {
+  sourceId: string;
+  targetId: string;
+  weight: number;
+}
+
+export interface GraphStore {
+  getSnapshot(): Promise<GraphSnapshot>;
+}
+
 export interface LabbyDB {
   persons: PersonStore;
   keywords: KeywordStore;
@@ -143,7 +166,9 @@ export interface LabbyDB {
   schedules: SchedulePlanStore;
   unavailabilities: PersonUnavailabilityStore;
   emailTasks: EmailTaskStore;
+  systemSettings: SystemSettingsStore;
   foreignKeys: ForeignKeyStore;
+  graph: GraphStore;
 }
 
 export interface DatabaseDump {
@@ -155,4 +180,5 @@ export interface DatabaseDump {
   schedules: SchedulePlan[];
   unavailabilities: PersonUnavailability[];
   emailTasks: EmailTask[];
+  systemSettings?: SystemSettings;
 }

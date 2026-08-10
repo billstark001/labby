@@ -19,7 +19,7 @@ The backend supports three roles:
 - `admin`
 - `root`
 
-`root` is configured from environment variables only and is never stored in SQLite.
+`root` is configured from environment variables only and is never stored in the database.
 
 ## Endpoints
 

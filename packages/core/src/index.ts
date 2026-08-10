@@ -2,6 +2,7 @@
 export * from './types.js';
 export * from './db.js';
 export * from './nlp.js';
+export * from './embedding-engine.js';
 export * from './schedule/index.js';
 export * from './expr/index.js';
 export * from './template/index.js';

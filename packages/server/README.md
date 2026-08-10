@@ -1,15 +1,15 @@
 # @labby/server
 
-`@labby/server` is the API backend for Labby. It provides authentication, SQLite persistence, solver endpoints, triplet-learning endpoints, optional email notifications, and scheduled database backups.
+`@labby/server` is the API backend for Labby. It provides authentication, PGlite/Postgres persistence, solver endpoints, triplet-learning endpoints, optional email notifications, and scheduled database backups.
 
 ## Responsibilities
 
 - Serve REST endpoints with Hono
-- Persist application data in SQLite via `better-sqlite3`
+- Persist application data in embedded PGlite or external Postgres
 - Issue and verify PASETO access and refresh tokens
 - Enforce three roles: `user`, `admin`, and `root`
 - Run full and incremental scheduling through `@labby/core`
-- Run Rust-backed embedding supervision (triplet, pair, ranked) and persist updated vectors
+- Run TypeScript embedding supervision (triplet, pair, ranked) and persist updated vectors
 - Register cron-based email reminders from schedule configs
 - Register cron-based whole-database backups to email, Google Drive, or OneDrive
 - Optionally serve built frontend static assets (`packages/web/dist`) with SPA fallback
@@ -72,7 +72,7 @@ For a fuller backup/Gmail example, see `.env.backup.example` in the repository r
 Required or important settings:
 
 - `PORT`
-- `DB_PATH`
+- `PGLITE_DATA_DIR`
 - `PASETO_SECRET` or separate access/refresh keys
 - `ROOT_PASSWORD`
 - `WEB_DIST_DIR` (optional, for serving built frontend static files in server mode)
@@ -137,7 +137,6 @@ When `ENABLE_PUBLIC_EMAIL_TASK_ICS=true`, each email task can opt in via metadat
 
 When `BACKUP_CRON` is configured, the server registers a recurring whole-database backup job.
 
-- `BACKUP_FORMAT=sqlite` uses SQLite's backup API to generate a portable `.sqlite3` snapshot.
 - `BACKUP_FORMAT=msgpack` serializes every application table into a `.msgpack` archive.
 - `BACKUP_TARGET=email` sends the archive as a mail attachment.
 - `BACKUP_TARGET=google-drive` uploads to Google Drive using OAuth credentials loaded from `GOOGLE_OAUTH_JSON_PATH`.
@@ -154,6 +153,6 @@ See `docs/deploy-gcp.md` for concrete CLI examples.
 
 ## Embedding Runtime Notes
 
-- Server boot hydrates Rust embedding runtime from stored vectors.
+- Server boot hydrates the shared TypeScript embedding runtime from stored vectors.
 - Supervision updates return dirty node deltas with both 64D and projected 2D coordinates.
 - Persisted updates are written back to keyword vector storage in batch.

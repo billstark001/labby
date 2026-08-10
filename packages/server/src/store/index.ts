@@ -1,14 +1,11 @@
-import fs from 'fs';
-import path from 'path';
-
-import Database from 'better-sqlite3';
-import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+import { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite-pgvector';
 import { sql } from 'drizzle-orm';
 import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
+import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { Pool } from 'pg';
 
-import { migratePostgres } from './migrate/postgres.js';
-import { migrateSqlite } from './migrate/sqlite.js';
+import { initializePostgresSchema } from './schema.js';
 
 import type {
   EntityListSortBy,
@@ -21,7 +18,10 @@ import type {
   ScheduleConfig,
   ScheduleConstraint,
   SchedulePlan,
+  SystemSettings,
+  GraphSnapshot,
 } from '@labby/core';
+import { buildSimilarityGraphEdges } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
 export const UserRole = {
@@ -78,6 +78,7 @@ export interface DatabaseBackupSnapshot {
     schedules: Array<Record<string, string | number | null>>;
     unavailabilities: Array<Record<string, string | number | null>>;
     emailTasks: Array<Record<string, string | number | null>>;
+    systemSettings: Array<Record<string, string | number | null>>;
     users: Array<Record<string, string | number | null>>;
     refreshTokens: Array<Record<string, string | number | null>>;
     authVerificationCodes: Array<Record<string, string | number | null>>;
@@ -121,8 +122,8 @@ interface KeywordForeignKeyQuery {
 
 export type StoreConnectionConfig =
   | {
-    dialect: 'sqlite';
-    path: string;
+    dialect: 'pglite';
+    dataDir: string;
   }
   | {
     dialect: 'postgres';
@@ -133,11 +134,12 @@ export type StoreConnectionConfig =
 type DbRow = Record<string, unknown>;
 type TableRowValue = string | number | null;
 type TableRow = Record<string, TableRowValue>;
-type SqliteDrizzleDb = ReturnType<typeof drizzleSqlite>;
 type PostgresDrizzleDb = ReturnType<typeof drizzlePostgres>;
+type PgliteDrizzleDb = ReturnType<typeof drizzlePglite>;
 
 const LATENT_DIM = 64;
 const PROJECTION_DIM = 2;
+const SYSTEM_SETTINGS_ID = 'system';
 
 type EntityListSort = {
   sortBy: EntityListSortBy;
@@ -218,31 +220,6 @@ function compareSortableEntities<T extends SortableEntity>(
   return 0;
 }
 
-function toSqlitePath(input: string): string {
-  return input;
-}
-
-function floatArrayToBuffer(values: readonly number[], expectedLength: number): Buffer {
-  const out = Buffer.allocUnsafe(expectedLength * 4);
-  for (let i = 0; i < expectedLength; i++) {
-    out.writeFloatLE(values[i] ?? 0, i * 4);
-  }
-  return out;
-}
-
-function bufferToFloatArray(value: unknown, expectedLength: number): number[] {
-  const buffer = Buffer.isBuffer(value)
-    ? value
-    : value instanceof Uint8Array
-      ? Buffer.from(value)
-      : Buffer.alloc(0);
-  const out = new Array<number>(expectedLength).fill(0);
-  for (let i = 0; i < expectedLength && (i + 1) * 4 <= buffer.length; i++) {
-    out[i] = buffer.readFloatLE(i * 4);
-  }
-  return out;
-}
-
 function toPgVectorLiteral(values: readonly number[], expectedLength: number): string {
   const normalized = new Array<number>(expectedLength);
   for (let i = 0; i < expectedLength; i++) {
@@ -316,53 +293,37 @@ function escapeSqlLiteral(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-export class SqliteStore {
-  private readonly sqliteDb: SqliteDrizzleDb | null;
-  private readonly pgDb: PostgresDrizzleDb | null;
-  private readonly sqliteRaw: Database.Database | null;
+export class LabbyStore {
+  private readonly db: PostgresDrizzleDb | PgliteDrizzleDb;
+  private readonly pglite: PGlite | null;
   private readonly pgPool: Pool | null;
   private readonly dialect: StoreConnectionConfig['dialect'];
   private readonly ready: Promise<void>;
-  private sqliteVecEnabled = false;
 
-  constructor(configOrPath: StoreConnectionConfig | string) {
-    const config: StoreConnectionConfig = typeof configOrPath === 'string'
-      ? { dialect: 'sqlite', path: configOrPath }
-      : configOrPath;
-
+  constructor(config: StoreConnectionConfig) {
     this.dialect = config.dialect;
 
-    if (config.dialect === 'sqlite') {
-      const sqlite = new Database(toSqlitePath(config.path));
-      sqlite.pragma('journal_mode = WAL');
-      sqlite.pragma('foreign_keys = ON');
-      this.sqliteRaw = sqlite;
+    if (config.dialect === 'pglite') {
+      this.pglite = new PGlite({
+        dataDir: config.dataDir,
+        extensions: { vector },
+      });
       this.pgPool = null;
-      this.sqliteDb = drizzleSqlite(sqlite);
-      this.pgDb = null;
+      this.db = drizzlePglite({ client: this.pglite });
     } else {
-      this.sqliteRaw = null;
+      this.pglite = null;
       this.pgPool = new Pool({
         connectionString: config.connectionString,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
       });
-      this.sqliteDb = null;
-      this.pgDb = drizzlePostgres(this.pgPool);
+      this.db = drizzlePostgres(this.pgPool);
     }
 
-    this.ready = this.migrate();
+    this.ready = this.initializeSchema();
   }
 
   private async queryRows(query: ReturnType<typeof sql>): Promise<DbRow[]> {
-    if (this.sqliteDb) {
-      return this.sqliteDb.all(query as never) as DbRow[];
-    }
-
-    if (!this.pgDb) {
-      return [];
-    }
-
-    const result = await this.pgDb.execute(query as never);
+    const result = await this.db.execute(query as never);
     if (result && typeof result === 'object' && 'rows' in result && Array.isArray((result as { rows?: unknown }).rows)) {
       return (result as { rows: DbRow[] }).rows;
     }
@@ -370,34 +331,21 @@ export class SqliteStore {
   }
 
   private async executeCommand(query: ReturnType<typeof sql>): Promise<void> {
-    if (this.sqliteDb) {
-      this.sqliteDb.run(query as never);
-      return;
-    }
-
-    if (this.pgDb) {
-      await this.pgDb.execute(query as never);
-    }
+    await this.db.execute(query as never);
   }
 
-  private async migrate(): Promise<void> {
-    if (this.sqliteRaw) {
-      const migrationResult = migrateSqlite(this.sqliteRaw);
-      this.sqliteVecEnabled = migrationResult.sqliteVecEnabled;
-      await this.backfillForeignKeyColumns();
-      return;
-    }
-
-    await migratePostgres(this.executeCommand.bind(this));
-    await this.backfillForeignKeyColumns();
+  private async initializeSchema(): Promise<void> {
+    const rows = await this.queryRows(sql.raw("SELECT to_regclass('public.persons') AS table_name"));
+    if (rows[0]?.table_name) return;
+    await initializePostgresSchema(this.executeCommand.bind(this));
   }
 
   private async ensureReady(): Promise<void> {
     await this.ready;
   }
 
-  private parsePayload<T>(payload: string): T {
-    return JSON.parse(payload) as T;
+  private parsePayload<T>(payload: unknown): T {
+    return typeof payload === 'string' ? JSON.parse(payload) as T : payload as T;
   }
 
   private toSqlInList(ids: readonly string[]): string {
@@ -407,79 +355,30 @@ export class SqliteStore {
   private buildJsonArrayOverlapCondition(column: string, ids: readonly string[]): string {
     if (ids.length === 0) return '1=0';
     const inList = this.toSqlInList(ids);
-    if (this.sqliteRaw) {
-      return `EXISTS (SELECT 1 FROM json_each(${column}) je WHERE je.value IN (${inList}))`;
-    }
-    return `(${column}::jsonb ?| ARRAY[${inList}]::text[])`;
+    return `(${column} ?| ARRAY[${inList}]::text[])`;
   }
 
   private async listPayloadsByIds<T>(tableName: string, idColumn: string, ids: readonly string[]): Promise<T[]> {
     if (ids.length === 0) return [];
     const inList = this.toSqlInList(ids);
     const rows = await this.queryRows(sql.raw(`SELECT payload FROM ${tableName} WHERE ${idColumn} IN (${inList})`));
-    return rows.map((row) => this.parsePayload<T>(String(row.payload)));
-  }
-
-  private async backfillForeignKeyColumns(): Promise<void> {
-    const personRows = await this.queryRows(sql`SELECT id, payload FROM persons`);
-    for (const row of personRows) {
-      const person = this.parsePayload<Person>(String(row.payload));
-      const keywordIds = JSON.stringify(uniqueIds(person.keywordIds ?? []));
-      await this.executeCommand(sql`UPDATE persons SET keyword_ids = ${keywordIds} WHERE id = ${String(row.id)}`);
-    }
-
-    const constraintRows = await this.queryRows(sql`SELECT id, payload FROM constraints`);
-    for (const row of constraintRows) {
-      const constraint = this.parsePayload<ScheduleConstraint>(String(row.payload));
-      const personIds = JSON.stringify(extractConstraintPersonIds(constraint));
-      await this.executeCommand(sql`UPDATE constraints SET person_ids = ${personIds} WHERE id = ${String(row.id)}`);
-    }
-
-    const scheduleRows = await this.queryRows(sql`SELECT id, payload FROM schedules`);
-    for (const row of scheduleRows) {
-      const schedule = this.parsePayload<SchedulePlan>(String(row.payload));
-      const personIds = JSON.stringify(extractSchedulePersonIds(schedule));
-      await this.executeCommand(sql`UPDATE schedules SET person_ids = ${personIds} WHERE id = ${String(row.id)}`);
-    }
-
-    const unavailabilityRows = await this.queryRows(sql`SELECT id, payload FROM unavailabilities`);
-    for (const row of unavailabilityRows) {
-      const unavailability = this.parsePayload<PersonUnavailability>(String(row.payload));
-      const personIds = normalizeUnavailabilityPersonIds(unavailability);
-      await this.executeCommand(sql`
-        UPDATE unavailabilities
-        SET person_id = ${personIds[0] ?? ''}, person_ids = ${JSON.stringify(personIds)}
-        WHERE id = ${String(row.id)}
-      `);
-    }
+    return rows.map((row) => this.parsePayload<T>(row.payload));
   }
 
   private async listPayloads<T>(query: ReturnType<typeof sql>): Promise<T[]> {
     const rows = await this.queryRows(query);
-    return rows.map((row) => this.parsePayload<T>(String(row.payload)));
+    return rows.map((row) => this.parsePayload<T>(row.payload));
   }
 
   private async getPayload<T>(query: ReturnType<typeof sql>): Promise<T | undefined> {
     const rows = await this.queryRows(query);
     const row = rows[0];
-    return row ? this.parsePayload<T>(String(row.payload)) : undefined;
+    return row ? this.parsePayload<T>(row.payload) : undefined;
   }
 
   private parseKeywordVectorRow(row: DbRow): KeywordVector {
     const keywordId = String(row.keyword_id ?? row.keywordId ?? '');
     const updatedAt = Number(row.updated_at ?? row.updatedAt ?? Date.now());
-
-    if (this.dialect === 'sqlite') {
-      const vector64 = bufferToFloatArray(row.vector_f32, LATENT_DIM);
-      const projection = bufferToFloatArray(row.projection_f32, PROJECTION_DIM);
-      return {
-        keywordId,
-        vector64,
-        x: Number(row.x ?? projection[0] ?? 0),
-        y: Number(row.y ?? projection[1] ?? 0),
-        updatedAt,
-      };
-    }
 
     const vector64 = fromPgVectorLiteral(row.vector64, LATENT_DIM);
     const projection = fromPgVectorLiteral(row.projection2d, PROJECTION_DIM);
@@ -545,19 +444,6 @@ export class SqliteStore {
         updatedAt,
       });
 
-      if (this.dialect === 'sqlite') {
-        const sqliteRow: TableRow = {
-          keyword_id: keywordId,
-          x,
-          y,
-          vector_f32: `base64:${floatArrayToBuffer(vector64, LATENT_DIM).toString('base64')}`,
-          projection_f32: `base64:${floatArrayToBuffer([x, y], PROJECTION_DIM).toString('base64')}`,
-          updated_at: updatedAt,
-          payload,
-        };
-        return sqliteRow;
-      }
-
       const pgRow: TableRow = {
         keyword_id: keywordId,
         x,
@@ -598,11 +484,6 @@ export class SqliteStore {
       return fromPgVectorLiteral(row.vector64, LATENT_DIM);
     }
 
-    if (typeof row.vector_f32 === 'string' && row.vector_f32.startsWith('base64:')) {
-      const encoded = row.vector_f32.slice('base64:'.length);
-      return bufferToFloatArray(Buffer.from(encoded, 'base64'), LATENT_DIM);
-    }
-
     return new Array<number>(LATENT_DIM).fill(0);
   }
 
@@ -636,22 +517,11 @@ export class SqliteStore {
   private toSqlValue(value: TableRowValue): string {
     if (value === null) return 'NULL';
     if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL';
-    if (value.startsWith('base64:')) {
-      const encoded = value.slice('base64:'.length).replace(/'/g, "''");
-      return this.dialect === 'sqlite'
-        ? `X'${Buffer.from(encoded, 'base64').toString('hex')}'`
-        : `decode('${encoded}', 'base64')`;
-    }
     const escaped = value.replace(/'/g, "''");
     return `'${escaped}'`;
   }
 
   private async run(sqlText: string): Promise<void> {
-    if (this.sqliteRaw) {
-      this.sqliteRaw.exec(sqlText);
-      return;
-    }
-
     for (const statement of sqlText
       .split(';')
       .map((part) => part.trim())
@@ -664,6 +534,7 @@ export class SqliteStore {
     await this.ensureReady();
     await this.run(`
       DELETE FROM keyword_vectors;
+      DELETE FROM system_settings;
       DELETE FROM email_tasks;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
@@ -742,17 +613,11 @@ export class SqliteStore {
 
   async getKeywordVector(keywordId: string): Promise<KeywordVector | undefined> {
     await this.ensureReady();
-    const rows = this.sqliteRaw
-      ? await this.queryRows(sql`
-        SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
-        FROM keyword_vectors
-        WHERE keyword_id = ${keywordId}
-      `)
-      : await this.queryRows(sql`
-        SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
-        FROM keyword_vectors
-        WHERE keyword_id = ${keywordId}
-      `);
+    const rows = await this.queryRows(sql`
+      SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+      FROM keyword_vectors
+      WHERE keyword_id = ${keywordId}
+    `);
     const row = rows[0];
     return row ? this.parseKeywordVectorRow(row) : undefined;
   }
@@ -762,34 +627,35 @@ export class SqliteStore {
     if (keywordIds.length === 0) return [];
 
     const escapedIds = keywordIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
-    const rows = this.sqliteRaw
-      ? await this.queryRows(sql.raw(`
-        SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
-        FROM keyword_vectors
-        WHERE keyword_id IN (${escapedIds})
-      `))
-      : await this.queryRows(sql.raw(`
-        SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
-        FROM keyword_vectors
-        WHERE keyword_id IN (${escapedIds})
-      `));
+    const rows = await this.queryRows(sql.raw(`
+      SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+      FROM keyword_vectors
+      WHERE keyword_id IN (${escapedIds})
+    `));
     return rows.map((row) => this.parseKeywordVectorRow(row));
   }
 
   async listKeywordVectors(): Promise<KeywordVector[]> {
     await this.ensureReady();
-    const rows = this.sqliteRaw
-      ? await this.queryRows(sql`
-        SELECT keyword_id, x, y, vector_f32, projection_f32, updated_at
-        FROM keyword_vectors
-        ORDER BY updated_at DESC, keyword_id DESC
-      `)
-      : await this.queryRows(sql`
-        SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
-        FROM keyword_vectors
-        ORDER BY updated_at DESC, keyword_id DESC
-      `);
+    const rows = await this.queryRows(sql`
+      SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+      FROM keyword_vectors
+      ORDER BY updated_at DESC, keyword_id DESC
+    `);
     return rows.map((row) => this.parseKeywordVectorRow(row));
+  }
+
+  async getGraphSnapshot(): Promise<GraphSnapshot> {
+    await this.ensureReady();
+    const [keywords, keywordVectors] = await Promise.all([this.listKeywords(), this.listKeywordVectors()]);
+    const latestKeyword = keywords.reduce((latest, item) => Math.max(latest, item.modifiedAt ?? 0), 0);
+    const latestVector = keywordVectors.reduce((latest, item) => Math.max(latest, item.updatedAt), 0);
+    return {
+      revision: `${keywords.length}:${keywordVectors.length}:${latestKeyword}:${latestVector}`,
+      keywords,
+      keywordVectors,
+      edges: buildSimilarityGraphEdges(keywordVectors),
+    };
   }
 
   async putKeywordVector(vector: KeywordVector): Promise<void> {
@@ -799,44 +665,6 @@ export class SqliteStore {
   async putKeywordVectors(vectors: KeywordVector[]): Promise<void> {
     await this.ensureReady();
     if (vectors.length === 0) return;
-
-    if (this.sqliteRaw) {
-      const stmt = this.sqliteRaw.prepare(`
-        INSERT INTO keyword_vectors (keyword_id, x, y, vector_f32, projection_f32, updated_at, payload)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(keyword_id) DO UPDATE SET
-          x = excluded.x,
-          y = excluded.y,
-          vector_f32 = excluded.vector_f32,
-          projection_f32 = excluded.projection_f32,
-          updated_at = excluded.updated_at,
-          payload = excluded.payload
-      `);
-      const vecStmt = this.sqliteVecEnabled
-        ? this.sqliteRaw.prepare(`
-          INSERT INTO keyword_vectors_vec(keyword_id, embedding)
-          VALUES (?, ?)
-          ON CONFLICT(keyword_id) DO UPDATE SET embedding = excluded.embedding
-        `)
-        : null;
-      const tx = this.sqliteRaw.transaction((items: KeywordVector[]) => {
-        for (const vector of items) {
-          const embeddingBlob = floatArrayToBuffer(vector.vector64, LATENT_DIM);
-          stmt.run(
-            vector.keywordId,
-            vector.x,
-            vector.y,
-            embeddingBlob,
-            floatArrayToBuffer([vector.x, vector.y], PROJECTION_DIM),
-            vector.updatedAt,
-            JSON.stringify(vector),
-          );
-          vecStmt?.run(vector.keywordId, embeddingBlob);
-        }
-      });
-      tx(vectors);
-      return;
-    }
 
     if (this.pgPool) {
       const keywordIds: string[] = [];
@@ -873,23 +701,43 @@ export class SqliteStore {
         `,
         [keywordIds, xs, ys, vector64Literals, projection2dLiterals, updatedAts, payloads],
       );
+      return;
+    }
+
+    for (const item of vectors) {
+      const vector64 = escapeSqlLiteral(toPgVectorLiteral(item.vector64, LATENT_DIM));
+      const projection2d = escapeSqlLiteral(toPgVectorLiteral([item.x, item.y], PROJECTION_DIM));
+      const payload = escapeSqlLiteral(JSON.stringify(item));
+      await this.executeCommand(sql.raw(`
+        INSERT INTO keyword_vectors (keyword_id, x, y, vector64, projection2d, updated_at, payload)
+        VALUES (
+          '${escapeSqlLiteral(item.keywordId)}',
+          ${Number(item.x)},
+          ${Number(item.y)},
+          '${vector64}'::vector(64),
+          '${projection2d}'::vector(2),
+          ${Number(item.updatedAt)},
+          '${payload}'::jsonb
+        )
+        ON CONFLICT(keyword_id) DO UPDATE SET
+          x = excluded.x,
+          y = excluded.y,
+          vector64 = excluded.vector64,
+          projection2d = excluded.projection2d,
+          updated_at = excluded.updated_at,
+          payload = excluded.payload
+      `));
     }
   }
 
   async deleteKeywordVector(keywordId: string): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`DELETE FROM keyword_vectors WHERE keyword_id = ${keywordId}`);
-    if (this.sqliteRaw && this.sqliteVecEnabled) {
-      this.sqliteRaw.prepare('DELETE FROM keyword_vectors_vec WHERE keyword_id = ?').run(keywordId);
-    }
   }
 
   async clearKeywordVectors(): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`DELETE FROM keyword_vectors`);
-    if (this.sqliteRaw && this.sqliteVecEnabled) {
-      this.sqliteRaw.prepare('DELETE FROM keyword_vectors_vec').run();
-    }
   }
 
   async getConfig(id: string): Promise<ScheduleConfig | undefined> {
@@ -934,7 +782,7 @@ export class SqliteStore {
     `);
     const row = rows[0];
     if (!row) return undefined;
-    const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+    const payload = this.parsePayload<ScheduleConstraint>(row.payload);
     const configId = String(row.config_id ?? payload.configId ?? '');
     return {
       ...payload,
@@ -951,7 +799,7 @@ export class SqliteStore {
       ORDER BY updated_at DESC, id DESC
     `);
     return rows.map((row) => {
-      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const payload = this.parsePayload<ScheduleConstraint>(row.payload);
       const configId = String(row.config_id ?? payload.configId ?? '');
       return {
         ...payload,
@@ -1000,7 +848,7 @@ export class SqliteStore {
       ORDER BY updated_at DESC, id DESC
     `);
     return rows.map((row) => {
-      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const payload = this.parsePayload<ScheduleConstraint>(row.payload);
       const rowConfigId = String(row.config_id ?? payload.configId ?? '');
       return {
         ...payload,
@@ -1041,6 +889,28 @@ export class SqliteStore {
   async clearEmailTasks(): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`DELETE FROM email_tasks`);
+  }
+
+  async getSystemSettings(): Promise<SystemSettings> {
+    await this.ensureReady();
+    return await this.getPayload<SystemSettings>(sql`SELECT payload FROM system_settings WHERE id = ${SYSTEM_SETTINGS_ID}`)
+      ?? { id: SYSTEM_SETTINGS_ID };
+  }
+
+  async putSystemSettings(settings: SystemSettings): Promise<void> {
+    await this.ensureReady();
+    const updated: SystemSettings = {
+      ...settings,
+      id: SYSTEM_SETTINGS_ID,
+      modifiedAt: settings.modifiedAt ?? nowMs(),
+    };
+    await this.executeCommand(sql`
+      INSERT INTO system_settings (id, updated_at, payload)
+      VALUES (${SYSTEM_SETTINGS_ID}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      ON CONFLICT(id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        payload = excluded.payload
+    `);
   }
 
   async getSchedule(id: string): Promise<SchedulePlan | undefined> {
@@ -1157,7 +1027,7 @@ export class SqliteStore {
       WHERE config_id IN (${configInList})
       ORDER BY updated_at DESC, created_at DESC, id DESC
     `));
-    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(String(row.payload)));
+    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(row.payload));
 
     const constraintRows = await this.queryRows(sql.raw(`
       SELECT id, config_id, payload, person_ids
@@ -1166,7 +1036,7 @@ export class SqliteStore {
       ORDER BY updated_at DESC, id DESC
     `));
     const constraints = constraintRows.map((row) => {
-      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const payload = this.parsePayload<ScheduleConstraint>(row.payload);
       return {
         ...payload,
         id: String(payload.id ?? row.id),
@@ -1181,7 +1051,7 @@ export class SqliteStore {
       ORDER BY start_date, end_date, id
     `));
     const unavailabilities = unavailabilityRows.map((row) => {
-      const payload = this.parsePayload<PersonUnavailability>(String(row.payload));
+      const payload = this.parsePayload<PersonUnavailability>(row.payload);
       const personIds = normalizeUnavailabilityPersonIds(payload);
       return ({
         ...payload,
@@ -1271,7 +1141,7 @@ export class SqliteStore {
       WHERE ${overlapCondition}
       ORDER BY updated_at DESC, created_at DESC, id DESC
     `));
-    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(String(row.payload)));
+    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(row.payload));
 
     const constraintRows = await this.queryRows(sql.raw(`
       SELECT id, config_id, payload
@@ -1280,7 +1150,7 @@ export class SqliteStore {
       ORDER BY updated_at DESC, id DESC
     `));
     const constraints = constraintRows.map((row) => {
-      const payload = this.parsePayload<ScheduleConstraint>(String(row.payload));
+      const payload = this.parsePayload<ScheduleConstraint>(row.payload);
       return {
         ...payload,
         id: String(payload.id ?? row.id),
@@ -1295,7 +1165,7 @@ export class SqliteStore {
       ORDER BY start_date, end_date, id
     `));
     const unavailabilities = unavailabilityRows.map((row) => {
-      const payload = this.parsePayload<PersonUnavailability>(String(row.payload));
+      const payload = this.parsePayload<PersonUnavailability>(row.payload);
       const normalizedIds = normalizeUnavailabilityPersonIds(payload);
       return ({
         ...payload,
@@ -1334,7 +1204,7 @@ export class SqliteStore {
       WHERE ${overlapCondition}
       ORDER BY updated_at DESC, id DESC
     `));
-    const persons = personRows.map((row) => this.parsePayload<Person>(String(row.payload)));
+    const persons = personRows.map((row) => this.parsePayload<Person>(row.payload));
 
     return {
       persons,
@@ -1615,6 +1485,7 @@ export class SqliteStore {
         schedules: await this.exportTable('schedules'),
         unavailabilities: await this.exportTable('unavailabilities'),
         emailTasks: await this.exportTable('email_tasks'),
+        systemSettings: await this.exportTable('system_settings'),
         users: await this.exportTable('users'),
         refreshTokens: await this.exportTable('refresh_tokens'),
         authVerificationCodes: await this.exportTable('auth_verification_codes'),
@@ -1652,6 +1523,7 @@ export class SqliteStore {
       schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
       unavailabilities: this.validateTableRows('unavailabilities', snapshotObject.tables.unavailabilities),
       email_tasks: this.validateTableRows('email_tasks', snapshotObject.tables.emailTasks),
+      system_settings: this.validateTableRows('system_settings', snapshotObject.tables.systemSettings),
       users: this.validateTableRows('users', snapshotObject.tables.users),
       refresh_tokens: this.validateTableRows('refresh_tokens', snapshotObject.tables.refreshTokens),
       auth_verification_codes: this.validateTableRows(
@@ -1665,6 +1537,7 @@ export class SqliteStore {
       DELETE FROM auth_verification_codes;
       DELETE FROM users;
       DELETE FROM keyword_vectors;
+      DELETE FROM system_settings;
       DELETE FROM email_tasks;
       DELETE FROM unavailabilities;
       DELETE FROM schedules;
@@ -1682,140 +1555,10 @@ export class SqliteStore {
     await this.restoreTableRows('schedules', tables.schedules);
     await this.restoreTableRows('unavailabilities', tables.unavailabilities);
     await this.restoreTableRows('email_tasks', tables.email_tasks);
+    await this.restoreTableRows('system_settings', tables.system_settings);
     await this.restoreTableRows('users', tables.users);
     await this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
     await this.restoreTableRows('auth_verification_codes', tables.auth_verification_codes);
-    await this.backfillForeignKeyColumns();
-  }
-
-  async restoreEntityDump(dump: unknown): Promise<void> {
-    await this.ensureReady();
-
-    if (!dump || typeof dump !== 'object' || Array.isArray(dump)) {
-      throw new Error('Invalid backup payload: expected an object');
-    }
-
-    const dumpObject = dump as {
-      persons?: unknown;
-      keywords?: unknown;
-      keywordVectors?: unknown;
-      configs?: unknown;
-      constraints?: unknown;
-      schedules?: unknown;
-      unavailabilities?: unknown;
-      emailTasks?: unknown;
-    };
-
-    const missings = [
-      !Array.isArray(dumpObject.persons),
-      !Array.isArray(dumpObject.keywords),
-      !Array.isArray(dumpObject.keywordVectors),
-      !Array.isArray(dumpObject.configs),
-      !Array.isArray(dumpObject.constraints),
-      !Array.isArray(dumpObject.schedules),
-      !Array.isArray(dumpObject.unavailabilities),
-      !Array.isArray(dumpObject.emailTasks),
-    ];
-
-    if (missings.some((missing) => missing)) {
-      console.warn('Warning: backup payload is missing some entity arrays or has invalid formats. Missing entities:', {
-        persons: missings[0],
-        keywords: missings[1],
-        keywordVectors: missings[2],
-        configs: missings[3],
-        constraints: missings[4],
-        schedules: missings[5],
-        unavailabilities: missings[6],
-        emailTasks: missings[7],
-      });
-    }
-
-    const persons = dumpObject.persons as Person[] ?? [];
-    const keywords = dumpObject.keywords as Keyword[] ?? [];
-    const keywordVectors = dumpObject.keywordVectors as KeywordVector[] ?? [];
-    const configs = dumpObject.configs as ScheduleConfig[] ?? [];
-    const constraints = dumpObject.constraints as ScheduleConstraint[] ?? [];
-    const schedules = dumpObject.schedules as SchedulePlan[] ?? [];
-    const unavailabilities = dumpObject.unavailabilities as PersonUnavailability[] ?? [];
-    const emailTasks = dumpObject.emailTasks as EmailTask[] ?? [];
-
-    await this.clearAllEntityData();
-
-    for (const person of persons) {
-      await this.putPerson(person);
-    }
-    for (const keyword of keywords) {
-      await this.putKeyword(keyword);
-    }
-    for (const vector of keywordVectors) {
-      await this.putKeywordVector(vector);
-    }
-    for (const config of configs) {
-      await this.putConfig(config);
-    }
-    for (const constraint of constraints) {
-      await this.putConstraint(constraint);
-    }
-    for (const schedule of schedules) {
-      await this.putSchedule(schedule);
-    }
-    for (const unavailability of unavailabilities) {
-      await this.putUnavailability(unavailability);
-    }
-    for (const task of emailTasks) {
-      await this.putEmailTask(task);
-    }
-    await this.backfillForeignKeyColumns();
-  }
-
-  async restoreFromSqliteFile(sourcePath: string): Promise<void> {
-    await this.ensureReady();
-
-    const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
-    try {
-      let constraintsRows: unknown[] = [];
-      let authVerificationCodeRows: unknown[] = [];
-      try {
-        constraintsRows = source.prepare('SELECT * FROM constraints').all();
-      } catch {
-        constraintsRows = [];
-      }
-      try {
-        authVerificationCodeRows = source.prepare('SELECT * FROM auth_verification_codes').all();
-      } catch {
-        authVerificationCodeRows = [];
-      }
-      const snapshot = {
-        version: 1,
-        tables: {
-          persons: source.prepare('SELECT * FROM persons').all(),
-          keywords: source.prepare('SELECT * FROM keywords').all(),
-          keywordVectors: source.prepare('SELECT * FROM keyword_vectors').all(),
-          configs: source.prepare('SELECT * FROM configs').all(),
-          constraints: constraintsRows,
-          schedules: source.prepare('SELECT * FROM schedules').all(),
-          unavailabilities: source.prepare('SELECT * FROM unavailabilities').all(),
-          emailTasks: source.prepare('SELECT * FROM email_tasks').all(),
-          users: source.prepare('SELECT * FROM users').all(),
-          refreshTokens: source.prepare('SELECT * FROM refresh_tokens').all(),
-          authVerificationCodes: authVerificationCodeRows,
-        },
-      };
-      await this.restoreBackupSnapshot(snapshot);
-    } finally {
-      source.close();
-    }
-  }
-
-  async backupDatabase(destinationPath: string): Promise<void> {
-    await this.ensureReady();
-
-    if (this.dialect !== 'sqlite' || !this.sqliteRaw) {
-      throw new Error('SQLite binary backup is only supported when store dialect is sqlite');
-    }
-
-    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    await this.sqliteRaw.backup(destinationPath);
   }
 
   getDialect(): StoreConnectionConfig['dialect'] {
@@ -1824,7 +1567,7 @@ export class SqliteStore {
 
   async close(): Promise<void> {
     await this.ensureReady();
-    this.sqliteRaw?.close();
+    await this.pglite?.close();
     if (this.pgPool) {
       await this.pgPool.end();
     }

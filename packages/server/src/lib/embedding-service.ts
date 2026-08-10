@@ -4,10 +4,8 @@ import type {
   SupervisionQuery,
   TripletQuery,
 } from '@labby/core';
-import { initKeywordVectors } from '@labby/core';
-
-import { EmbeddingEngineAdapter } from './embedding-engine.js';
-import type { SqliteStore } from '../store/index.js';
+import { initKeywordVectors, PortableEmbeddingEngine } from '@labby/core';
+import type { LabbyStore } from '../store/index.js';
 
 const LATENT_DIM = 64;
 
@@ -18,7 +16,7 @@ function stableIdCompare(a: string, b: string): number {
 }
 
 export class EmbeddingService {
-  private engine: EmbeddingEngineAdapter | null = null;
+  private engine: PortableEmbeddingEngine | null = null;
   private orderedKeywordIds: string[] = [];
   private keywordIndex = new Map<string, number>();
   private flushTimer: ReturnType<typeof setInterval> | null = null;
@@ -26,7 +24,7 @@ export class EmbeddingService {
   private pendingWrites = new Map<string, KeywordVector>();
 
   constructor(
-    private readonly store: SqliteStore,
+    private readonly store: LabbyStore,
     private readonly flushIntervalMs = 5000,
   ) {}
 
@@ -232,7 +230,7 @@ export class EmbeddingService {
       }
     }
 
-    this.engine = await EmbeddingEngineAdapter.create(Math.max(orderedVectors.length, 16));
+    this.engine = await PortableEmbeddingEngine.create(Math.max(orderedVectors.length, 16));
     this.engine.hydrate(flat, orderedVectors.length);
     this.orderedKeywordIds = keywordIds;
     this.keywordIndex = new Map(keywordIds.map((id, i) => [id, i]));

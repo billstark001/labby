@@ -1,4 +1,4 @@
-export type DatabaseMode = 'idb' | 'api' | 'dummy';
+export type DatabaseMode = 'pglite' | 'api' | 'dummy';
 export type DeploymentMode = 'frontend-only' | 'server';
 
 type RuntimeEnv = {
@@ -8,7 +8,7 @@ type RuntimeEnv = {
 
 const runtimeEnv = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env ?? {}) as RuntimeEnv;
 
-export const databaseMode = (runtimeEnv.VITE_DB_CONFIG || 'idb') as DatabaseMode;
+export const databaseMode = (runtimeEnv.VITE_DB_CONFIG || 'pglite') as DatabaseMode;
 
 const configuredDeploymentMode = runtimeEnv.VITE_DEPLOYMENT_MODE;
 

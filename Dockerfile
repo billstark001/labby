@@ -3,15 +3,9 @@ FROM node:22-bookworm-slim AS base
 
 RUN corepack enable pnpm
 
-# Rust toolchain is required by packages/core build-rust.mjs
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential curl ca-certificates \
+  && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup target add wasm32-unknown-unknown
-RUN cargo install wasm-pack --locked
-RUN cargo install wasm-bindgen-cli --locked
 
 WORKDIR /app
 
@@ -61,7 +55,6 @@ RUN pnpm install --frozen-lockfile --prod
 
 # Copy built artifacts
 COPY --from=core-builder /app/packages/core/dist ./packages/core/dist
-COPY --from=core-builder /app/packages/core/native/dist ./packages/core/native/dist
 COPY --from=server-builder /app/packages/server/dist ./packages/server/dist
 COPY --from=web-builder /app/packages/web/dist ./packages/web/dist
 
@@ -69,7 +62,7 @@ COPY --from=web-builder /app/packages/web/dist ./packages/web/dist
 RUN mkdir -p /data
 
 ENV PORT=4410
-ENV DB_PATH=/data/labby.db
+ENV PGLITE_DATA_DIR=/data/labby-pg
 ENV WEB_DIST_DIR=/app/packages/web/dist
 ENV NODE_ENV=production
 

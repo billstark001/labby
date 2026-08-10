@@ -12,12 +12,12 @@ import {
 
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
-import type { SqliteStore } from '../store/index.js';
+import type { LabbyStore } from '../store/index.js';
 
 export interface EmailTaskNotifierOptions {
   scheduler: CronScheduler;
   mailer: Mailer;
-  store: SqliteStore;
+  store: LabbyStore;
   defaultHour?: number;
   enablePublicEmailTaskIcs?: boolean;
   publicBaseUrl?: string;
@@ -478,8 +478,8 @@ export class EmailTaskNotifier {
     sessionCount: number,
     latestCreatedAt: number | null,
     runAt: number,
-    persons: Awaited<ReturnType<SqliteStore['listPersons']>>,
-    latestPlan: Awaited<ReturnType<SqliteStore['listSchedules']>>[number] | undefined,
+    persons: Awaited<ReturnType<LabbyStore['listPersons']>>,
+    latestPlan: Awaited<ReturnType<LabbyStore['listSchedules']>>[number] | undefined,
   ): Record<string, unknown> {
     const locale = (task.metadata?.dateLocale as string | undefined)
       ?? (task.metadata?.injectionLanguage as string | undefined)

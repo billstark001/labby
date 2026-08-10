@@ -6,17 +6,18 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "pnpm --filter @labby/core rust:build:node && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "auth:gmail": "tsx scripts/gmail-auth.ts",
     "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-pgvector": "^0.0.5",
     "@hono/node-server": "^1.19.11",
     "@labby/core": "workspace:*",
     "@msgpack/msgpack": "^3.1.2",
     "@mpoonuru/paseto": "^4.0.2",
-    "better-sqlite3": "^12.8.0",
     "drizzle-orm": "^0.44.6",
     "dotenv": "^17.3.1",
     "google-auth-library": "^10.6.2",
@@ -28,7 +29,6 @@
   },
   "devDependencies": {
     "@google-cloud/local-auth": "^3.0.1",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^7.0.11",

@@ -1,14 +1,11 @@
 import { decode, encode } from '@msgpack/msgpack';
-import fs from 'fs/promises';
-import os from 'os';
-import path from 'path';
 
 import type { CronScheduler } from '../cron/scheduler.js';
 import { fetchGoogleAccessToken, loadGoogleOAuthClientFromFile } from '../lib/google.js';
 import type { Mailer } from '../lib/mailer.js';
-import type { DatabaseBackupSnapshot, SqliteStore } from '../store/index.js';
+import type { DatabaseBackupSnapshot, LabbyStore } from '../store/index.js';
 
-type BackupFormat = 'sqlite' | 'msgpack';
+type BackupFormat = 'msgpack';
 type BackupTarget = 'email' | 'google-drive' | 'onedrive';
 
 export interface BackupCapabilities {
@@ -45,7 +42,7 @@ interface BackupConfig {
 
 export interface CreateBackupServiceOptions {
   scheduler: CronScheduler;
-  store: SqliteStore;
+  store: LabbyStore;
   mailer: Mailer | null;
 }
 
@@ -62,18 +59,8 @@ function timestampSlug(timestamp: number): string {
   return new Date(timestamp).toISOString().replace(/[:.]/g, '-');
 }
 
-function ensureBackupFormat(value: string | undefined): BackupFormat {
-  return value === 'msgpack' ? 'msgpack' : 'sqlite';
-}
-
-function resolveBackupFormatForDialect(
-  requested: BackupFormat,
-  dialect: ReturnType<SqliteStore['getDialect']>,
-): BackupFormat {
-  if (dialect === 'postgres') {
-    return 'msgpack';
-  }
-  return requested;
+function ensureBackupFormat(_value: string | undefined): BackupFormat {
+  return 'msgpack';
 }
 
 function ensureBackupTarget(value: string | undefined): BackupTarget | null {
@@ -90,22 +77,6 @@ function buildMsgpackArtifact(filenamePrefix: string, snapshot: DatabaseBackupSn
     contentType: 'application/msgpack',
     content: Buffer.from(encode(snapshot)),
   };
-}
-
-async function buildSqliteArtifact(filenamePrefix: string, store: SqliteStore): Promise<BackupArtifact> {
-  const stamp = timestampSlug(Date.now());
-  const tempPath = path.join(os.tmpdir(), `${filenamePrefix}-${stamp}.sqlite3`);
-  await store.backupDatabase(tempPath);
-
-  try {
-    return {
-      filename: path.basename(tempPath),
-      contentType: 'application/vnd.sqlite3',
-      content: await fs.readFile(tempPath),
-    };
-  } finally {
-    await fs.rm(tempPath, { force: true });
-  }
 }
 
 function toUint8Array(buffer: Buffer): Uint8Array<ArrayBuffer> {
@@ -241,14 +212,11 @@ export class BackupService {
       ? loadGoogleOAuthClientFromFile(this.config.googleOAuthJsonPath)
       : null;
 
-    const dialect = this.options.store.getDialect();
-    const configuredFormat = resolveBackupFormatForDialect(this.config.format, dialect);
-
     return {
       scheduleEnabled: Boolean(this.config.cronExpression && this.config.target),
       scheduleConfigured: Boolean(this.config.cronExpression),
       configuredTarget: this.config.target,
-      configuredFormat,
+      configuredFormat: 'msgpack',
       targets: {
         email: this.options.mailer !== null,
         'google-drive': Boolean(
@@ -262,15 +230,12 @@ export class BackupService {
           && this.config.onedriveRefreshToken,
         ),
       },
-      formats: dialect === 'postgres' ? ['msgpack'] : ['sqlite', 'msgpack'],
+      formats: ['msgpack'],
     };
   }
 
   async createDownloadArtifact(format: BackupFormat = this.config.format): Promise<BackupArtifact> {
-    const effectiveFormat = resolveBackupFormatForDialect(format, this.options.store.getDialect());
-    return effectiveFormat === 'msgpack'
-      ? buildMsgpackArtifact(this.config.filenamePrefix, await this.options.store.exportBackupSnapshot())
-      : buildSqliteArtifact(this.config.filenamePrefix, this.options.store);
+    return buildMsgpackArtifact(this.config.filenamePrefix, await this.options.store.exportBackupSnapshot());
   }
 
   async restoreBackupArtifact(input: { format: BackupFormat; content: Buffer; }): Promise<void> {
@@ -278,31 +243,13 @@ export class BackupService {
       throw new Error('Backup payload is empty');
     }
 
-    if (input.format === 'msgpack') {
-      const snapshot = decode(input.content);
-      if (isFullSnapshotPayload(snapshot)) {
-        await this.options.store.restoreBackupSnapshot(snapshot);
-      } else {
-        await this.options.store.restoreEntityDump(snapshot);
-      }
-      return;
-    }
-
-    const stamp = timestampSlug(Date.now());
-    const tempPath = path.join(os.tmpdir(), `${this.config.filenamePrefix}-restore-${stamp}.sqlite3`);
-    await fs.writeFile(tempPath, input.content);
-    try {
-      await this.options.store.restoreFromSqliteFile(tempPath);
-    } finally {
-      await fs.rm(tempPath, { force: true });
-    }
+    const snapshot = decode(input.content);
+    if (!isFullSnapshotPayload(snapshot)) throw new Error('Backup is not a Labby database snapshot');
+    await this.options.store.restoreBackupSnapshot(snapshot);
   }
 
   async dispatchBackup(input?: { format?: BackupFormat; target?: BackupTarget; }): Promise<void> {
-    const format = resolveBackupFormatForDialect(
-      input?.format ?? this.config.format,
-      this.options.store.getDialect(),
-    );
+    const format: BackupFormat = 'msgpack';
     const target = input?.target ?? this.config.target;
     if (!target) {
       throw new Error('No backup target is configured');
@@ -362,7 +309,7 @@ export function createBackupServiceFromEnv(options: CreateBackupServiceOptions):
   }
 
   const configuredFormat = ensureBackupFormat(process.env.BACKUP_FORMAT?.trim());
-  const format = resolveBackupFormatForDialect(configuredFormat, options.store.getDialect());
+  const format = configuredFormat;
 
   return new BackupService(options, {
     cronExpression: process.env.BACKUP_CRON?.trim() || undefined,

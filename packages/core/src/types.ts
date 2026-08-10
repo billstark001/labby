@@ -34,7 +34,7 @@ export interface SimilarityLookup {
   getPairSimilarity(leftKeywordId: string, rightKeywordId: string): number | undefined;
 }
 
-/** Persistent keyword vector state owned by the Rust embedding engine. */
+/** Persistent keyword vector state owned by the shared embedding engine. */
 export interface KeywordVector {
   keywordId: string;
   vector64: number[];
@@ -94,6 +94,15 @@ export interface EmailTask {
   skipNextRun?: boolean;
   /** Last time a scheduled run was skipped due to skipNextRun. */
   lastSkippedAt?: number;
+  metadata?: Record<string, unknown>;
+  modifiedAt?: number;
+}
+
+/** Global system settings stored as a singleton record. */
+export interface SystemSettings {
+  id?: 'system';
+  /** IANA timezone. Omit to use the environment timezone. */
+  timezone?: string;
   metadata?: Record<string, unknown>;
   modifiedAt?: number;
 }

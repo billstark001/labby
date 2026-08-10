@@ -21,7 +21,7 @@ function createTempWebDist(): string {
 
 test('server serves web dist static files and SPA fallback when webDistDir is configured', async () => {
   const runtime = await createApp({
-    db: { dialect: 'sqlite', path: createTempDbPath('labby-static-serve') },
+    db: { dialect: 'pglite', dataDir: createTempDbPath('labby-static-serve') },
     rootUsername: 'root',
     rootPassword: 'root-pass',
     webDistDir: createTempWebDist(),

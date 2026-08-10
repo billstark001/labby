@@ -1,11 +1,12 @@
 /** Keyword similarity graph rendered with deck.gl (WebGL). */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Deck, OrthographicView } from '@deck.gl/core';
-import { ScatterplotLayer, TextLayer } from '@deck.gl/layers';
+import { LineLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { X } from 'lucide-preact';
 import {
   keywordsSignal,
   keywordVectorsSignal,
+  graphEdgesSignal,
   themeSignal,
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
@@ -24,6 +25,8 @@ type GraphNode = {
   x: number;
   y: number;
 };
+
+type GraphLine = { source: GraphNode; target: GraphNode; weight: number };
 
 const COLOR_NODE: [number, number, number, number] = [44, 102, 245, 220];
 const COLOR_NODE_SELECTED: [number, number, number, number] = [16, 185, 129, 240];
@@ -74,6 +77,7 @@ export function KeywordGraph() {
   const theme = themeSignal.value;
   const keywords = keywordsSignal.value;
   const vectors = keywordVectorsSignal.value;
+  const graphEdges = graphEdgesSignal.value;
 
   const [selected, setSelected] = useState<string[]>([]);
   const [targetDistanceInput, setTargetDistanceInput] = useState('0.45');
@@ -176,6 +180,15 @@ export function KeywordGraph() {
       };
     });
   }, [animatedPositions, keywords, vectors]);
+
+  const lines = useMemo<GraphLine[]>(() => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    return graphEdges.flatMap((edge) => {
+      const source = nodeById.get(edge.sourceId);
+      const target = nodeById.get(edge.targetId);
+      return source && target ? [{ source, target, weight: edge.weight }] : [];
+    });
+  }, [graphEdges, nodes]);
 
   const vectorById = useMemo(() => new Map(vectors.map((v) => [v.keywordId, v])), [vectors]);
   const selectedPairMetrics = useMemo(() => {
@@ -284,6 +297,16 @@ export function KeywordGraph() {
 
     deck.setProps({
       layers: [
+        new LineLayer<GraphLine>({
+          id: 'keyword-edges',
+          data: lines,
+          pickable: false,
+          getSourcePosition: (edge) => [edge.source.x, edge.source.y, 0],
+          getTargetPosition: (edge) => [edge.target.x, edge.target.y, 0],
+          getColor: theme === 'dark' ? [100, 116, 139, 90] : [71, 85, 105, 75],
+          getWidth: (edge) => 0.5 + edge.weight * 1.5,
+          widthUnits: 'pixels',
+        }),
         new ScatterplotLayer<GraphNode>({
           id: 'keyword-node-halo',
           data: nodes.filter((node) => selectedSet.has(node.id)),
@@ -355,7 +378,7 @@ export function KeywordGraph() {
         }),
       ],
     });
-  }, [nodes, selected, theme]);
+  }, [lines, nodes, selected, theme]);
 
   function clearSelection() {
     setSelected([]);

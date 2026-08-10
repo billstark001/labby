@@ -129,7 +129,7 @@ export function DataPanel() {
   function handleImportBackupConfirmed() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = isServerDeployment ? '.labby,.msgpack,.sqlite,.sqlite3' : '.labby,.json';
+    input.accept = isServerDeployment ? '.labby,.msgpack' : '.labby,.json';
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
@@ -176,7 +176,7 @@ export function DataPanel() {
     }
   }
 
-  async function handleDownloadServerBackup(format: 'sqlite' | 'msgpack') {
+  async function handleDownloadServerBackup(format: 'msgpack') {
     const id = toast.loading(t('computing'));
     try {
       await downloadServerBackup(format);
@@ -300,13 +300,6 @@ export function DataPanel() {
             <div class={s.toolbar}>
               <Button
                 variant="primary"
-                onClick={() => handleDownloadServerBackup('sqlite')}
-                disabled={!canManageServerBackups}
-              >
-                {t('downloadServerBackupSqlite')}
-              </Button>
-              <Button
-                variant="secondary"
                 onClick={() => handleDownloadServerBackup('msgpack')}
                 disabled={!canManageServerBackups}
               >

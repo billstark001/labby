@@ -10,7 +10,7 @@ import {
   type AuthVerificationCodeRecord,
   type AuthVerificationPurpose,
   type RefreshTokenRecord,
-  type SqliteStore,
+  type LabbyStore,
   type StoredUser,
 } from '../store/index.js';
 
@@ -46,7 +46,7 @@ interface RefreshTokenPayload {
 }
 
 export interface AuthServiceOptions {
-  store: SqliteStore;
+  store: LabbyStore;
   issuer: string;
   audience: string;
   accessTtl: string;

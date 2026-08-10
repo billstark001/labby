@@ -35,8 +35,8 @@ export function resolveStoreConnectionConfig(env: NodeJS.ProcessEnv): StoreConne
   const dbDriver = readTrimmed(env, 'DB_DRIVER').toLowerCase();
   const databaseUrl = readTrimmed(env, 'DATABASE_URL');
 
-  if (dbDriver && dbDriver !== 'sqlite' && dbDriver !== 'postgres') {
-    throw new Error('DB_DRIVER must be "sqlite" or "postgres"');
+  if (dbDriver && dbDriver !== 'pglite' && dbDriver !== 'postgres') {
+    throw new Error('DB_DRIVER must be "pglite" or "postgres"');
   }
 
   if (databaseUrl && dbDriver !== 'postgres') {
@@ -56,7 +56,7 @@ export function resolveStoreConnectionConfig(env: NodeJS.ProcessEnv): StoreConne
   }
 
   return {
-    dialect: 'sqlite',
-    path: readTrimmed(env, 'DB_PATH') || './run/labby.db',
+    dialect: 'pglite',
+    dataDir: readTrimmed(env, 'PGLITE_DATA_DIR') || './run/labby-pg',
   };
 }

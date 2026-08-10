@@ -4,9 +4,9 @@ Labby is a seminar scheduling system with a shared algorithm core, a browser UI,
 
 The monorepo contains:
 
-- `@labby/core` – scheduling logic plus Rust-powered similarity embedding/projection
+- `@labby/core` – scheduling logic plus portable TypeScript similarity embedding/projection
 - `@labby/web` – Preact UI for data entry, schedule review, and login
-- `@labby/server` – Hono API with SQLite storage, auth, solver endpoints, optional email notifications, and scheduled database backups
+- `@labby/server` – Hono API with PGlite/Postgres storage, auth, solver endpoints, optional email notifications, and scheduled database backups
 
 ## Features
 
@@ -18,16 +18,16 @@ The monorepo contains:
 - Run in local-browser mode or API-backed server mode
 - Authenticate with three roles: `user`, `admin`, and environment-only `root`
 - Send schedule reminder emails from cron expressions stored in schedule configs
-- Back up the full server database on a cron schedule as either a SQLite snapshot or MsgPack archive
+- Back up the full server database on a cron schedule as a MsgPack archive
 - Deliver backups through email attachments, Google Drive, or OneDrive
 - Authenticate the mailer against Gmail through Google OAuth client JSON
 - Package the full stack with Docker and `docker-compose`
 
 ## Packages
 
-- `packages/core` – scheduling algorithms, domain types, and Rust native/wasm embedding engine
+- `packages/core` – scheduling algorithms, domain types, and the shared TypeScript embedding engine
 - `packages/web` – Vite app with hash routing, login UI, and API/local storage adapters
-- `packages/server` – Hono application, SQLite store, auth service, cron scheduler, mailer, and backup service
+- `packages/server` – Hono application, PGlite/Postgres store, auth service, cron scheduler, mailer, and backup service
 
 ## Quick Start
 
@@ -64,15 +64,9 @@ The server exposes authenticated REST endpoints under `/api/v1`.
 
 Read [docs/auth.md](docs/auth.md), [docs/algorithm-scheduling.md](docs/algorithm-scheduling.md), [docs/algorithm-similarity.md](docs/algorithm-similarity.md), and [packages/server/README.md](packages/server/README.md) for details.
 
-## Rust and WASM Build
+## Embedding Runtime
 
-The similarity engine is implemented in Rust under packages/core/native and exposed through Node addon + WebAssembly bindings.
-
-- local full core build: pnpm --filter @labby/core build
-- wasm (web target) only: pnpm --filter @labby/core rust:build:wasm:web
-- rust tests: pnpm --filter @labby/core test:rust
-
-In CI deployment workflows, Rust toolchain and wasm-pack are installed on runner and wasm is built during pipeline. Generated wasm artifacts are not committed to git.
+The similarity engine is a shared TypeScript implementation in `@labby/core`, so normal builds require only Node.js and pnpm.
 
 ## Docker
 
@@ -87,7 +81,7 @@ docker compose up --build
 The container:
 
 - serves the API on port `4410`
-- stores SQLite data in the named volume `labby-data`
+- stores PGlite data in the named volume `labby-data`
 - can include the built web app in the image
 - enables cron email reminders when SMTP settings are configured
 - can run scheduled whole-database backups when backup settings are configured
@@ -111,7 +105,7 @@ Important settings:
 - `BACKUP_*` to schedule whole-database backups
 - `GOOGLE_DRIVE_FOLDER_ID` for Google Drive uploads
 - `ONEDRIVE_*` for OneDrive uploads
-- `DB_PATH` for SQLite storage
+- `PGLITE_DATA_DIR` for embedded Postgres storage
 - `WEB_DIST_DIR` to let server mode serve `packages/web/dist` static files
 
 ## Backup Subsystem
@@ -119,7 +113,7 @@ Important settings:
 The server can maintain periodic full-database backups through the same cron runtime that powers schedule notifications.
 
 - Set `BACKUP_CRON` to enable backups.
-- Choose `BACKUP_FORMAT=sqlite` to emit a SQLite snapshot or `BACKUP_FORMAT=msgpack` to serialize all tables into a MsgPack archive.
+- Backups use MsgPack to serialize all tables into a portable archive.
 - Choose `BACKUP_TARGET=email`, `google-drive`, or `onedrive`.
 - Email delivery attaches the generated backup to a normal outbound message.
 - Google Drive uses OAuth client credentials loaded from `GOOGLE_OAUTH_JSON_PATH` plus a refresh token.
@@ -129,14 +123,14 @@ The server can maintain periodic full-database backups through the same cron run
 
 - Added a server-side backup subsystem with cron scheduling and pluggable delivery targets.
 - Added Gmail OAuth support by reading Google OAuth client credentials from JSON.
-- Added whole-database export support for both SQLite snapshot and MsgPack archive formats.
+- Added whole-database export support through the MsgPack archive format.
 
 ## Deployment
 
 - Static web deployment is still supported with GitHub Pages and Netlify.
 - API-backed deployment can use Docker directly or `docker-compose`.
 - GitHub Pages and Netlify workflows now force the web app into frontend-only deployment mode.
-- Both workflows build Rust wasm artifacts before frontend build.
+- Both workflows build the frontend directly with the shared TypeScript embedding engine.
 - GCP server deployment guidance and Cloud Run workflow are documented in `docs/deploy-gcp.md`.
 - Cloud Scheduler mirroring currently assumes a single live server instance because dispatch looks up in-memory registered jobs. Keep Cloud Run at one instance for scheduler-backed deployments until this is externalized.
 

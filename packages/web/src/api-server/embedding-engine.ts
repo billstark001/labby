@@ -5,7 +5,7 @@ export async function applyPairUpdate(
   leftId: string,
   rightId: string,
   targetDistance: number,
-  options: IterativeUpdateOptions,
+  options?: IterativeUpdateOptions,
 ): Promise<{ loss: number; updatedVectors: KeywordVector[] }> {
   return apiClient.request<{ loss: number; updatedVectors: KeywordVector[] }>('/nlp/update-pair', {
     method: 'POST',

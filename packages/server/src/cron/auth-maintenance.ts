@@ -1,4 +1,4 @@
-import type { SqliteStore } from '../store/index.js';
+import type { LabbyStore } from '../store/index.js';
 import type { CronScheduler } from './scheduler.js';
 
 interface AuthMaintenanceConfig {
@@ -8,7 +8,7 @@ interface AuthMaintenanceConfig {
 
 export interface CreateAuthMaintenanceServiceOptions {
   scheduler: CronScheduler;
-  store: SqliteStore;
+  store: LabbyStore;
 }
 
 function normalizeCronExpression(value: string | undefined): string {

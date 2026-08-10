@@ -65,10 +65,9 @@ import {
   tripletRecommendSchema,
   tripletUpdateSchema,
 } from "./lib/app-schemas.js";
-import { SqliteStore, type StoreConnectionConfig } from "./store/index.js";
+import { LabbyStore, type StoreConnectionConfig } from "./store/index.js";
 
 export interface CreateAppOptions {
-  dbPath?: string;
   db?: StoreConnectionConfig;
   webDistDir?: string;
   enableLogger?: boolean;
@@ -139,14 +138,11 @@ async function sendStaticFile(c: Context, filePath: string): Promise<Response> {
   return c.body(body);
 }
 
-export async function createApp(options: CreateAppOptions): Promise<{ app: Hono; store: SqliteStore; close: () => Promise<void>; }> {
-  const dbConfig = options.db ?? { dialect: "sqlite", path: options.dbPath ?? "./run/labby.db" };
+export async function createApp(options: CreateAppOptions): Promise<{ app: Hono; store: LabbyStore; close: () => Promise<void>; }> {
+  const dbConfig = options.db ?? { dialect: "pglite", dataDir: "./run/labby-pg" };
   const webDistDir = resolveWebDistDir(options.webDistDir);
-  if (dbConfig.dialect === "sqlite") {
-    fs.mkdirSync(path.dirname(dbConfig.path), { recursive: true });
-  }
 
-  const store = new SqliteStore(dbConfig);
+  const store = new LabbyStore(dbConfig);
   const embeddingService = new EmbeddingService(store);
   await embeddingService.start();
   const authService = new AuthService({
@@ -263,13 +259,13 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         scheduleEnabled: false,
         scheduleConfigured: false,
         configuredTarget: null,
-        configuredFormat: 'sqlite',
+        configuredFormat: 'msgpack',
         targets: {
           email: false,
           'google-drive': false,
           onedrive: false,
         },
-        formats: ['sqlite', 'msgpack'],
+        formats: ['msgpack'],
       },
       permissions: {
         canManageBackups: session.role >= UserRole.Admin,
@@ -293,9 +289,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     if (!backupService) {
       throw new AppError('BACKUP_UNAVAILABLE', 'backup service is unavailable', 503);
     }
-    const formatQuery = c.req.query('format');
-    const format = formatQuery === 'msgpack' ? 'msgpack' : 'sqlite';
-    const artifact = await backupService.createDownloadArtifact(format);
+    const artifact = await backupService.createDownloadArtifact('msgpack');
     c.header('Content-Type', artifact.contentType);
     c.header('Content-Disposition', `attachment; filename="${artifact.filename}"`);
     return c.body(new Uint8Array(artifact.content));
@@ -308,8 +302,8 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     }
 
     const formatQuery = c.req.query('format');
-    if (formatQuery !== 'sqlite' && formatQuery !== 'msgpack') {
-      throw new AppError('VALIDATION_ERROR', 'format must be sqlite or msgpack', 400);
+    if (formatQuery && formatQuery !== 'msgpack') {
+      throw new AppError('VALIDATION_ERROR', 'format must be msgpack', 400);
     }
 
     const payload = Buffer.from(await c.req.arrayBuffer());
@@ -318,7 +312,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     }
 
     await backupService.restoreBackupArtifact({
-      format: formatQuery,
+      format: 'msgpack',
       content: payload,
     });
 
@@ -550,6 +544,8 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const { offset, limit } = parsePagination(c.req.query());
     return ok(c, toPage(await store.listKeywordVectors(), offset, limit));
   });
+
+  app.get('/api/v1/db/graph-snapshot', async (c) => ok(c, await store.getGraphSnapshot()));
   app.get("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
     return ok(c, (await store.getKeywordVector(c.req.param("keywordId"))) ?? null);
   });

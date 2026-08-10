@@ -45,7 +45,7 @@ export const requestChangeEmailSchema = z.object({
 });
 
 export const backupActionSchema = z.object({
-  format: z.enum(['sqlite', 'msgpack']).optional(),
+  format: z.literal('msgpack').optional(),
   target: z.enum(['email', 'google-drive', 'onedrive']).optional(),
 });
 

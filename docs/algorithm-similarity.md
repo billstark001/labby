@@ -99,7 +99,7 @@ Adaptive global checks:
 
 Required tests:
 
-- native Rust tests in packages/core/native pass
+- shared TypeScript embedding tests in packages/core pass
 - rank sanity: d2(anchor, near) < d2(anchor, far)
 - post-update max calibrated radius < 3.2
 

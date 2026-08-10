@@ -16,7 +16,7 @@ Use Cloud Run + Cloud SQL (PostgreSQL).
 
 Reason:
 
-- Cloud Run local filesystem is ephemeral, so `sqlite` is not durable.
+- Cloud Run local filesystem is ephemeral, so embedded PGlite is not durable there.
 - The server supports `DB_DRIVER=postgres` + `DATABASE_URL`.
 
 ## One-Time GCP Preparation Checklist
@@ -53,12 +53,7 @@ Common optional values:
 - `CLOUD_SCHEDULER_DISPATCH_URL` (optional if `PUBLIC_BASE_URL` is set)
 - `CLOUD_SCHEDULER_JOB_PREFIX`
 
-Important for this repository:
-
-- Do not set `PORT` manually in Cloud Run env vars. Cloud Run injects it.
-- Set Rust engine paths explicitly at runtime:
-  - `LABBY_CORE_NAPI_PATH=/app/packages/core/native/dist/node/labby_core.node`
-  - `LABBY_CORE_WASM_NODE_PATH=/app/packages/core/native/dist/wasm-node/labby_core.js`
+Important for this repository: do not set `PORT` manually in Cloud Run env vars. Cloud Run injects it.
 
 ## Cron + Cloud Scheduler Dual Mode
 
@@ -195,16 +190,11 @@ gcloud scheduler jobs list \
 
 ## Build and Runtime Notes for This Monorepo
 
-The server startup needs Rust native/wasm artifacts from core package at runtime.
-
 Docker image must include all of these:
 
 - `packages/core/dist`
-- `packages/core/native/dist`
 - `packages/server/dist`
 - `packages/web/dist`
-
-If `packages/core/native/dist` is missing, startup fails with Rust engine module not found.
 
 ## Troubleshooting (Known Failure Modes)
 
@@ -223,9 +213,6 @@ If `packages/core/native/dist` is missing, startup fails with Rust engine module
 5. Exec format error on startup:
    - Cause: ARM image deployed to Cloud Run.
    - Fix: build and push `linux/amd64` image.
-6. Rust engine module not found:
-   - Cause: native dist not copied or wrong runtime path.
-   - Fix: copy `packages/core/native/dist` into image and set `LABBY_CORE_*` env paths.
 
 ## Deployment Archive (Tokyo, 2026-04-07)
 
@@ -245,10 +232,10 @@ Executed operations summary:
 3. Imported existing local OAuth files from `packages/server` into Secret Manager:
    - `labby-google-client-json`
    - `labby-google-token-json`
-4. Fixed Docker build chain for this repository (Debian base + Rust/WASM toolchain + native dist copy).
+4. Fixed the Docker build chain for this repository.
 5. Built and pushed amd64 image successfully.
 6. Prepared Cloud Run env yaml from existing `packages/server/.env` values.
-7. Deployed Cloud Run with secret file mounts and explicit Rust engine paths.
+7. Deployed Cloud Run with secret file mounts.
 8. Granted `roles/secretmanager.secretAccessor` to runtime account used by Cloud Run.
 9. Added scheduler dual-mode runtime (`cron/cloud/hybrid`) and mirrored internal jobs to Cloud Scheduler.
 10. Bound internal dispatch endpoint `/internal/scheduler/dispatch` with API-key authentication.

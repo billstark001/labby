@@ -9,12 +9,12 @@
 import type { ScheduleConfig } from '@labby/core';
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
-import type { SqliteStore } from '../store/index.js';
+import type { LabbyStore } from '../store/index.js';
 
 export interface ScheduleNotifierOptions {
   scheduler: CronScheduler;
   mailer: Mailer;
-  store: SqliteStore;
+  store: LabbyStore;
   /** Email addresses to notify. */
   recipients: string[];
 }

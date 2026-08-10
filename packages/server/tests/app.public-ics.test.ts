@@ -33,7 +33,7 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
 
 test('public email task ICS endpoint is available only when enabled and task opts in', async () => {
   const runtime = await createApp({
-    db: { dialect: 'sqlite', path: createTempDbPath('labby-public-ics') },
+    db: { dialect: 'pglite', dataDir: createTempDbPath('labby-public-ics') },
     rootUsername: 'root',
     rootPassword: 'root-pass',
     enablePublicEmailTaskIcs: true,

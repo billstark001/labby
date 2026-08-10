@@ -37,7 +37,7 @@ function axisVector(axis: number, value: number): number[] {
 
 test('nlp update-similarity persists vectors immediately', async () => {
   const runtime = await createApp({
-    db: { dialect: 'sqlite', path: createTempDbPath('labby-app-supervision-persist') },
+    db: { dialect: 'pglite', dataDir: createTempDbPath('labby-app-supervision-persist') },
     rootUsername: 'root',
     rootPassword: 'root-pass',
   });

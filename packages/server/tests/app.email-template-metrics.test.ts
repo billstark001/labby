@@ -34,7 +34,7 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
 test('template preview, email-task CRUD and metrics API work', async () => {
   const dbPath = createTempDbPath('labby-app-p3');
   const runtime = await createApp({
-    db: { dialect: 'sqlite', path: dbPath },
+    db: { dialect: 'pglite', dataDir: dbPath },
     rootUsername: 'root',
     rootPassword: 'root-pass',
   });
@@ -150,7 +150,7 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     assert.equal(getTaskJson.data.id, 'et-1');
 
     const failingRuntime = await createApp({
-      db: { dialect: 'sqlite', path: createTempDbPath('labby-app-send-now-fail') },
+      db: { dialect: 'pglite', dataDir: createTempDbPath('labby-app-send-now-fail') },
       rootUsername: 'root',
       rootPassword: 'root-pass',
       runEmailTaskNow: async () => {

@@ -11,7 +11,7 @@ services:
       - labby-data:/data
     environment:
       PORT: 4410
-      DB_PATH: /data/labby.db
+      PGLITE_DATA_DIR: /data/labby-pg
       WEB_DIST_DIR: /app/packages/web/dist
 
       # PASETO token signing keys (generate with: openssl rand -base64 32)

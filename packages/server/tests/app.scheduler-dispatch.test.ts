@@ -13,7 +13,7 @@ function createTempDbPath(prefix: string): string {
 
 test('internal scheduler dispatch endpoint validates auth and dispatches by job name', async () => {
   const runtime = await createApp({
-    db: { dialect: 'sqlite', path: createTempDbPath('labby-scheduler-dispatch') },
+    db: { dialect: 'pglite', dataDir: createTempDbPath('labby-scheduler-dispatch') },
     rootUsername: 'root',
     rootPassword: 'root-pass',
     schedulerDispatchApiKey: 'dispatch-key',

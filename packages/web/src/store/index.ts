@@ -1,6 +1,6 @@
 import { signal, computed } from '@preact/signals';
 import { keywordVectorsToSimilarityLookup } from '@labby/core';
-import type { Person, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask } from '@labby/core';
+import type { Person, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask, GraphSnapshotEdge } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -21,6 +21,7 @@ export const themeSignal = signal<'light' | 'dark'>(readPersistedTheme());
 export const personsSignal = signal<Person[]>([]);
 export const keywordsSignal = signal<Keyword[]>([]);
 export const keywordVectorsSignal = signal<KeywordVector[]>([]);
+export const graphEdgesSignal = signal<GraphSnapshotEdge[]>([]);
 export const configsSignal = signal<ScheduleConfig[]>([]);
 export const constraintsSignal = signal<ScheduleConstraint[]>([]);
 export const schedulesSignal = signal<SchedulePlan[]>([]);

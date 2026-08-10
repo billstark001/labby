@@ -29,10 +29,10 @@ function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T 
   }
 }
 
-test('runtime db config allows sqlite defaults but fails when postgres config is partial or ignored', () => {
+test('runtime db config defaults to PGlite and validates Postgres configuration', () => {
   assert.deepEqual(resolveStoreConnectionConfig({}), {
-    dialect: 'sqlite',
-    path: './run/labby.db',
+    dialect: 'pglite',
+    dataDir: './run/labby-pg',
   });
 
   assert.throws(

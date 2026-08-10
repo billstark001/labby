@@ -13,7 +13,7 @@ import type {
   ScheduleConfig,
   SchedulePlan,
 } from '@labby/core';
-import { SqliteStore, UserRole, type RefreshTokenRecord, type StoredUser } from '../src/store/index';
+import { LabbyStore, UserRole, type RefreshTokenRecord, type StoredUser } from '../src/store/index';
 
 function createTempDbPath(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
@@ -125,9 +125,9 @@ function sampleRefreshToken(userId = 'user-1'): RefreshTokenRecord {
   };
 }
 
-test('SqliteStore initializes and supports core CRUD', async () => {
+test('LabbyStore initializes and supports core CRUD', async () => {
   const dbPath = createTempDbPath('labby-store-crud');
-  const store = new SqliteStore({ dialect: 'sqlite', path: dbPath });
+  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
 
   try {
     const person = samplePerson();
@@ -165,55 +165,39 @@ test('SqliteStore initializes and supports core CRUD', async () => {
   }
 });
 
-test('SqliteStore snapshot export and restore keeps data', async () => {
+test('LabbyStore snapshot export and restore keeps data', async () => {
   const sourcePath = createTempDbPath('labby-store-source');
   const targetPath = createTempDbPath('labby-store-target');
-  const source = new SqliteStore({ dialect: 'sqlite', path: sourcePath });
-  const target = new SqliteStore({ dialect: 'sqlite', path: targetPath });
+  const source = new LabbyStore({ dialect: 'pglite', dataDir: sourcePath });
+  const target = new LabbyStore({ dialect: 'pglite', dataDir: targetPath });
 
   try {
     await source.putPerson(samplePerson('p-a'));
     await source.putKeyword(sampleKeyword('k-a'));
     await source.putKeywordVector(sampleVector('k-a'));
+    await source.putKeyword(sampleKeyword('k-b'));
+    await source.putKeywordVector(sampleVector('k-b'));
+
+    const graph = await source.getGraphSnapshot();
+    assert.equal(graph.keywords.length, 2);
+    assert.equal(graph.keywordVectors.length, 2);
+    assert.equal(graph.edges.length, 1);
 
     const snapshot = await source.exportBackupSnapshot();
     await target.restoreBackupSnapshot(snapshot);
 
     assert.equal((await target.listPersons()).length, 1);
-    assert.equal((await target.listKeywords()).length, 1);
-    assert.equal((await target.listKeywordVectors()).length, 1);
+    assert.equal((await target.listKeywords()).length, 2);
+    assert.equal((await target.listKeywordVectors()).length, 2);
   } finally {
     await source.close();
     await target.close();
   }
 });
 
-test('SqliteStore binary backup and restore from sqlite file works', async () => {
-  const sourcePath = createTempDbPath('labby-store-bak-source');
-  const targetPath = createTempDbPath('labby-store-bak-target');
-  const backupPath = createTempDbPath('labby-store-bak-file');
-
-  const source = new SqliteStore({ dialect: 'sqlite', path: sourcePath });
-  const target = new SqliteStore({ dialect: 'sqlite', path: targetPath });
-
-  try {
-    await source.putPerson(samplePerson('p-b'));
-    await source.putConfig(sampleConfig('c-b'));
-
-    await source.backupDatabase(backupPath);
-    await target.restoreFromSqliteFile(backupPath);
-
-    assert.equal((await target.getPerson('p-b'))?.id, 'p-b');
-    assert.equal((await target.getConfig('c-b'))?.id, 'c-b');
-  } finally {
-    await source.close();
-    await target.close();
-  }
-});
-
-test('SqliteStore keeps modifiedAt sorting and standalone constraints persistence', async () => {
+test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence', async () => {
   const dbPath = createTempDbPath('labby-store-order-constraints');
-  const store = new SqliteStore({ dialect: 'sqlite', path: dbPath });
+  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
 
   try {
     const older = samplePerson('p-old');

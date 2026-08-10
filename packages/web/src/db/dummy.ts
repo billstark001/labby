@@ -18,6 +18,8 @@ import type {
   ScheduleConstraintStore,
   SchedulePlan,
   SchedulePlanStore,
+  SystemSettings,
+  SystemSettingsStore,
 } from '@labby/core';
 
 function emptyPage<T>(query: ListQuery): PaginatedResult<T> {
@@ -98,6 +100,11 @@ export function createDummyDB(): LabbyDB {
     clear: async () => void 0,
   };
 
+  const systemSettingsStore: SystemSettingsStore = {
+    get: async () => ({ id: 'system' }),
+    put: async (value: SystemSettings) => void 0,
+  };
+
   const db: LabbyDB = {
     persons: personsStore,
     keywords: keywordsStore,
@@ -107,6 +114,7 @@ export function createDummyDB(): LabbyDB {
     schedules: schedulesStore,
     unavailabilities: unavailabilitiesStore,
     emailTasks: emailTasksStore,
+    systemSettings: systemSettingsStore,
     foreignKeys: {
       readForSchedule: async (_query) => ({
         persons: [],
@@ -128,6 +136,9 @@ export function createDummyDB(): LabbyDB {
         keywords: [],
         keywordVectors: [],
       }),
+    },
+    graph: {
+      getSnapshot: async () => ({ revision: '0:0:0:0', keywords: [], keywordVectors: [], edges: [] }),
     },
   };
 

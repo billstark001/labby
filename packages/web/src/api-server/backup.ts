@@ -1,7 +1,7 @@
 import { apiClient } from '../lib/api';
 
 export type BackupTarget = 'email' | 'google-drive' | 'onedrive';
-export type BackupFormat = 'sqlite' | 'msgpack';
+export type BackupFormat = 'msgpack';
 
 export interface SystemCapabilities {
   deploymentMode: 'server';
@@ -71,14 +71,10 @@ export async function downloadServerBackup(format: BackupFormat): Promise<void> 
   const blob = await response.blob();
   const disposition = response.headers.get('content-disposition') ?? '';
   const match = disposition.match(/filename="?([^";]+)"?/i);
-  triggerDownload(blob, match?.[1] ?? `labby-backup.${format === 'sqlite' ? 'sqlite3' : 'msgpack'}`);
+  triggerDownload(blob, match?.[1] ?? 'labby-backup.msgpack');
 }
 
 function inferBackupFormat(filename: string): BackupFormat {
-  const normalized = filename.trim().toLowerCase();
-  if (normalized.endsWith('.sqlite') || normalized.endsWith('.sqlite3')) {
-    return 'sqlite';
-  }
   return 'msgpack';
 }
 

@@ -1,7 +1,7 @@
 /** Keyword management panel. */
 import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
-import { personsSignal, keywordsSignal } from '../store/index';
+import { graphEdgesSignal, keywordVectorsSignal, keywordsSignal, personsSignal } from '../store/index';
 import { displayName } from '@/i18n';
 import { buildKeywordReferenceCount, listKeywordsPage, readKeywordForeignKeys, useDatabase } from '../db/index';
 import * as s from '../styles/components.css';
@@ -107,13 +107,11 @@ export function KeywordList() {
   async function refreshForeignKeyContext(keywordIds: string[]) {
     if (keywordIds.length === 0) {
       personsSignal.value = [];
-      keywordsSignal.value = [];
       setKeywordReferenceCount(new Map());
       return;
     }
     const bundle = await readKeywordForeignKeys(db, keywordIds);
     personsSignal.value = bundle.persons;
-    keywordsSignal.value = bundle.keywords;
     setKeywordReferenceCount(buildKeywordReferenceCount(bundle));
   }
 
@@ -145,6 +143,13 @@ export function KeywordList() {
     }
   }
 
+  async function refreshGraphSnapshot() {
+    const snapshot = await db.graph.getSnapshot();
+    keywordsSignal.value = snapshot.keywords;
+    keywordVectorsSignal.value = snapshot.keywordVectors;
+    graphEdgesSignal.value = snapshot.edges;
+  }
+
   useEffect(() => {
     void refreshKeywordsPage(page, pageSize);
   }, [db, page, pageSize, sortBy, sortDirection]);
@@ -156,14 +161,14 @@ export function KeywordList() {
 
   async function handleSave(k: Keyword) {
     await db.keywords.put(k);
-    await refreshKeywordsPage();
+    await Promise.all([refreshKeywordsPage(), refreshGraphSnapshot()]);
     setEditing(null);
   }
 
   async function handleDisableToggle(k: Keyword) {
     const updated: Keyword = { ...k, disabled: !k.disabled };
     await db.keywords.put(updated);
-    await refreshKeywordsPage();
+    await Promise.all([refreshKeywordsPage(), refreshGraphSnapshot()]);
   }
 
   async function handleDelete(k: Keyword) {
@@ -173,7 +178,7 @@ export function KeywordList() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.keywords.delete(k.id);
-      await refreshKeywordsPage();
+      await Promise.all([refreshKeywordsPage(), refreshGraphSnapshot()]);
     });
   }
 
