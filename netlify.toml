@@ -3,6 +3,10 @@
   command = "cd ../.. && pnpm install && pnpm --filter @labby/web build:frontend"
   publish = "dist"
 
+[build.environment]
+  NODE_VERSION = "24"
+  PNPM_VERSION = "12"
+
 [[redirects]]
   from   = "/*"
   to     = "/index.html"

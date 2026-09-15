@@ -32,7 +32,7 @@ The monorepo contains:
 ## Quick Start
 
 ```bash
-# Prerequisites: Node >= 20, pnpm >= 10
+# Prerequisites: Node >= 24, pnpm 12.x
 corepack enable
 pnpm install
 

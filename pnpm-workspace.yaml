@@ -2,12 +2,10 @@ packages:
   - 'packages/*'
 autoInstallPeers: false
 overrides:
-  '@codemirror/state': 6.7.0
-  '@codemirror/view': 6.43.4
+  '@codemirror/state': 6.7.4
+  '@codemirror/view': 6.43.11
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - '@deck.gl/core@9.3.6'
-  - '@deck.gl/layers@9.3.6'
-  - '@hono/node-server@2.0.8'
-  - tsx@4.22.5
+  - lucide-preact@1.46.0
+  - nodemailer@10.0.10

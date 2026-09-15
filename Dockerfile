@@ -1,7 +1,7 @@
 # Build stage
-FROM node:22-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 
-RUN corepack enable pnpm
+RUN npm install --global pnpm@12
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
@@ -36,9 +36,9 @@ ENV VITE_DB_CONFIG=${VITE_DB_CONFIG}
 RUN pnpm --filter @labby/web build
 
 # ---- Production image ----
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 
-RUN corepack enable pnpm
+RUN npm install --global pnpm@12
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
