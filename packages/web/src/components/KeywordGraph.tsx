@@ -4,7 +4,7 @@ import { Deck, OrthographicView } from '@deck.gl/core';
 import { LineLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { X } from 'lucide-preact';
 import {
-  themeSignal, keywordsSignal, keywordVectorsSignal, graphEdgesSignal,
+  themeSignal,
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
@@ -14,6 +14,17 @@ import { i18n } from '@/i18n';
 import clsx from 'clsx';
 import { productDistance, rankingQueryKey } from '@labby/core';
 import { RankingEditor } from './RankingCard';
+import { graphData, graphStreamStatus, syncGraph } from '@/lib/graph-sync';
+import { useDatabase } from '@/db/index';
+function GraphLoadingStatus() {
+  const db = useDatabase();
+  const status = graphStreamStatus.value;
+  const { t } = i18n;
+  return <div role="status">
+    {status.loading ? t('graphLoading', String(status.count)) : status.syncing ? t('graphSyncing') : null}
+    {status.error && <button title={status.error} onClick={() => { void syncGraph(db).catch(() => {}); }}>{t('graphLoadFailed')}</button>}
+  </div>;
+}
 
 type GraphNode = {
   id: string;
@@ -60,9 +71,7 @@ export function KeywordGraph() {
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const { t } = i18n;
   const theme = themeSignal.value;
-  const keywords = keywordsSignal.value;
-  const vectors = keywordVectorsSignal.value;
-  const graphEdges = graphEdgesSignal.value;
+  const { keywords, vectors, edges: graphEdges } = graphData.value;
   const locale = i18n.lang.value;
 
   const [selected, setSelected] = useState<string[]>([]);
@@ -402,7 +411,7 @@ export function KeywordGraph() {
           </>
         )}
       </div>
-      <div class={s.graphLayout}>
+      <GraphLoadingStatus /><div class={s.graphLayout}>
         <div ref={canvasRef} class={s.graphCanvas} />
         <aside class={s.graphSidebar}>
           <div class={s.card}>

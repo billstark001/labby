@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { RankingJudgment, RankingQuery } from '@labby/core';
-import { keywordsSignal } from '@/store';
+import { graphData } from '@/lib/graph-sync';
 import { displayName, i18n } from '@/i18n';
 import { useDatabase } from '@/db';
 import { recommendRanking, trainRanking } from '@/lib/embedding-engine';
@@ -18,7 +18,7 @@ export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved
   const [saved, setSaved] = useState(false);
   const [requestId] = useState(() => crypto.randomUUID());
   const [createdAt] = useState(() => Date.now());
-  const names = new Map(keywordsSignal.value.map(k => [k.id, displayName(k)]));
+  const names = new Map(graphData.value.keywords.map(k => [k.id, displayName(k)]));
   const groups = rankingGroups(query.candidateIds, ranks);
   const valid = groups.flat().length >= 2;
 
@@ -57,7 +57,7 @@ export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved
 export function RankingCard() {
   const db = useDatabase();
   const { t } = i18n;
-  const keywords = keywordsSignal.value;
+  const keywords = graphData.value.keywords;
   const keywordKey = keywords.map(k => k.id).sort().join('\n');
   const [excludedKeys, setExcluded] = useState<string[]>([]);
   const [query, setQuery] = useState<RankingQuery | null>(null);

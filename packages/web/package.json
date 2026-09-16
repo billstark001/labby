@@ -12,9 +12,10 @@
     "build:frontend": "tsc -p tsconfig.json --noEmit && VITE_DB_CONFIG=pglite VITE_DEPLOYMENT_MODE=frontend-only vite build",
     "build:server": "tsc -p tsconfig.json --noEmit && VITE_DB_CONFIG=api VITE_DEPLOYMENT_MODE=server vite build",
     "preview": "vite preview",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test tests/*.test.ts && pnpm test:render",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "i18n:gen": "tsx scripts/i18n-gen.ts"
+    "i18n:gen": "tsx scripts/i18n-gen.ts",
+    "test:render": "vitest run"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -45,9 +46,11 @@
     "@types/papaparse": "^5.5.2",
     "@vanilla-extract/css": "^1.21.2",
     "@vanilla-extract/vite-plugin": "^5.2.6",
+    "happy-dom": "^20.14.5",
     "js-yaml": "^5.4.2",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
   }
 }

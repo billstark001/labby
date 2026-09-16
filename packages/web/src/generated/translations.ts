@@ -354,6 +354,9 @@ export const en = {
   "dbMigrating": "Updating local database…",
   "dbMaintenanceComplete": "Local database is ready",
   "dbMaintenanceFailed": "Local database maintenance failed",
+  "graphLoading": "Loading graph: {0} topics",
+  "graphSyncing": "Syncing graph changes…",
+  "graphLoadFailed": "Graph loading failed. Retry",
   "appLoading": "Loading…",
   "retry": "Retry"
 } as const
@@ -712,6 +715,9 @@ export const zhCN = {
   "dbMigrating": "正在升级本地数据库…",
   "dbMaintenanceComplete": "本地数据库已就绪",
   "dbMaintenanceFailed": "本地数据库维护失败",
+  "graphLoading": "正在加载图：已加载 {0} 个关键词",
+  "graphSyncing": "正在同步图的变化…",
+  "graphLoadFailed": "图加载失败，点击重试",
   "appLoading": "正在加载…",
   "retry": "重试"
 } as const
@@ -1070,6 +1076,9 @@ export const jaJP = {
   "dbMigrating": "ローカルデータベースを更新しています…",
   "dbMaintenanceComplete": "ローカルデータベースの準備が完了しました",
   "dbMaintenanceFailed": "ローカルデータベースの更新に失敗しました",
+  "graphLoading": "グラフを読み込み中：{0} 件",
+  "graphSyncing": "グラフの変更を同期中…",
+  "graphLoadFailed": "グラフの読み込みに失敗しました。再試行",
   "appLoading": "読み込み中…",
   "retry": "再試行"
 } as const

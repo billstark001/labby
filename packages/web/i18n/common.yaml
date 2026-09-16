@@ -1766,6 +1766,19 @@ dbMaintenanceFailed:
   en: "Local database maintenance failed"
   zh-CN: "本地数据库维护失败"
   ja-JP: "ローカルデータベースの更新に失敗しました"
+graphLoading:
+  en: "Loading graph: {0} topics"
+  zh-CN: "正在加载图：已加载 {0} 个关键词"
+  ja-JP: "グラフを読み込み中：{0} 件"
+graphSyncing:
+  en: "Syncing graph changes…"
+  zh-CN: "正在同步图的变化…"
+  ja-JP: "グラフの変更を同期中…"
+graphLoadFailed:
+  en: "Graph loading failed. Retry"
+  zh-CN: "图加载失败，点击重试"
+  ja-JP: "グラフの読み込みに失敗しました。再試行"
+
 appLoading:
   en: "Loading…"
   zh-CN: "正在加载…"
@@ -1774,3 +1787,4 @@ retry:
   en: "Retry"
   zh-CN: "重试"
   ja-JP: "再試行"
+
