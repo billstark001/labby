@@ -126,3 +126,28 @@ The first command only inspects; the second applies migrations and prints a succ
 after commit and a subsequent schema check. Errors exit nonzero. Migration progress is explicitly
 marked uncommitted until the transaction succeeds. Empty databases are directed to db:init rather
 than being silently initialized by db:migrate.
+
+## Similarity requests stuck while ordinary reads work
+
+The server uses a transaction-scoped PostgreSQL advisory lock (192837466). The entire similarity
+read/optimize/write operation uses its pinned connection. Lock acquisition times out after 5 seconds;
+SQL statements time out after 15 seconds. No schema migration is required for this fix.
+
+Older server code used a session lock and dispatched its reads/writes on other connections.
+With transaction pooling, unlock could run on a different PostgreSQL backend, leaking the lock.
+Read-only diagnosis (uses the same dotenv/environment options as the migration CLI):
+
+```sh
+pnpm --filter @labby/server db:similarity-locks
+```
+
+Stop old server instances before starting the fixed server. If the pool still retains an old session
+lock, the following explicit maintenance command releases only the exact similarity session lock
+owned by the backend assigned to this command; it never terminates sessions or modifies app data:
+
+```sh
+pnpm --filter @labby/server db:similarity-locks --action release-legacy
+```
+
+Inspect the final lock listing. A different backend may require administrator intervention.
+This is not an automatic startup operation. Do not run cleanup while an old server is still writing.

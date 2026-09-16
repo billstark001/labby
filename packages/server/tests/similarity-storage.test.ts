@@ -115,5 +115,7 @@ test('similarity lock serializes asynchronous writers and remains usable after f
     await assert.rejects(store.withSimilarityLock(async () => { throw new Error('expected'); }));
     await store.withSimilarityLock(async () => { events.push('recovered'); });
     assert.equal(events.at(-1), 'recovered');
+    await store.withSimilarityLock(() => store.withSimilarityLock(async () => { events.push('nested'); }));
+    assert.equal(events.at(-1), 'nested');
   } finally { await store.close(); }
 });

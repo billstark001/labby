@@ -11,7 +11,8 @@
     "auth:gmail": "tsx scripts/gmail-auth.ts",
     "db:init": "tsx scripts/db-init.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "db:similarity-locks": "tsx scripts/db-similarity-locks.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

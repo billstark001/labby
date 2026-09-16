@@ -5,6 +5,7 @@ export type ErrorCode =
   | "BACKUP_UNAVAILABLE"
   | "VALIDATION_ERROR"
   | "RATE_LIMITED"
+  | "SIMILARITY_BUSY"
   | "INTERNAL_ERROR";
 
 export interface CommonRequestHeaders {

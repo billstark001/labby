@@ -1,15 +1,30 @@
 import { initKeywordVectors, ProductEmbeddingEngine } from '@labby/core';
 import type { RankingJudgment, RankingQuery, TrainingResult } from '@labby/core';
 import type { LabbyStore } from '../store/index.js';
+import { AppError } from './errors.js';
 
 export class EmbeddingService {
-  private queue: Promise<unknown> = Promise.resolve();
+  private readonly pending = new Set<Promise<unknown>>();
   constructor(private readonly store: LabbyStore) {}
 
   private serial<T>(work: () => Promise<T>): Promise<T> {
-    const locked = () => this.store.withSimilarityLock(work);
-    const next = this.queue.then(locked, locked);
-    this.queue = next.catch(() => {});
+    // The store owns serialization. A second queue hides how long a request has waited.
+    const next = this.store.withSimilarityLock(work).catch((error) => {
+      if (
+        error?.code === '55P03' ||
+        error?.code === '57014' ||
+        error?.message === 'Query read timeout'
+      ) {
+        throw new AppError(
+          'SIMILARITY_BUSY',
+          'Similarity storage is busy or timed out. Retry shortly. If this persists, check database locks.',
+          503,
+        );
+      }
+      throw error;
+    });
+    this.pending.add(next);
+    void next.finally(() => this.pending.delete(next)).catch(() => {});
     return next;
   }
 
@@ -39,7 +54,7 @@ export class EmbeddingService {
     });
   }
   async shutdown(): Promise<void> {
-    await this.queue;
+    await Promise.allSettled(this.pending);
   }
 
   recommendRanking(options: {

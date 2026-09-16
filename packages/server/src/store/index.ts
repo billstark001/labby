@@ -4,7 +4,8 @@ import { vector } from '@electric-sql/pglite-pgvector';
 import { sql } from 'drizzle-orm';
 import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { checkPostgresSchema } from './schema-state.js';
 
@@ -280,6 +281,10 @@ export class LabbyStore {
   private readonly dialect: StoreConnectionConfig['dialect'];
   private readonly ready: Promise<void>;
   private similarityQueue: Promise<unknown> = Promise.resolve();
+  private readonly similarityTransaction = new AsyncLocalStorage<{
+    connection?: PoolClient;
+    db?: Pick<PostgresDrizzleDb, 'execute'>;
+  }>();
 
   constructor(config: StoreConnectionConfig) {
     this.dialect = config.dialect;
@@ -296,6 +301,8 @@ export class LabbyStore {
       this.pgPool = new Pool({
         connectionString: config.connectionString,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
+        connectionTimeoutMillis: 10000,
+        query_timeout: 20000,
       });
       this.db = drizzlePostgres(this.pgPool);
     }
@@ -305,16 +312,32 @@ export class LabbyStore {
   }
 
   withSimilarityLock<T>(work: () => Promise<T>): Promise<T> {
+    // Nested store operations reuse the transaction instead of waiting on their own queue.
+    if (this.similarityTransaction.getStore()) return work();
     const run = async () => {
       await this.ensureReady();
-      if (!this.pgPool) return work();
+      if (!this.pgPool) return this.similarityTransaction.run({}, work);
       const connection = await this.pgPool.connect();
+      let discard = false;
       try {
-        await connection.query('SELECT pg_advisory_lock(192837466)');
-        return await work();
+        await connection.query('BEGIN');
+        await connection.query("SET LOCAL lock_timeout = '5s'");
+        await connection.query("SET LOCAL statement_timeout = '15s'");
+        await connection.query("SET LOCAL idle_in_transaction_session_timeout = '60s'");
+        // Transaction pooling pins a backend only between BEGIN and COMMIT.
+        // Session locks plus pool-dispatched queries can strand a lock on another backend.
+        await connection.query('SELECT pg_advisory_xact_lock(192837466)');
+        const result = await this.similarityTransaction.run(
+          { connection, db: drizzlePostgres(connection) }, work,
+        );
+        await connection.query('COMMIT');
+        return result;
+      } catch (error) {
+        try { await connection.query('ROLLBACK'); }
+        catch { discard = true; }
+        throw error;
       } finally {
-        try { await connection.query('SELECT pg_advisory_unlock(192837466)'); }
-        finally { connection.release(); }
+        connection.release(discard);
       }
     };
     const next = this.similarityQueue.then(run, run);
@@ -323,6 +346,8 @@ export class LabbyStore {
   }
 
   private async transaction<T>(work: (query: (text: string, params?: unknown[]) => Promise<unknown>) => Promise<T>): Promise<T> {
+    const connectionInScope = this.similarityTransaction.getStore()?.connection;
+    if (connectionInScope) return work((text, params) => connectionInScope.query(text, params));
     if (this.pglite) return this.pglite.transaction(tx => work((text,params) => tx.query(text,params)));
     const connection = await this.pgPool!.connect();
     try {
@@ -335,7 +360,8 @@ export class LabbyStore {
   }
 
   private async queryRows(query: ReturnType<typeof sql>): Promise<DbRow[]> {
-    const result = await this.db.execute(query as never);
+    const db = this.similarityTransaction.getStore()?.db ?? this.db;
+    const result = await db.execute(query as never);
     if (result && typeof result === 'object' && 'rows' in result && Array.isArray((result as { rows?: unknown }).rows)) {
       return (result as { rows: DbRow[] }).rows;
     }
@@ -343,7 +369,8 @@ export class LabbyStore {
   }
 
   private async executeCommand(query: ReturnType<typeof sql>): Promise<void> {
-    await this.db.execute(query as never);
+    const db = this.similarityTransaction.getStore()?.db ?? this.db;
+    await db.execute(query as never);
   }
 
   private async checkSchema(): Promise<void> {
@@ -567,7 +594,7 @@ export class LabbyStore {
     return listGraphPage({
       query: (text, params) => this.pglite
         ? this.pglite.query(text, params)
-        : this.pgPool!.query(text, params),
+        : (this.similarityTransaction.getStore()?.connection ?? this.pgPool!).query(text, params),
     }, query);
   }
 
