@@ -1,3 +1,9 @@
+import { graphData, graphReady, graphStreamStatus, syncGraph } from '@/lib/graph-sync';
+import type { Keyword } from '@labby/core';
+import { KeywordForm } from './KeywordForm';
+import { Dialog } from './ui/Dialog';
+import { toast } from './ui/Toast';
+import { useDatabase } from '@/db/index';
 /** Keyword similarity graph rendered with deck.gl (WebGL). */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Deck, OrthographicView } from '@deck.gl/core';
@@ -14,17 +20,6 @@ import { i18n } from '@/i18n';
 import clsx from 'clsx';
 import { productDistance, rankingQueryKey } from '@labby/core';
 import { RankingEditor } from './RankingCard';
-import { graphData, graphStreamStatus, syncGraph } from '@/lib/graph-sync';
-import { useDatabase } from '@/db/index';
-function GraphLoadingStatus() {
-  const db = useDatabase();
-  const status = graphStreamStatus.value;
-  const { t } = i18n;
-  return <div role="status">
-    {status.loading ? t('graphLoading', String(status.count)) : status.syncing ? t('graphSyncing') : null}
-    {status.error && <button title={status.error} onClick={() => { void syncGraph(db).catch(() => {}); }}>{t('graphLoadFailed')}</button>}
-  </div>;
-}
 
 type GraphNode = {
   id: string;
@@ -64,7 +59,29 @@ function spreadPoint(x: number, y: number, medianRadius: number, p90Radius: numb
   return [x * factor, y * factor];
 }
 
+function GraphLoadingStatus() {
+  const db = useDatabase();
+  const streamStatus = graphStreamStatus.value;
+  const [refreshing, setRefreshing] = useState(false);
+  const { t } = i18n;
+  return <div style={{minHeight:'3em'}}>
+    <p role="status" aria-live="polite" class={s.mutedParagraph}>
+      {streamStatus.loading ? t('graphLoading', String(streamStatus.count)) : refreshing ? t('graphSyncing') : t('graphUpToDate')}
+    </p>
+    {streamStatus.error && <button title={streamStatus.error} onClick={() => { void syncGraph(db).catch(() => {}); }}>{t('graphLoadFailed')}</button>}
+    <Button variant="ghost" disabled={refreshing || streamStatus.loading} onClick={async () => {
+      setRefreshing(true);
+      try { await syncGraph(db); } catch { /* Stream status exposes the error. */ }
+      finally { setRefreshing(false); }
+    }}>{t('graphRefresh')}</Button>
+  </div>;
+}
+
 export function KeywordGraph() {
+  const db = useDatabase();
+  const ready = graphReady.value;
+  const fitted = useRef(false);
+  const [editing, setEditing] = useState<Keyword | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<Deck<any> | null>(null);
   const transitionRef = useRef<number | null>(null);
@@ -263,7 +280,7 @@ export function KeywordGraph() {
       parent: canvasRef.current,
       views: [new OrthographicView({ id: 'graph-view' })],
       initialViewState: autoViewState as any,
-      controller: true,
+      controller: { doubleClickZoom: false },
       getCursor: ({ isDragging }) => (isDragging ? 'grabbing' : 'grab'),
     });
 
@@ -282,10 +299,14 @@ export function KeywordGraph() {
     deck.setProps({
       width: canvasSize.width || 1,
       height: canvasSize.height || 1,
-      initialViewState: autoViewState as any,
     });
-  }, [autoViewState, canvasSize.height, canvasSize.width]);
+  }, [canvasSize.height, canvasSize.width]);
 
+  useEffect(() => {
+    if (fitted.current || !ready || !nodes.length || !canvasSize.width || !canvasSize.height) return;
+    fitted.current = true;
+    deckRef.current?.setProps({ initialViewState: autoViewState as any });
+  }, [ready, nodes.length, canvasSize.width, canvasSize.height, autoViewState]);
 
   useEffect(() => {
     const deck = deckRef.current;
@@ -411,10 +432,26 @@ export function KeywordGraph() {
           </>
         )}
       </div>
-      <GraphLoadingStatus /><div class={s.graphLayout}>
-        <div ref={canvasRef} class={s.graphCanvas} />
+      {editing && <Dialog open onClose={() => setEditing(null)} title={t('edit')} closeOnOverlayClick={false}>
+        <KeywordForm initial={editing} onCancel={() => setEditing(null)} onSave={async keyword => {
+          try {
+            await db.keywords.put(keyword);
+            setEditing(null);
+            await syncGraph(db);
+          } catch (error) { toast.error(String(error)); }
+        }} />
+      </Dialog>}
+      <div class={s.graphLayout}>
+        <div ref={canvasRef} class={s.graphCanvas} onDblClick={event => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const picked = deckRef.current?.pickObject({x:event.clientX-rect.left,y:event.clientY-rect.top,radius:6});
+          const keyword = keywords.find(keyword => keyword.id === picked?.object?.id);
+          if (keyword) setEditing(keyword);
+        }} />
         <aside class={s.graphSidebar}>
           <div class={s.card}>
+            <GraphLoadingStatus />
+            <Button variant="ghost" onClick={() => deckRef.current?.setProps({initialViewState:autoViewState as any})}>{t('graphFitView')}</Button>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Projection</h3>
             <p class={s.mutedParagraph}>
               {t('rankingProjectionHint')}
@@ -443,6 +480,7 @@ export function KeywordGraph() {
                   <div key={selected[index]} class={s.metricRow}>
                     <div>
                       <div>{label}</div>
+                      <Button variant="ghost" onClick={() => setEditing(keywords.find(keyword => keyword.id === selected[index]) ?? null)}>{t('edit')}</Button>
                     </div>
                   </div>
                 ))

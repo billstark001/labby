@@ -1804,3 +1804,27 @@ sortDescending:
   en: Descending
   zh-CN: 降序
   ja-JP: 降順
+graphFitView:
+  en: Fit all keywords
+  zh-CN: 显示全部关键词
+  ja-JP: 全キーワードを表示
+graphRefresh:
+  en: Refresh
+  zh-CN: 刷新
+  ja-JP: 更新
+graphUpToDate:
+  en: Changes sync automatically
+  zh-CN: 自动同步更改
+  ja-JP: 変更を自動同期
+rankingDragHint:
+  en: Drag to order from nearest to farthest. Equal ranks mean a tie; unknown items are excluded.
+  zh-CN: 拖动以按从近到远排序；相同名次表示并列，“未知”不会参与训练。
+  ja-JP: 近い順にドラッグして並べ替えます。同順位は同率、不明は学習対象外です。
+rankingMoveUp:
+  en: Move nearer
+  zh-CN: 移近一位
+  ja-JP: 近い方へ移動
+rankingMoveDown:
+  en: Move farther
+  zh-CN: 移远一位
+  ja-JP: 遠い方へ移動

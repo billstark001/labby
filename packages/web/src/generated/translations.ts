@@ -362,7 +362,13 @@ export const en = {
   "sortByLabel": "Sort by",
   "sortDirectionLabel": "Direction",
   "sortAscending": "Ascending",
-  "sortDescending": "Descending"
+  "sortDescending": "Descending",
+  "graphFitView": "Fit all keywords",
+  "graphRefresh": "Refresh",
+  "graphUpToDate": "Changes sync automatically",
+  "rankingDragHint": "Drag to order from nearest to farthest. Equal ranks mean a tie; unknown items are excluded.",
+  "rankingMoveUp": "Move nearer",
+  "rankingMoveDown": "Move farther"
 } as const
 
 export const zhCN = {
@@ -727,7 +733,13 @@ export const zhCN = {
   "sortByLabel": "排序栏目",
   "sortDirectionLabel": "排序方向",
   "sortAscending": "升序",
-  "sortDescending": "降序"
+  "sortDescending": "降序",
+  "graphFitView": "显示全部关键词",
+  "graphRefresh": "刷新",
+  "graphUpToDate": "自动同步更改",
+  "rankingDragHint": "拖动以按从近到远排序；相同名次表示并列，“未知”不会参与训练。",
+  "rankingMoveUp": "移近一位",
+  "rankingMoveDown": "移远一位"
 } as const
 
 export const jaJP = {
@@ -1092,7 +1104,13 @@ export const jaJP = {
   "sortByLabel": "並べ替え項目",
   "sortDirectionLabel": "並び順",
   "sortAscending": "昇順",
-  "sortDescending": "降順"
+  "sortDescending": "降順",
+  "graphFitView": "全キーワードを表示",
+  "graphRefresh": "更新",
+  "graphUpToDate": "変更を自動同期",
+  "rankingDragHint": "近い順にドラッグして並べ替えます。同順位は同率、不明は学習対象外です。",
+  "rankingMoveUp": "近い方へ移動",
+  "rankingMoveDown": "遠い方へ移動"
 } as const
 
 export type Lang = 'en' | 'zh-CN' | 'ja-JP'

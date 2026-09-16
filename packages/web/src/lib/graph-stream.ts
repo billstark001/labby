@@ -120,15 +120,28 @@ export class GraphStream {
   start(): () => void {
     this.stopped = false;
     const lifecycle = this.generation;
+    let pollCycle = 0;
     const poll = async () => {
-      try { await this.refresh(); } catch { /* UI exposes failure. */ }
-      if (!this.stopped && lifecycle === this.generation) this.timer = setTimeout(poll, 2000);
+      const cycle = ++pollCycle;
+      try {
+        if (typeof document === 'undefined' || !document.hidden) await this.refresh();
+      } catch {
+        /* UI exposes the failed batch and retry. */
+      }
+      if (!this.stopped && lifecycle === this.generation && cycle === pollCycle) this.timer = setTimeout(poll, 15000);
     };
+    const resume = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (this.timer) clearTimeout(this.timer);
+      void poll();
+    };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', resume);
     void poll();
     return () => {
       this.stopped = true;
       this.generation++;
       if (this.timer) clearTimeout(this.timer);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', resume);
     };
   }
 

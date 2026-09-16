@@ -85,6 +85,8 @@ describe('KeywordGraph incremental renders', () => {
         await stream.refresh();
       });
       expect(container.textContent).toContain('Nodes: 1');
+      const fits = observed.props.filter((props) => props.initialViewState).length;
+      expect(fits).toBe(1);
       mode = 'invalid';
       for (let i = 0; i < 30; i++)
         await act(async () => {
@@ -105,6 +107,16 @@ describe('KeywordGraph incremental renders', () => {
         });
       expect(container.textContent).toContain('Nodes: 1');
       expect(container.querySelector('[title^="Error:"]')).toBeNull();
+      expect(observed.props.filter((props) => props.initialViewState)).toHaveLength(fits);
+      await act(() => {
+        container
+          .querySelector('[data-graph-canvas]')!
+          .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 100, clientY: 100 }));
+      });
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      expect((document.querySelector('[role="dialog"] input') as HTMLInputElement).value).toBe(
+        'Revision 30',
+      );
     } finally {
       await act(() => render(null, container));
       container.remove();

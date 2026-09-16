@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { RankingJudgment, RankingQuery } from '@labby/core';
 import { graphData } from '@/lib/graph-sync';
+import { RankingOrder } from './RankingOrder';
 import { displayName, i18n } from '@/i18n';
 import { useDatabase } from '@/db';
 import { recommendRanking, trainRanking } from '@/lib/embedding-engine';
@@ -36,14 +37,7 @@ export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved
   return <div aria-busy={busy}>
     <h3 class={s.mb12}>{t('rankingQuestion', names.get(query.anchorId) ?? query.anchorId)}</h3>
     <p class={s.mutedParagraph}>{t('rankingInstructions')}</p>
-    {query.candidateIds.map(id => <div key={id} class={s.formGroup}>
-      <label class={s.label} htmlFor={'rank-'+requestId+'-'+id}>{names.get(id) ?? id}</label>
-      <select id={'rank-'+requestId+'-'+id} class={s.input} value={ranks[id] ?? 0} disabled={busy || saved}
-        onChange={e => setRanks(current => ({...current,[id]:Number(e.currentTarget.value)}))}>
-        <option value={0}>{t('rankingUnknown')}</option>
-        {query.candidateIds.map((_,i)=><option key={i} value={i+1}>{i+1}</option>)}
-      </select>
-    </div>)}
+    <RankingOrder candidates={query.candidateIds} ranks={ranks} names={names} disabled={busy || saved} onChange={setRanks} />
     <label class={s.label} htmlFor={`confidence-${requestId}`}>{t('rankingConfidence')}</label>
     <select id={`confidence-${requestId}`} class={s.input} value={confidence} disabled={busy || saved} onChange={e => setConfidence(Number(e.currentTarget.value))}>
       <option value={1}>{t('rankingConfident')}</option><option value={0.5}>{t('rankingTentative')}</option>
