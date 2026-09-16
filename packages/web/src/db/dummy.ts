@@ -106,6 +106,7 @@ export function createDummyDB(): LabbyDB {
   };
 
   const db: LabbyDB = {
+    similarity: { getHistory: async () => [], forgetJudgment: async () => { throw new Error('Database is unavailable'); }, commit: async () => { throw new Error('Database is unavailable'); } },
     persons: personsStore,
     keywords: keywordsStore,
     keywordVectors: keywordVectorsStore,
@@ -138,7 +139,7 @@ export function createDummyDB(): LabbyDB {
       }),
     },
     graph: {
-      getSnapshot: async () => ({ revision: '0:0:0:0', keywords: [], keywordVectors: [], edges: [] }),
+      list: async () => ({ items: [], nextCursor: null, checkpoint: 'dummy', reset: false }),
     },
   };
 

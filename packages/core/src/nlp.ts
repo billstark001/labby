@@ -1,72 +1,26 @@
-import type { KeywordVector, SimilarityEdge, SimilarityLookup, TripletQuery } from './types.js';
+import type { KeywordVector, ProductGeometry, SimilarityLookup } from './types.js';
+import { activeDimensions, DEFAULT_GEOMETRY, productDistance, projectEmbedding } from './embedding/geometry.js';
 
-export const LATENT_DIM = 64;
-const DEFAULT_EDGE_NEIGHBORS = 8;
-
-type IndexedVector = {
-  index: number;
-  vector: KeywordVector;
-  gx: number;
-  gy: number;
-};
-
-function l2Distance(a: readonly number[], b: readonly number[]): number {
-  const dim = Math.min(a.length, b.length, LATENT_DIM);
-  let sum = 0;
-  for (let i = 0; i < dim; i++) {
-    const d = a[i] - b[i];
-    sum += d * d;
-  }
-  return Math.sqrt(sum);
-}
-
-export function randomVector64(): number[] {
-  const vec = new Array<number>(LATENT_DIM);
-  for (let i = 0; i < LATENT_DIM; i++) {
-    vec[i] = Math.random() * 2 - 1;
-  }
-  return vec;
-}
-
-export function initKeywordVectors(keywordIds: string[]): KeywordVector[] {
+export function initKeywordVectors(keywordIds: string[], geometry: ProductGeometry = DEFAULT_GEOMETRY): KeywordVector[] {
+  const dimensions = activeDimensions(geometry);
   const now = Date.now();
   return keywordIds.map((keywordId) => {
-    const vector64 = randomVector64();
+    const embedding = Array.from({ length: dimensions }, () => (Math.random() * 2 - 1) / Math.sqrt(dimensions));
+    const [x, y] = projectEmbedding(embedding, geometry);
     return {
       keywordId,
-      vector64,
-      x: vector64[0] ?? 0,
-      y: vector64[1] ?? 0,
+      embedding,
+      geometry: { ...geometry },
+      x,
+      y,
       updatedAt: now,
     };
   });
 }
 
 export function keywordSimilarity(a: KeywordVector, b: KeywordVector): number {
-  const d = l2Distance(a.vector64, b.vector64);
+  const d = productDistance(a, b);
   return 1 / (1 + d);
-}
-
-/**
- * @deprecated Use `keywordVectorsToSimilarityLookup` instead for better performance with large vector sets.
- * @param vectors 
- * @returns 
- */
-export function keywordVectorsToSimilarityMap(
-  vectors: KeywordVector[],
-): Map<string, number> {
-  const result = new Map<string, number>();
-  for (let i = 0; i < vectors.length; i++) {
-    for (let j = i + 1; j < vectors.length; j++) {
-      const a = vectors[i];
-      const b = vectors[j];
-      const [left, right] = a.keywordId < b.keywordId
-        ? [a.keywordId, b.keywordId]
-        : [b.keywordId, a.keywordId];
-      result.set(`${left}|${right}`, keywordSimilarity(a, b));
-    }
-  }
-  return result;
 }
 
 export function keywordVectorsToSimilarityLookup(

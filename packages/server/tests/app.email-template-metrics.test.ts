@@ -1,3 +1,4 @@
+import { createTestApp } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,7 +34,7 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
 
 test('template preview, email-task CRUD and metrics API work', async () => {
   const dbPath = createTempDbPath('labby-app-p3');
-  const runtime = await createApp({
+  const runtime = await createTestApp({
     db: { dialect: 'pglite', dataDir: dbPath },
     rootUsername: 'root',
     rootPassword: 'root-pass',
@@ -85,14 +86,16 @@ test('template preview, email-task CRUD and metrics API work', async () => {
 
     const vectorA: KeywordVector = {
       keywordId: 'k1',
-      vector64: Array.from({ length: 64 }, (_, i) => (i === 0 ? 1 : 0)),
+      embedding: Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0)),
+      geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
       x: 1,
       y: 0,
       updatedAt: Date.now(),
     };
     const vectorB: KeywordVector = {
       keywordId: 'k2',
-      vector64: Array.from({ length: 64 }, (_, i) => (i === 1 ? 1 : 0)),
+      embedding: Array.from({ length: 8 }, (_, i) => (i === 1 ? 1 : 0)),
+      geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
       x: 0,
       y: 1,
       updatedAt: Date.now(),
@@ -149,7 +152,7 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     const getTaskJson = await getTaskRes.json() as { data: { id: string } };
     assert.equal(getTaskJson.data.id, 'et-1');
 
-    const failingRuntime = await createApp({
+    const failingRuntime = await createTestApp({
       db: { dialect: 'pglite', dataDir: createTempDbPath('labby-app-send-now-fail') },
       rootUsername: 'root',
       rootPassword: 'root-pass',

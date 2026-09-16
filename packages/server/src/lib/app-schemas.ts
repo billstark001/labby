@@ -78,46 +78,18 @@ export const templatePreviewSchema = z.object({
   language: z.enum(['en', 'zh-CN', 'ja-JP']).optional(),
 });
 
-const embeddingUpdateOptionsSchema = z.object({
-  learningRate: z.number().optional(),
-  minIters: z.number().int().positive().optional(),
-  maxIters: z.number().int().positive().optional(),
-  stabilityWindow: z.number().int().positive().optional(),
-  stabilityTolerance: z.number().nonnegative().optional(),
-}).optional();
+export const rankingRecommendSchema = z.object({
+  size: z.number().int().min(2).max(8).optional(),
+  excludedKeys: z.array(z.string().max(2048)).max(200).optional(),
+}).strict();
 
-export const tripletUpdateSchema = z.object({
-  anchorId: z.string().min(1),
-  positiveId: z.string().min(1),
-  negativeId: z.string().min(1),
-  margin: z.number().positive().optional(),
-  updateOptions: embeddingUpdateOptionsSchema,
-});
-
-export const pairUpdateSchema = z.object({
-  leftId: z.string().min(1),
-  rightId: z.string().min(1),
-  targetDistance: z.number().nonnegative(),
-  updateOptions: embeddingUpdateOptionsSchema,
-});
-
-export const tripletRecommendSchema = z.object({
-  excludedPairs: z.array(z.string().min(3)).optional(),
-});
-
-export const supervisionSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('pair'),
-    leftId: z.string().min(1),
-    rightId: z.string().min(1),
-    targetDistance: z.number().nonnegative(),
-    updateOptions: embeddingUpdateOptionsSchema,
-  }),
-  z.object({
-    kind: z.literal('ranked'),
-    anchorId: z.string().min(1),
-    orderedIds: z.array(z.string().min(1)).min(2),
-    margin: z.number().positive().optional(),
-    updateOptions: embeddingUpdateOptionsSchema,
-  }),
-]);
+export const rankingJudgmentSchema = z.object({
+  id: z.string().min(1).max(128),
+  anchorId: z.string().min(1).max(128),
+  groups: z.array(z.array(z.string().min(1).max(128)).min(1).max(12)).min(1).max(12),
+  confidence: z.number().positive().max(1),
+  createdAt: z.number().int().nonnegative(),
+}).strict().refine(j => {
+  const ids = j.groups.flat();
+  return ids.length >= 2 && ids.length <= 12 && new Set(ids).size === ids.length && !ids.includes(j.anchorId);
+}, { message: 'Ranking requires 2–12 distinct candidates excluding the anchor' });

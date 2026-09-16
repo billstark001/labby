@@ -6,6 +6,7 @@ import type {
   Keyword,
   KeywordStore,
   KeywordVector,
+  RankingJudgment,
   KeywordVectorStore,
   LabbyDB,
   Person,
@@ -26,7 +27,7 @@ import type {
   PaginatedResult,
   SystemSettings,
   SystemSettingsStore,
-  GraphSnapshot,
+  GraphPage,
 } from '@labby/core';
 
 import { apiClient, ApiClient } from '@/lib/api';
@@ -171,6 +172,11 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   };
 
   return {
+    similarity: {
+      forgetJudgment: (id) => client.request<void>('/nlp/history/'+encodeURIComponent(id), { method: 'DELETE' }),
+      getHistory: () => client.request<RankingJudgment[]>('/nlp/history', { method: 'GET' }),
+      commit: async () => { throw new Error('Use the ranking API to update server-owned embeddings'); },
+    },
     persons,
     keywords,
     keywordVectors,
@@ -182,7 +188,13 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     systemSettings,
     foreignKeys,
     graph: {
-      getSnapshot: () => client.request<GraphSnapshot>('/db/graph-snapshot', { method: 'GET' }),
+      list: (query = {}) => {
+        const params = new URLSearchParams();
+        if (query.cursor) params.set('cursor', query.cursor);
+        if (query.since) params.set('since', query.since);
+        if (query.limit !== undefined) params.set('limit', String(query.limit));
+        return client.request<GraphPage>('/db/graph?' + params, { method: 'GET' });
+      },
     },
   };
 }

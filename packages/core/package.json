@@ -15,8 +15,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
-    "triplet:cli": "pnpm exec tsx scripts/triplet-supervision-cli.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:dimensions": "tsx scripts/dimension-benchmark.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.13",

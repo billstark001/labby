@@ -1,3 +1,4 @@
+import { createTestApp } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,7 +21,7 @@ function createTempWebDist(): string {
 }
 
 test('server serves web dist static files and SPA fallback when webDistDir is configured', async () => {
-  const runtime = await createApp({
+  const runtime = await createTestApp({
     db: { dialect: 'pglite', dataDir: createTempDbPath('labby-static-serve') },
     rootUsername: 'root',
     rootPassword: 'root-pass',

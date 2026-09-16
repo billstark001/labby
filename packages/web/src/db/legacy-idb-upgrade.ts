@@ -1,3 +1,4 @@
+import { migrateEuclideanVector } from './migrate/003-projection.js';
 import type {
   DatabaseDump,
   EmailTask,
@@ -24,6 +25,11 @@ const legacyStores = {
   unavailabilities: 'unavailabilities',
   emailTasks: 'email_tasks',
 } as const;
+
+/** Source archives belong only to the one-time IndexedDB import. */
+export interface LegacyMigrationDump extends DatabaseDump {
+  embeddingMigrationArchive: Array<{ keywordId: string; source: unknown }>;
+}
 
 export interface LegacyEntityRow {
   kind: string;
@@ -84,17 +90,11 @@ async function openUpgradedLegacyDatabase(): Promise<IDBDatabase | null> {
 }
 
 function normalizeKeywordVector(record: unknown): KeywordVector {
-  const value = record as KeywordVector & { vector64?: ArrayLike<number> };
-  return {
-    keywordId: value.keywordId,
-    vector64: Array.from(value.vector64 ?? []),
-    x: value.x,
-    y: value.y,
-    updatedAt: value.updatedAt,
-  };
+  const value = record as { keywordId: string; vector64: ArrayLike<number>; updatedAt: number };
+  return migrateEuclideanVector({ ...value, vector64: Array.from(value.vector64) });
 }
 
-export async function readLegacyIndexedDbDump(): Promise<DatabaseDump | null> {
+export async function readLegacyIndexedDbDump(): Promise<LegacyMigrationDump | null> {
   if (typeof indexedDB === 'undefined') return null;
   const database = await openUpgradedLegacyDatabase();
   if (!database) return null;
@@ -111,6 +111,11 @@ export async function readLegacyIndexedDbDump(): Promise<DatabaseDump | null> {
     await completed;
 
     return {
+      rankingHistory: [],
+      embeddingMigrationArchive: (records.get(legacyStores.keywordVectors) ?? []).map(record => {
+        const value = record as {keywordId:string;vector64:ArrayLike<number>};
+        return {keywordId:value.keywordId,source:{...value,vector64:Array.from(value.vector64)}};
+      }),
       persons: (records.get(legacyStores.persons) ?? []) as Person[],
       keywords: (records.get(legacyStores.keywords) ?? []) as Keyword[],
       keywordVectors: (records.get(legacyStores.keywordVectors) ?? []).map(normalizeKeywordVector),
@@ -140,7 +145,7 @@ export function legacyDumpToEntityRows(dump: DatabaseDump): LegacyEntityRow[] {
     ...dump.keywords.map(value => row('keyword', value.id, value)),
     ...dump.keywordVectors.map(value => row('keyword-vector', value.keywordId, {
       ...value,
-      vector64: Array.from(value.vector64),
+      embedding: Array.from(value.embedding),
     })),
     ...dump.configs.map(value => row('config', value.id, value)),
     ...dump.constraints.map(value => row('constraint', value.id, value)),

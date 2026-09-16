@@ -6,9 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-migration-sql.mjs",
     "start": "node dist/index.js",
     "auth:gmail": "tsx scripts/gmail-auth.ts",
+    "db:init": "tsx scripts/db-init.ts",
+    "db:migrate": "tsx scripts/db-migrate.ts",
     "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {

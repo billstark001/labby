@@ -2,6 +2,7 @@ import type {
   EmailTask,
   Keyword,
   KeywordVector,
+  RankingJudgment,
   Person,
   PersonUnavailability,
   ScheduleConfig,
@@ -9,6 +10,8 @@ import type {
   SchedulePlan,
   SystemSettings,
 } from './types.js';
+
+// #region Pagination
 
 export interface ListQuery {
   offset: number;
@@ -27,6 +30,10 @@ export interface PaginatedResult<T> {
   offset: number;
   limit: number;
 }
+
+// #endregion
+
+// #region Entity stores
 
 export interface PersonStore {
   get(id: string): Promise<Person | undefined>;
@@ -99,6 +106,22 @@ export interface SystemSettingsStore {
   put(value: SystemSettings): Promise<void>;
 }
 
+// #endregion
+
+// #region Similarity store
+
+/** Persists a training result atomically: coordinates and judgments must agree. */
+export interface SimilarityStore {
+  getHistory(): Promise<RankingJudgment[]>;
+  /** Removes a mistaken constraint; existing coordinates are retained. */
+  forgetJudgment(id: string): Promise<void>;
+  commit(vectors: KeywordVector[], history: RankingJudgment[]): Promise<void>;
+}
+
+// #endregion
+
+// #region Related entity reads
+
 export interface ScheduleForeignKeyBundle {
   persons: Person[];
   keywords: Keyword[];
@@ -140,24 +163,43 @@ export interface ForeignKeyStore {
   readForKeyword(query: KeywordForeignKeyQuery): Promise<KeywordForeignKeyBundle>;
 }
 
-export interface GraphSnapshot {
-  revision: string;
-  keywords: Keyword[];
-  keywordVectors: KeywordVector[];
-  edges: GraphSnapshotEdge[];
-}
+// #endregion
 
+// #region Graph snapshot
+
+/** A complete current record; null keyword is a deletion tombstone. */
+export interface GraphRecord {
+  id: string;
+  keyword: Keyword | null;
+  vector: KeywordVector | null;
+}
+export interface GraphQuery {
+  cursor?: string;
+  since?: string;
+  limit?: number;
+}
+export interface GraphPage {
+  items: GraphRecord[];
+  nextCursor: string | null;
+  /** Advance only after the last page of a batch. */
+  checkpoint: string | null;
+  reset: boolean;
+}
 export interface GraphSnapshotEdge {
   sourceId: string;
   targetId: string;
   weight: number;
 }
-
 export interface GraphStore {
-  getSnapshot(): Promise<GraphSnapshot>;
+  list(query?: GraphQuery): Promise<GraphPage>;
 }
 
+// #endregion
+
+// #region Database and backup
+
 export interface LabbyDB {
+  similarity: SimilarityStore;
   persons: PersonStore;
   keywords: KeywordStore;
   keywordVectors: KeywordVectorStore;
@@ -172,6 +214,7 @@ export interface LabbyDB {
 }
 
 export interface DatabaseDump {
+  rankingHistory: RankingJudgment[];
   persons: Person[];
   keywords: Keyword[];
   keywordVectors: KeywordVector[];
@@ -182,3 +225,5 @@ export interface DatabaseDump {
   emailTasks: EmailTask[];
   systemSettings?: SystemSettings;
 }
+
+// #endregion

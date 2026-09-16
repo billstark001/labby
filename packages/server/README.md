@@ -1,6 +1,6 @@
 # @labby/server
 
-`@labby/server` is the API backend for Labby. It provides authentication, PGlite/Postgres persistence, solver endpoints, triplet-learning endpoints, optional email notifications, and scheduled database backups.
+`@labby/server` is the API backend for Labby. It provides authentication, PGlite/Postgres persistence, solver endpoints, ranking-learning endpoints, optional email notifications, and scheduled database backups.
 
 ## Responsibilities
 
@@ -9,7 +9,7 @@
 - Issue and verify PASETO access and refresh tokens
 - Enforce three roles: `user`, `admin`, and `root`
 - Run full and incremental scheduling through `@labby/core`
-- Run TypeScript embedding supervision (triplet, pair, ranked) and persist updated vectors
+- Run TypeScript embedding joint list supervision with persistent history and persist updated vectors
 - Register cron-based email reminders from schedule configs
 - Register cron-based whole-database backups to email, Google Drive, or OneDrive
 - Optionally serve built frontend static assets (`packages/web/dist`) with SPA fallback
@@ -51,10 +51,10 @@ CRUD endpoints exist under `/api/v1/db` for:
 
 - `POST /api/v1/solver/run`
 - `POST /api/v1/solver/run-incremental`
-- `POST /api/v1/nlp/recommend-triplet`
-- `POST /api/v1/nlp/apply-supervision`
-- `POST /api/v1/nlp/update-similarity`
-- `POST /api/v1/nlp/update-pair`
+
+
+
+
 
 ## Request Rules
 
@@ -94,6 +94,9 @@ Optional settings:
 ## Development
 
 ```bash
+# Explicit setup for a new database (path is relative to packages/server):
+pnpm --filter @labby/server db:init --pglite ./run/labby-pg
+# Existing databases instead require db:migrate --action up with their explicit target.
 pnpm --filter @labby/server dev
 ```
 
@@ -154,5 +157,5 @@ See `docs/deploy-gcp.md` for concrete CLI examples.
 ## Embedding Runtime Notes
 
 - Server boot hydrates the shared TypeScript embedding runtime from stored vectors.
-- Supervision updates return dirty node deltas with both 64D and projected 2D coordinates.
+- Ranking updates atomically persist active product-space coordinates and accepted history. See [algorithm](../../docs/algorithm-similarity.md) and [migrations](../../docs/database-migrations.md).
 - Persisted updates are written back to keyword vector storage in batch.

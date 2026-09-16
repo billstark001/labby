@@ -56,17 +56,15 @@ import {
   authCodeConfirmSchema,
   issueUserBodySchema,
   loginBodySchema,
-  pairUpdateSchema,
   requestChangeEmailSchema,
   requestPasswordResetSchema,
   refreshBodySchema,
   solverIncrementalInputSchema,
   solverInputSchema,
   solverMetricsInputSchema,
-  supervisionSchema,
   templatePreviewSchema,
-  tripletRecommendSchema,
-  tripletUpdateSchema,
+  rankingJudgmentSchema,
+  rankingRecommendSchema,
 } from "./lib/app-schemas.js";
 import { LabbyStore, type StoreConnectionConfig } from "./store/index.js";
 
@@ -147,7 +145,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
   const store = new LabbyStore(dbConfig);
   const embeddingService = new EmbeddingService(store);
-  await embeddingService.start();
+  try { await embeddingService.start(); } catch (error) { await store.close(); throw error; }
   const authService = new AuthService({
     store,
     issuer: options.authIssuer ?? "labby-server",
@@ -571,12 +569,10 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.put("/api/v1/db/keywords/:id", async (c) => {
     const keyword = await c.req.json<Keyword>();
     await store.putKeyword({ ...keyword, id: c.req.param("id") });
-    embeddingService.invalidate();
     return ok(c, await store.getKeyword(c.req.param("id")), 201);
   });
   app.delete("/api/v1/db/keywords/:id", async (c) => {
     await store.deleteKeyword(c.req.param("id"));
-    embeddingService.invalidate();
     return c.body(null, 204);
   });
 
@@ -585,19 +581,28 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return ok(c, toPage(await store.listKeywordVectors(), offset, limit));
   });
 
-  app.get('/api/v1/db/graph-snapshot', async (c) => ok(c, await store.getGraphSnapshot()));
+  app.get('/api/v1/db/graph', async (c) => {
+    const query = c.req.query();
+    try {
+      return ok(c, await store.listGraph({
+        cursor: query.cursor, since: query.since,
+        limit: query.limit === undefined ? undefined : Number(query.limit),
+      }));
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Invalid graph')) return fail(c, 'VALIDATION_ERROR', error.message, 400);
+      throw error;
+    }
+  });
   app.get("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
     return ok(c, (await store.getKeywordVector(c.req.param("keywordId"))) ?? null);
   });
   app.put("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
     const vector = await c.req.json<KeywordVector>();
     await store.putKeywordVector({ ...vector, keywordId: c.req.param("keywordId") });
-    embeddingService.invalidate();
     return ok(c, await store.getKeywordVector(c.req.param("keywordId")), 201);
   });
   app.delete("/api/v1/db/keyword-vectors/:keywordId", async (c) => {
     await store.deleteKeywordVector(c.req.param("keywordId"));
-    embeddingService.invalidate();
     return c.body(null, 204);
   });
 
@@ -910,69 +915,26 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   // NLP / embedding routes (call @labby/core)
   // ---------------------------------------------------------------------------
 
-  app.post("/api/v1/nlp/recommend-triplet", async (c) => {
-    const body = tripletRecommendSchema.parse(await c.req.json());
-    const query = await embeddingService.recommendTriplet(body.excludedPairs ?? []);
-    return ok(c, {
-      query,
-    });
+  app.post('/api/v1/nlp/recommend-ranking', async (c) => {
+    const options = rankingRecommendSchema.parse(await c.req.json());
+    return ok(c, { query: await embeddingService.recommendRanking(options) });
   });
 
-  app.post('/api/v1/nlp/apply-supervision', async (c) => {
-    const query = supervisionSchema.parse(await c.req.json());
-    try {
-      const result = await embeddingService.applySupervision(query);
-      return ok(c, result);
-    } catch {
-      throw new AppError('VALIDATION_ERROR', 'supervision ids not found', 400);
-    }
+
+  app.delete('/api/v1/nlp/history/:id', async (c) => {
+    await store.forgetRankingJudgment(c.req.param('id'));
+    return ok(c, null);
   });
 
-  app.post("/api/v1/nlp/update-similarity", async (c) => {
-    const body = tripletUpdateSchema.parse(await c.req.json());
-    let updatedVectors: KeywordVector[];
-    let loss: number;
-    try {
-      const result = await embeddingService.updateTriplet(
-        body.anchorId,
-        body.positiveId,
-        body.negativeId,
-        body.margin ?? 0.2,
-        body.updateOptions,
-      );
-      loss = result.loss;
-      updatedVectors = result.updatedVectors;
-    } catch {
-      throw new AppError("VALIDATION_ERROR", "triplet ids not found", 400);
+  app.get('/api/v1/nlp/history', async (c) => ok(c, await store.getRankingHistory()));
+
+  app.post('/api/v1/nlp/train-ranking', async (c) => {
+    const judgment = rankingJudgmentSchema.parse(await c.req.json());
+    const ids = new Set((await store.listKeywords()).map(k => k.id));
+    if ([judgment.anchorId, ...judgment.groups.flat()].some(id => !ids.has(id))) {
+      throw new AppError('VALIDATION_ERROR', 'Ranking contains unknown keywords', 400);
     }
-
-    return ok(c, {
-      loss,
-      updatedVectors,
-    });
-  });
-
-  app.post("/api/v1/nlp/update-pair", async (c) => {
-    const body = pairUpdateSchema.parse(await c.req.json());
-    let updatedVectors: KeywordVector[];
-    let loss: number;
-    try {
-      const result = await embeddingService.updatePair(
-        body.leftId,
-        body.rightId,
-        body.targetDistance,
-        body.updateOptions,
-      );
-      loss = result.loss;
-      updatedVectors = result.updatedVectors;
-    } catch {
-      throw new AppError("VALIDATION_ERROR", "pair ids not found", 400);
-    }
-
-    return ok(c, {
-      loss,
-      updatedVectors,
-    });
+    return ok(c, await embeddingService.trainRanking(judgment));
   });
 
   if (webDistDir) {

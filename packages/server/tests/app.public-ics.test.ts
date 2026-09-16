@@ -1,3 +1,4 @@
+import { createTestApp } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,7 +33,7 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
 }
 
 test('public email task ICS endpoint is available only when enabled and task opts in', async () => {
-  const runtime = await createApp({
+  const runtime = await createTestApp({
     db: { dialect: 'pglite', dataDir: createTempDbPath('labby-public-ics') },
     rootUsername: 'root',
     rootPassword: 'root-pass',

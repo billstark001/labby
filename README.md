@@ -11,8 +11,8 @@ The monorepo contains:
 ## Features
 
 - Manage persons, keywords, schedules, and unavailability windows
-- Learn keyword similarity from triplet comparisons and persist the generated similarity graph
-- Run pair and ranked supervision updates on a 64D embedding, with incremental 2D projection for visualization
+- Learn keyword similarity from active list rankings, including ties and uncertain judgments
+- Jointly train a 16-dimensional hyperbolic–Euclidean product embedding with persistent history protection
 - Generate full schedules or incremental re-plans with fairness, pair-diversity, relevance, and churn penalties
 - Apply scheduling constraints such as `no-overlap` and `affinity-boost`
 - Run in local-browser mode or API-backed server mode
@@ -40,6 +40,8 @@ pnpm install
 pnpm --filter @labby/web dev
 
 # Full workspace development
+# Initialize the server database explicitly before the first server run:
+pnpm --filter @labby/server db:init --pglite ./run/labby-pg
 pnpm dev
 
 # Production build
@@ -57,14 +59,12 @@ The server exposes authenticated REST endpoints under `/api/v1`.
 - `GET/PUT/DELETE /api/v1/db/...` – CRUD for persons, keywords, similarities, configs, schedules, and unavailabilities
 - `POST /api/v1/solver/run` – generate a full schedule
 - `POST /api/v1/solver/run-incremental` – re-plan from a change date
-- `POST /api/v1/nlp/recommend-triplet` – request one informative triplet query
-- `POST /api/v1/nlp/apply-supervision` – apply pair or ranked supervision query
-- `POST /api/v1/nlp/update-similarity` – apply one triplet-learning step and persist updated similarities
-- `POST /api/v1/nlp/update-pair` – apply one pair-distance update and persist updated vectors
 
 Read [docs/auth.md](docs/auth.md), [docs/algorithm-scheduling.md](docs/algorithm-scheduling.md), [docs/algorithm-similarity.md](docs/algorithm-similarity.md), and [packages/server/README.md](packages/server/README.md) for details.
 
 ## Embedding Runtime
+
+Similarity APIs: `POST /api/v1/nlp/recommend-ranking`, `POST /api/v1/nlp/train-ranking`, and `GET /api/v1/nlp/history`. See [algorithm](docs/algorithm-similarity.md), [dimension experiments](docs/dimension-benchmark.md), and [migrations](docs/database-migrations.md).
 
 The similarity engine is a shared TypeScript implementation in `@labby/core`, so normal builds require only Node.js and pnpm.
 

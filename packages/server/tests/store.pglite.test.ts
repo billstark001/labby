@@ -1,3 +1,4 @@
+import { createTestStore } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -78,12 +79,13 @@ function sampleUnavailability(id = 'u1', personId = 'p1', configId = 'c1'): Pers
 }
 
 function sampleVector(keywordId = 'k1'): KeywordVector {
-  const vector64 = Array.from({ length: 64 }, (_, i) => (i === 0 ? 0.5 : 0));
+  const embedding = Array.from({ length: 8 }, (_, i) => (i === 0 ? 0.5 : 0));
   return {
     keywordId,
-    vector64,
-    x: vector64[0] ?? 0,
-    y: vector64[1] ?? 0,
+    embedding,
+    geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
+    x: embedding[0] ?? 0,
+    y: embedding[1] ?? 0,
     updatedAt: Date.now(),
   };
 }
@@ -127,7 +129,7 @@ function sampleRefreshToken(userId = 'user-1'): RefreshTokenRecord {
 
 test('LabbyStore initializes and supports core CRUD', async () => {
   const dbPath = createTempDbPath('labby-store-crud');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
 
   try {
     const person = samplePerson();
@@ -168,8 +170,8 @@ test('LabbyStore initializes and supports core CRUD', async () => {
 test('LabbyStore snapshot export and restore keeps data', async () => {
   const sourcePath = createTempDbPath('labby-store-source');
   const targetPath = createTempDbPath('labby-store-target');
-  const source = new LabbyStore({ dialect: 'pglite', dataDir: sourcePath });
-  const target = new LabbyStore({ dialect: 'pglite', dataDir: targetPath });
+  const source = await createTestStore({ dialect: 'pglite', dataDir: sourcePath });
+  const target = await createTestStore({ dialect: 'pglite', dataDir: targetPath });
 
   try {
     await source.putPerson(samplePerson('p-a'));
@@ -178,12 +180,15 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     await source.putKeyword(sampleKeyword('k-b'));
     await source.putKeywordVector(sampleVector('k-b'));
 
-    const graph = await source.getGraphSnapshot();
-    assert.equal(graph.keywords.length, 2);
-    assert.equal(graph.keywordVectors.length, 2);
-    assert.equal(graph.edges.length, 1);
+    const graph = await source.listGraph();
+    assert.equal(graph.items.filter(item => item.keyword).length, 2);
+    assert.equal(graph.items.filter(item => item.vector).length, 2);
+    assert.ok(graph.checkpoint);
 
     const snapshot = await source.exportBackupSnapshot();
+    assert.equal(snapshot.version, 2);
+    assert.deepEqual(snapshot.tables.rankingJudgments, []);
+    assert.deepEqual(snapshot.tables.embeddingMigrationArchive, []);
     await target.restoreBackupSnapshot(snapshot);
 
     assert.equal((await target.listPersons()).length, 1);
@@ -197,7 +202,7 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
 
 test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence', async () => {
   const dbPath = createTempDbPath('labby-store-order-constraints');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
 
   try {
     const older = samplePerson('p-old');

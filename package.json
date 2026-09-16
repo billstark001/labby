@@ -20,6 +20,8 @@
     "dev:server": "pnpm --filter @labby/server dev",
     "dev:server:web": "pnpm --filter @labby/web dev:server",
     "preview": "pnpm --filter @labby/web preview",
+    "db:init": "pnpm --filter @labby/server run db:init",
+    "db:migrate": "pnpm --filter @labby/server run db:migrate",
     "deploy:cloudrun:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/cloud-run-incremental-deploy.ts",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

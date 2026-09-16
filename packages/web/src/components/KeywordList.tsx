@@ -1,3 +1,4 @@
+import { syncGraph } from '@/lib/graph-sync';
 /** Keyword management panel. */
 import { useEffect, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
@@ -143,12 +144,6 @@ export function KeywordList() {
     }
   }
 
-  async function refreshGraphSnapshot() {
-    const snapshot = await db.graph.getSnapshot();
-    keywordsSignal.value = snapshot.keywords;
-    keywordVectorsSignal.value = snapshot.keywordVectors;
-    graphEdgesSignal.value = snapshot.edges;
-  }
 
   useEffect(() => {
     void refreshKeywordsPage(page, pageSize);
@@ -161,14 +156,14 @@ export function KeywordList() {
 
   async function handleSave(k: Keyword) {
     await db.keywords.put(k);
-    await Promise.all([refreshKeywordsPage(), refreshGraphSnapshot()]);
+    await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
     setEditing(null);
   }
 
   async function handleDisableToggle(k: Keyword) {
     const updated: Keyword = { ...k, disabled: !k.disabled };
     await db.keywords.put(updated);
-    await Promise.all([refreshKeywordsPage(), refreshGraphSnapshot()]);
+    await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
   }
 
   async function handleDelete(k: Keyword) {
@@ -178,7 +173,7 @@ export function KeywordList() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.keywords.delete(k.id);
-      await Promise.all([refreshKeywordsPage(), refreshGraphSnapshot()]);
+      await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
     });
   }
 

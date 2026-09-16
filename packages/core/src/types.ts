@@ -37,7 +37,9 @@ export interface SimilarityLookup {
 /** Persistent keyword vector state owned by the shared embedding engine. */
 export interface KeywordVector {
   keywordId: string;
-  vector64: number[];
+  /** Spatial Lorentz coordinates followed by Euclidean coordinates. */
+  embedding: number[];
+  geometry: ProductGeometry;
   x: number;
   y: number;
   updatedAt: number;
@@ -228,48 +230,41 @@ export interface ConstrainedSolverInput extends SolverInput {
   historicalSessions?: Session[];
 }
 
-/** Triplet comparison query presented to the user. */
-export interface TripletQuery {
-  anchorId: string; // keyword A
-  positiveId: string; // keyword C ("A is closer to C …")
-  negativeId: string; // keyword B ("… than to B")
+export interface ProductGeometry {
+  hyperbolicDimensions: number;
+  euclideanDimensions: number;
 }
 
-/** Iterative optimizer options for embedding updates. */
-export interface IterativeUpdateOptions {
+export interface TrainingOptions {
   learningRate?: number;
-  minIters?: number;
-  maxIters?: number;
-  stabilityWindow?: number;
-  stabilityTolerance?: number;
+  maxIterations?: number;
+  historyWeight?: number;
+  driftWeight?: number;
 }
 
-/** Pair distance supervision query (2 points). */
-export interface PairSupervisionQuery {
-  kind: 'pair';
-  leftId: string;
-  rightId: string;
-  targetDistance: number;
-  updateOptions?: IterativeUpdateOptions;
-}
-
-/**
- * Ranked supervision query (arbitrary points > 2).
- *
- * `orderedIds` are interpreted as "closer to farther from anchor".
- * Example: [p1, p2, p3] compiles to constraints
- * (anchor, p1, p2) and (anchor, p2, p3).
- */
-export interface RankedSupervisionQuery {
-  kind: 'ranked';
+export interface RankingQuery {
+  key: string;
   anchorId: string;
-  orderedIds: string[];
-  margin?: number;
-  updateOptions?: IterativeUpdateOptions;
+  candidateIds: string[];
 }
 
-/** Unified supervision query for similarity training. */
-export type SupervisionQuery = PairSupervisionQuery | RankedSupervisionQuery;
+/** Ordered near-to-far groups; members within a group are tied. Omitted items are unknown. */
+export interface RankingJudgment {
+  id: string;
+  anchorId: string;
+  groups: string[][];
+  confidence: number;
+  createdAt: number;
+}
+
+export interface TrainingResult {
+  accepted: boolean;
+  loss: number;
+  updatedVectors: KeywordVector[];
+  history: RankingJudgment[];
+  conflicts: string[];
+  maxDistanceDrift: number;
+}
 
 // ---------------------------------------------------------------------------
 // Schedule constraints

@@ -614,26 +614,6 @@ questioners:
   zh-CN: 提问人
   ja-JP: 質問者
 
-tripletQuestion:
-  en: 'Which is "{0}" closest to?'
-  zh-CN: '"{0}" 与哪个最接近？'
-  ja-JP: '"{0}" はどちらに最も近いですか？'
-
-tripletOptionA:
-  en: '"{0}"'
-  zh-CN: '"{0}"'
-  ja-JP: '"{0}"'
-
-tripletOptionB:
-  en: '"{0}"'
-  zh-CN: '"{0}"'
-  ja-JP: '"{0}"'
-
-tripletOptionEqual:
-  en: Same distance
-  zh-CN: 一样接近
-  ja-JP: 同じくらい
-
 attractSelected:
   en: Pull Closer
   zh-CN: 拉近关系
@@ -1659,3 +1639,138 @@ about:
   en: About
   zh-CN: 关于
   ja-JP: このアプリについて
+
+rankingQuestion:
+  en: "Order similarity to {0}"
+  zh-CN: "按与「{0}」的相似程度排序"
+  ja-JP: "「{0}」との類似度を並べる"
+
+rankingInstructions:
+  en: "Use smaller ranks for closer topics. Equal ranks mean a tie; leave unfamiliar topics unknown."
+  zh-CN: "数字越小越相似；相同数字表示并列，不熟悉的主题保留为不确定。"
+  ja-JP: "近い項目ほど小さい順位にします。同順位は同程度、不明な項目は未選択にします。"
+
+rankingUnknown:
+  en: "Unknown / omit"
+  zh-CN: "不确定／跳过此项"
+  ja-JP: "不明／除外"
+
+rankingNearest:
+  en: "Closest"
+  zh-CN: "最相似"
+  ja-JP: "最も近い"
+
+rankingConfidence:
+  en: "Confidence"
+  zh-CN: "判断把握"
+  ja-JP: "確信度"
+
+rankingConfident:
+  en: "Confident"
+  zh-CN: "有把握"
+  ja-JP: "確信あり"
+
+rankingTentative:
+  en: "Tentative"
+  zh-CN: "不太确定"
+  ja-JP: "暫定"
+
+rankingSubmit:
+  en: "Save ranking"
+  zh-CN: "保存排序"
+  ja-JP: "順位を保存"
+
+rankingSaving:
+  en: "Saving…"
+  zh-CN: "正在保存…"
+  ja-JP: "保存中…"
+
+rankingSaved:
+  en: "Ranking saved."
+  zh-CN: "排序已保存。"
+  ja-JP: "順位を保存しました。"
+
+rankingConflict:
+  en: "This ranking conflicts with protected judgments or cannot currently fit. Nothing was changed; try a smaller list or review the order."
+  zh-CN: "此排序与已有判断冲突，或目前无法在保护旧排序的同时满足。未作修改；请缩小列表或检查排序。"
+  ja-JP: "既存の判断と矛盾するか、保護した順位を維持できません。変更はありません。項目を減らすか順位を確認してください。"
+
+rankingFailed:
+  en: "Unable to save ranking."
+  zh-CN: "无法保存排序。"
+  ja-JP: "順位を保存できません。"
+
+rankingLoading:
+  en: "Choosing a useful question…"
+  zh-CN: "正在选择有用的问题…"
+  ja-JP: "質問を選択中…"
+
+rankingSkip:
+  en: "Skip this question"
+  zh-CN: "跳过此题"
+  ja-JP: "この質問をスキップ"
+
+rankingNeedKeywords:
+  en: "Add at least three keywords to train similarity."
+  zh-CN: "至少添加三个关键词以训练相似性。"
+  ja-JP: "類似度を学習するには3つ以上のキーワードを追加してください。"
+
+rankingNoQuestions:
+  en: "No new comparisons in this selection. Add keywords or return later."
+  zh-CN: "当前候选中没有新的比较。可添加关键词或稍后再试。"
+  ja-JP: "現在の候補に新しい比較はありません。"
+
+rankingAnswered:
+  en: "{0} rankings saved this session"
+  zh-CN: "本次已保存 {0} 份排序"
+  ja-JP: "今回 {0} 件の順位を保存"
+
+rankingGraphHint:
+  en: "Select an anchor first, then 2–12 topics to rank."
+  zh-CN: "先选择参照点，再选择 2～12 个主题进行排序。"
+  ja-JP: "基準点を選び、次に順位を付ける2～12項目を選択します。"
+
+rankingProjectionHint:
+  en: "The map is an overview; similarity rankings use the full embedding."
+  zh-CN: "地图仅作概览；相似性排序使用完整嵌入。"
+  ja-JP: "地図は概観です。類似順位には完全な埋め込みを使用します。"
+
+rankingHistoryCount:
+  en: "{0} saved rankings"
+  zh-CN: "已保存 {0} 份排序"
+  ja-JP: "保存済みの順位 {0} 件"
+
+rankingForgetHint:
+  en: "Recent judgments are shown below. Forget a mistaken judgment to answer again; existing similarities are retained."
+  zh-CN: "下方显示最近的判断。可移除误判后重新回答；现有相似度不会自动撤销。"
+  ja-JP: "最近の判断を表示します。誤った判断を削除して回答し直せます。既存の類似度は維持されます。"
+
+rankingForget:
+  en: "Forget this judgment"
+  zh-CN: "移除这条判断"
+  ja-JP: "この判断を削除"
+
+dbInitializing:
+  en: "Preparing local database…"
+  zh-CN: "正在初始化本地数据库…"
+  ja-JP: "ローカルデータベースを準備しています…"
+dbMigrating:
+  en: "Updating local database…"
+  zh-CN: "正在升级本地数据库…"
+  ja-JP: "ローカルデータベースを更新しています…"
+dbMaintenanceComplete:
+  en: "Local database is ready"
+  zh-CN: "本地数据库已就绪"
+  ja-JP: "ローカルデータベースの準備が完了しました"
+dbMaintenanceFailed:
+  en: "Local database maintenance failed"
+  zh-CN: "本地数据库维护失败"
+  ja-JP: "ローカルデータベースの更新に失敗しました"
+appLoading:
+  en: "Loading…"
+  zh-CN: "正在加载…"
+  ja-JP: "読み込み中…"
+retry:
+  en: "Retry"
+  zh-CN: "重试"
+  ja-JP: "再試行"

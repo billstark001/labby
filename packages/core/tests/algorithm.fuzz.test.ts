@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   initKeywordVectors,
+  productDistance,
   keywordVectorsToSimilarityLookup,
-  keywordVectorsToSimilarityMap,
   solveFull,
   solveIncremental,
   type Person,
@@ -99,10 +99,11 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
         const keywordCount = randomInt(30, 50);
         const keywords = Array.from({ length: keywordCount }, (_, i) => `k${i}`);
         const vectors = initKeywordVectors(keywords);
-        const simMap = keywordVectorsToSimilarityMap(vectors);
+        const lookup = keywordVectorsToSimilarityLookup(vectors);
+        const similarities = vectors.flatMap((a, i) => vectors.slice(i + 1).map(b => lookup.getPairSimilarity(a.keywordId, b.keywordId)!));
 
         let finiteCount = 0;
-        for (const value of simMap.values()) {
+        for (const value of similarities) {
           expect(Number.isFinite(value)).toBe(true);
           expect(value).toBeGreaterThan(0);
           expect(value).toBeLessThanOrEqual(1);
@@ -168,43 +169,35 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
 
     console.log(`schedule fuzz valid ratio=${validRounds}/${rounds}`);
     expect(validRounds).toBe(rounds);
-  });
+  }, 30_000);
 
-  test('large-point metric fuzz preserves L2 triangle inequality', () => {
+  test('large-point metric fuzz preserves product-space triangle inequality', () => {
     const rounds = 24;
     let pass = 0;
-
-    const l2 = (va: number[], vb: number[]) => {
-      let sum = 0;
-      for (let i = 0; i < 64; i++) {
-        const d = (va[i] ?? 0) - (vb[i] ?? 0);
-        sum += d * d;
-      }
-      return Math.sqrt(sum);
-    };
 
     for (let seed = 300; seed < 300 + rounds; seed++) {
       const ok = withSeed(seed, () => {
         const ids = Array.from({ length: randomInt(90, 140) }, (_, i) => `v-${i}`);
         const vectors = initKeywordVectors(ids);
-        const simMap = keywordVectorsToSimilarityMap(vectors);
+        const lookup = keywordVectorsToSimilarityLookup(vectors);
+        const similarities = vectors.flatMap((a, i) => vectors.slice(i + 1).map(b => lookup.getPairSimilarity(a.keywordId, b.keywordId)!));
 
-        // Pairwise similarity map must be dense and finite.
-        expect(simMap.size).toBe((ids.length * (ids.length - 1)) / 2);
-        for (const value of simMap.values()) {
+        // All distinct pairs must have finite similarity.
+        expect(similarities.length).toBe((ids.length * (ids.length - 1)) / 2);
+        for (const value of similarities) {
           expect(Number.isFinite(value)).toBe(true);
           expect(value).toBeGreaterThan(0);
           expect(value).toBeLessThanOrEqual(1);
         }
 
-        // Random triplets satisfy triangle inequality in 64D Euclidean space.
+        // Random triples satisfy triangle inequality in the product metric.
         for (let i = 0; i < 320; i++) {
           const a = vectors[randomInt(0, vectors.length - 1)];
           const b = vectors[randomInt(0, vectors.length - 1)];
           const c = vectors[randomInt(0, vectors.length - 1)];
-          const dAB = l2(a.vector64, b.vector64);
-          const dAC = l2(a.vector64, c.vector64);
-          const dBC = l2(b.vector64, c.vector64);
+          const dAB = productDistance(a, b);
+          const dAC = productDistance(a, c);
+          const dBC = productDistance(b, c);
           expect(dAC).toBeLessThanOrEqual(dAB + dBC + 1e-6);
         }
         return true;

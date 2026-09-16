@@ -1,3 +1,4 @@
+import { createTestStore } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,7 +33,7 @@ class FakeScheduler {
 
 test('EmailTaskNotifier syncs jobs and sends per-recipient with independent counters', async () => {
   const dbPath = createTempDbPath('labby-email-task');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
   const sent: Array<{ to: string[]; text?: string; attachments?: Array<{ filename: string }> }> = [];
 
@@ -103,7 +104,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
 
 test('EmailTaskNotifier sends scheduled delivery on every matching run', async () => {
   const dbPath = createTempDbPath('labby-email-task-stale');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
   const sent: Array<{ to: string[] }> = [];
 
@@ -161,7 +162,7 @@ test('EmailTaskNotifier sends scheduled delivery on every matching run', async (
 
 test('EmailTaskNotifier consumes skip-next once after manual send, even without newer schedule', async () => {
   const dbPath = createTempDbPath('labby-email-task-skip-next-once');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
   const sent: Array<{ to: string[] }> = [];
 
@@ -232,7 +233,7 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
 
 test('EmailTaskNotifier invalidates jobs when config period already ended', async () => {
   const dbPath = createTempDbPath('labby-email-task-ended');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
 
   const mailer = {
@@ -278,7 +279,7 @@ test('EmailTaskNotifier invalidates jobs when config period already ended', asyn
 
 test('EmailTaskNotifier skips disabled scheduled runs but allows manual send with sender name template', async () => {
   const dbPath = createTempDbPath('labby-email-task-disabled-manual');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
   const sent: Array<{ to: string[]; fromName?: string }> = [];
 
@@ -346,7 +347,7 @@ test('EmailTaskNotifier skips disabled scheduled runs but allows manual send wit
 
 test('EmailTaskNotifier allows schedule helper functions and fails manual send on template errors', async () => {
   const dbPath = createTempDbPath('labby-email-task-template-errors');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
   const sent: Array<{ to: string[]; text?: string }> = [];
 
@@ -418,7 +419,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
 
 test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when available', async () => {
   const dbPath = createTempDbPath('labby-email-task-timezone-ics-url');
-  const store = new LabbyStore({ dialect: 'pglite', dataDir: dbPath });
+  const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
   const sent: Array<{ to: string[]; text?: string; attachments?: Array<{ filename: string; content: Buffer }> }> = [];
 

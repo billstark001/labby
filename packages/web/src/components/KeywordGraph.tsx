@@ -4,10 +4,7 @@ import { Deck, OrthographicView } from '@deck.gl/core';
 import { LineLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import { X } from 'lucide-preact';
 import {
-  keywordsSignal,
-  keywordVectorsSignal,
-  graphEdgesSignal,
-  themeSignal,
+  themeSignal, keywordsSignal, keywordVectorsSignal, graphEdgesSignal,
 } from '../store/index';
 import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
@@ -15,9 +12,8 @@ import * as s from '../styles/components.css';
 import { Button } from './ui/common';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
-import { useDatabase } from '@/db/index';
-import { applySupervision } from '@/lib/embedding-engine';
-import { isServerDeployment } from '@/lib/runtime';
+import { productDistance, rankingQueryKey } from '@labby/core';
+import { RankingEditor } from './RankingCard';
 
 type GraphNode = {
   id: string;
@@ -33,16 +29,6 @@ const COLOR_NODE_SELECTED: [number, number, number, number] = [16, 185, 129, 240
 const COLOR_NODE_HALO: [number, number, number, number] = [16, 185, 129, 96];
 const POSITION_SCALE = 140;
 const POINT_TRANSITION_MS = 280;
-
-function l2Distance64(a: readonly number[], b: readonly number[]): number {
-  const dim = Math.min(a.length, b.length, 64);
-  let sum = 0;
-  for (let i = 0; i < dim; i++) {
-    const d = (a[i] ?? 0) - (b[i] ?? 0);
-    sum += d * d;
-  }
-  return Math.sqrt(sum);
-}
 
 function stableHash01(text: string): number {
   let hash = 2166136261;
@@ -68,7 +54,6 @@ function spreadPoint(x: number, y: number, medianRadius: number, p90Radius: numb
 }
 
 export function KeywordGraph() {
-  const db = useDatabase();
   const canvasRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<Deck<any> | null>(null);
   const transitionRef = useRef<number | null>(null);
@@ -78,13 +63,9 @@ export function KeywordGraph() {
   const keywords = keywordsSignal.value;
   const vectors = keywordVectorsSignal.value;
   const graphEdges = graphEdgesSignal.value;
+  const locale = i18n.lang.value;
 
   const [selected, setSelected] = useState<string[]>([]);
-  const [targetDistanceInput, setTargetDistanceInput] = useState('0.45');
-  const [learningRateInput, setLearningRateInput] = useState('0.05');
-  const [marginInput, setMarginInput] = useState('0.2');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [supervisionFeedback, setSupervisionFeedback] = useState('');
   const [animatedPositions, setAnimatedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const animatedPositionsRef = useRef(animatedPositions);
 
@@ -101,7 +82,13 @@ export function KeywordGraph() {
       transitionRef.current = null;
     }
 
+    if (from.size === target.size && [...target].every(([id, point]) => {
+      const previous = from.get(id);
+      return previous?.x === point.x && previous?.y === point.y;
+    })) return;
+
     if (from.size === 0) {
+      animatedPositionsRef.current = target;
       setAnimatedPositions(target);
       return;
     }
@@ -120,6 +107,7 @@ export function KeywordGraph() {
           y: src.y + (to.y - src.y) * t0,
         });
       }
+      animatedPositionsRef.current = next;
       setAnimatedPositions(next);
 
       if (raw < 1) {
@@ -130,6 +118,10 @@ export function KeywordGraph() {
     };
 
     transitionRef.current = requestAnimationFrame(step);
+    return () => {
+      if (transitionRef.current !== null) cancelAnimationFrame(transitionRef.current);
+      transitionRef.current = null;
+    };
   }, [vectors]);
 
   useEffect(() => {
@@ -179,7 +171,7 @@ export function KeywordGraph() {
         y: sy - jitter * 0.6,
       };
     });
-  }, [animatedPositions, keywords, vectors]);
+  }, [animatedPositions, keywords, vectors, locale]);
 
   const lines = useMemo<GraphLine[]>(() => {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -198,7 +190,7 @@ export function KeywordGraph() {
     const left = vectorById.get(leftId);
     const right = vectorById.get(rightId);
     if (!left || !right) return null;
-    const distance = l2Distance64(left.vector64, right.vector64);
+    const distance = productDistance(left, right);
     const similarity = 1 / (1 + distance);
     return { distance, similarity, leftId, rightId };
   }, [selected, vectorById]);
@@ -284,6 +276,7 @@ export function KeywordGraph() {
       initialViewState: autoViewState as any,
     });
   }, [autoViewState, canvasSize.height, canvasSize.width]);
+
 
   useEffect(() => {
     const deck = deckRef.current;
@@ -384,107 +377,6 @@ export function KeywordGraph() {
     setSelected([]);
   }
 
-  async function applyPairSupervision(): Promise<void> {
-    if (selected.length !== 2 || isSubmitting) return;
-    const [leftId, rightId] = selected;
-    if (!leftId || !rightId) return;
-
-    const targetDistance = Number.parseFloat(targetDistanceInput);
-    const learningRate = Number.parseFloat(learningRateInput);
-    if (!Number.isFinite(targetDistance) || targetDistance < 0) {
-      setSupervisionFeedback('Invalid target distance.');
-      return;
-    }
-    if (!Number.isFinite(learningRate) || learningRate <= 0) {
-      setSupervisionFeedback('Invalid learning rate.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const result = await applySupervision(keywordVectorsSignal.value, {
-        kind: 'pair',
-        leftId,
-        rightId,
-        targetDistance,
-        updateOptions: {
-          learningRate,
-        },
-      });
-
-      if (result.updatedVectors.length > 0) {
-        const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
-        for (const vec of result.updatedVectors) {
-          merged.set(vec.keywordId, vec);
-        }
-        keywordVectorsSignal.value = [...merged.values()];
-        if (!isServerDeployment) {
-          await db.keywordVectors.putMany(result.updatedVectors);
-        }
-      }
-
-      setSupervisionFeedback(
-        `Pair supervision applied (${result.updatedVectors.length} vectors updated).`,
-      );
-    } catch (error) {
-      setSupervisionFeedback(error instanceof Error ? error.message : 'Pair supervision failed.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function applyRankedSupervision(): Promise<void> {
-    if (selected.length < 3 || isSubmitting) return;
-    const [anchorId, ...orderedIds] = selected;
-    if (!anchorId || orderedIds.length < 2) {
-      setSupervisionFeedback('Select one anchor and at least two ordered nodes.');
-      return;
-    }
-
-    const learningRate = Number.parseFloat(learningRateInput);
-    const margin = Number.parseFloat(marginInput);
-    if (!Number.isFinite(learningRate) || learningRate <= 0) {
-      setSupervisionFeedback('Invalid learning rate.');
-      return;
-    }
-    if (!Number.isFinite(margin) || margin <= 0) {
-      setSupervisionFeedback('Invalid margin.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const result = await applySupervision(keywordVectorsSignal.value, {
-        kind: 'ranked',
-        anchorId,
-        orderedIds,
-        margin,
-        updateOptions: {
-          learningRate,
-        },
-      });
-
-      if (result.updatedVectors.length > 0) {
-        const merged = new Map(keywordVectorsSignal.value.map(v => [v.keywordId, v]));
-        for (const vec of result.updatedVectors) {
-          merged.set(vec.keywordId, vec);
-        }
-        keywordVectorsSignal.value = [...merged.values()];
-        if (!isServerDeployment) {
-          await db.keywordVectors.putMany(result.updatedVectors);
-        }
-      }
-
-      setSupervisionFeedback(
-        `Ranked supervision applied (${result.updatedVectors.length} vectors updated).`,
-      );
-    } catch (error) {
-      setSupervisionFeedback(error instanceof Error ? error.message : 'Ranked supervision failed.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
   const selectedLabels = selected
     .map((id) => {
       const keyword = keywords.find((item) => item.id === id);
@@ -516,7 +408,7 @@ export function KeywordGraph() {
           <div class={s.card}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Projection</h3>
             <p class={s.mutedParagraph}>
-              This view renders only projected points from the dimensionality-reduction module.
+              {t('rankingProjectionHint')}
             </p>
             <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
               Nodes: {nodes.length}
@@ -526,69 +418,11 @@ export function KeywordGraph() {
                 Current relative distance: {selectedPairMetrics.distance.toFixed(3)} (similarity {selectedPairMetrics.similarity.toFixed(3)})
               </p>
             )}
-            <div class={s.formGroup}>
-              <label class={s.label} htmlFor="target-distance-input">Target relative distance</label>
-              <input
-                id="target-distance-input"
-                class={s.input}
-                value={targetDistanceInput}
-                onInput={(event) => setTargetDistanceInput((event.target as HTMLInputElement).value)}
-              />
-            </div>
-            <div class={s.formGroup}>
-              <label class={s.label} htmlFor="learning-rate-input">Learning rate</label>
-              <input
-                id="learning-rate-input"
-                class={s.input}
-                value={learningRateInput}
-                onInput={(event) => setLearningRateInput((event.target as HTMLInputElement).value)}
-              />
-            </div>
-            <div class={s.formGroup}>
-              <label class={s.label} htmlFor="margin-input">Margin (ranked)</label>
-              <input
-                id="margin-input"
-                class={s.input}
-                value={marginInput}
-                onInput={(event) => setMarginInput((event.target as HTMLInputElement).value)}
-              />
-            </div>
-            <div class={s.flexGapSm}>
-              <Button
-                variant="secondary"
-                onClick={() => void applyPairSupervision()}
-                disabled={isSubmitting || selected.length !== 2}
-              >
-                Apply Pair Supervision
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => void applyRankedSupervision()}
-                disabled={isSubmitting || selected.length < 3}
-              >
-                Apply Ranked Supervision
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={clearSelection}
-                disabled={isSubmitting || selected.length === 0}
-              >
-                Clear Selection
-              </Button>
-            </div>
-            {selectedLabels.length > 0 && (
-              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
-                Selected: {selectedLabels.join(' | ')}
-              </p>
-            )}
-            {selected.length >= 3 && (
-              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>
-                Ranked order: {selectedLabels.join(' → ')}
-              </p>
-            )}
-            {supervisionFeedback && (
-              <p class={`${s.mt8} ${s.text12} ${s.textMuted}`}>{supervisionFeedback}</p>
-            )}
+            {selected.length >= 3 && selected.length <= 13 && <RankingEditor
+              key={selected.join('|')}
+              query={{anchorId: selected[0]!, candidateIds: selected.slice(1), key: rankingQueryKey(selected[0]!,selected.slice(1))}}
+            />}
+            <p class={s.mutedParagraph}>{t('rankingGraphHint')}</p>
           </div>
           <div class={`${s.card} ${s.graphSidebarCard}`} style={{ maxHeight: `${Math.max(canvasSize.height, 340)}px` }}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Selected Keywords</h3>
@@ -596,8 +430,8 @@ export function KeywordGraph() {
               {selectedLabels.length === 0 ? (
                 <p class={s.mutedParagraph}>Click points to inspect selected keywords.</p>
               ) : (
-                selectedLabels.map((label) => (
-                  <div key={label} class={s.metricRow}>
+                selectedLabels.map((label, index) => (
+                  <div key={selected[index]} class={s.metricRow}>
                     <div>
                       <div>{label}</div>
                     </div>

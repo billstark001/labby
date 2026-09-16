@@ -1,9 +1,10 @@
+import { keywordVectorsToSimilarityLookup } from '../src/nlp.js';
 import { describe, expect, test } from 'vitest';
 import {
   generateSessionDates,
   initKeywordVectors,
+  productDistance,
   keywordSimilarity,
-  keywordVectorsToSimilarityMap,
   SimilarityLookup,
   solveFull,
   solveIncremental,
@@ -143,28 +144,29 @@ function collectUnavailable(configId: string): Map<string, Set<string>> {
 }
 
 describe('Keyword distance algorithm (black-box precise tests)', () => {
-  test('similarity map key is normalized regardless of insertion order', () => {
+  test('similarity lookup is symmetric regardless of insertion order', () => {
     const vectors = [
       {
         keywordId: 'z',
-        vector64: Array.from({ length: 64 }, () => 0),
+        embedding: Array.from({ length: 8 }, () => 0),
+        geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
         x: 0,
         y: 0,
         updatedAt: 0,
       },
       {
         keywordId: 'a',
-        vector64: Array.from({ length: 64 }, (_, i) => (i === 0 ? 1 : 0)),
+        embedding: Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0)),
+        geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
         x: 1,
         y: 0,
         updatedAt: 0,
       },
     ];
 
-    const sim = keywordVectorsToSimilarityMap(vectors);
-    expect(sim.has('a|z')).toBe(true);
-    expect(sim.has('z|a')).toBe(false);
-    const value = sim.get('a|z') ?? 0;
+    const sim = keywordVectorsToSimilarityLookup(vectors);
+    const value = sim.getPairSimilarity('a', 'z') ?? 0;
+    expect(sim.getPairSimilarity('z', 'a')).toBe(value);
     expect(value).toBeGreaterThan(0);
     expect(value).toBeLessThanOrEqual(1);
   });
@@ -177,19 +179,10 @@ describe('Keyword distance algorithm (black-box precise tests)', () => {
     expect(s).toBeLessThanOrEqual(1);
   });
 
-  test('64D vectors satisfy metric axioms on larger point set', () => {
+  test('product embeddings satisfy metric axioms on larger point set', () => {
     const vectors = withSeed(2026, () => initKeywordVectors(
       Array.from({ length: 96 }, (_, i) => `k-${i}`),
     ));
-
-    const l2 = (va: number[], vb: number[]) => {
-      let sum = 0;
-      for (let i = 0; i < 64; i++) {
-        const d = (va[i] ?? 0) - (vb[i] ?? 0);
-        sum += d * d;
-      }
-      return Math.sqrt(sum);
-    };
 
     for (let i = 0; i < 180; i++) {
       const a = vectors[(i * 17) % vectors.length];
@@ -197,10 +190,10 @@ describe('Keyword distance algorithm (black-box precise tests)', () => {
       const c = vectors[(i * 47 + 13) % vectors.length];
       if (!a || !b || !c) continue;
 
-      const dAB = l2(a.vector64, b.vector64);
-      const dBA = l2(b.vector64, a.vector64);
-      const dAC = l2(a.vector64, c.vector64);
-      const dBC = l2(b.vector64, c.vector64);
+      const dAB = productDistance(a, b);
+      const dBA = productDistance(b, a);
+      const dAC = productDistance(a, c);
+      const dBC = productDistance(b, c);
 
       expect(dAB).toBeGreaterThanOrEqual(0);
       expect(Math.abs(dAB - dBA)).toBeLessThan(1e-6);

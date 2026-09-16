@@ -1,3 +1,4 @@
+import { listGraphPage } from './graph.js';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import { sql } from 'drizzle-orm';
@@ -5,13 +6,14 @@ import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
 import { Pool } from 'pg';
 
-import { initializePostgresSchema } from './schema.js';
+import { checkPostgresSchema } from './schema-state.js';
 
 import type {
   EntityListSortBy,
   EmailTask,
   Keyword,
   KeywordVector,
+  RankingJudgment,
   ListSortDirection,
   Person,
   PersonUnavailability,
@@ -19,9 +21,10 @@ import type {
   ScheduleConstraint,
   SchedulePlan,
   SystemSettings,
-  GraphSnapshot,
+  GraphQuery,
+  GraphPage,
 } from '@labby/core';
-import { buildSimilarityGraphEdges } from '@labby/core';
+import { validateKeywordVector, validateRankingJudgment } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
 export const UserRole = {
@@ -67,12 +70,14 @@ export interface AuthVerificationCodeRecord {
 }
 
 export interface DatabaseBackupSnapshot {
-  version: 1;
+  version: 2;
   createdAt: number;
   tables: {
     persons: Array<Record<string, string | number | null>>;
     keywords: Array<Record<string, string | number | null>>;
     keywordVectors: Array<Record<string, string | number | null>>;
+    rankingJudgments: Array<Record<string, string | number | null>>;
+    embeddingMigrationArchive: Array<Record<string, string | number | null>>;
     configs: Array<Record<string, string | number | null>>;
     constraints: Array<Record<string, string | number | null>>;
     schedules: Array<Record<string, string | number | null>>;
@@ -137,8 +142,6 @@ type TableRow = Record<string, TableRowValue>;
 type PostgresDrizzleDb = ReturnType<typeof drizzlePostgres>;
 type PgliteDrizzleDb = ReturnType<typeof drizzlePglite>;
 
-const LATENT_DIM = 64;
-const PROJECTION_DIM = 2;
 const SYSTEM_SETTINGS_ID = 'system';
 
 type EntityListSort = {
@@ -220,34 +223,11 @@ function compareSortableEntities<T extends SortableEntity>(
   return 0;
 }
 
-function toPgVectorLiteral(values: readonly number[], expectedLength: number): string {
-  const normalized = new Array<number>(expectedLength);
-  for (let i = 0; i < expectedLength; i++) {
-    const v = values[i] ?? 0;
-    normalized[i] = Number.isFinite(v) ? v : 0;
-  }
-  return `[${normalized.join(',')}]`;
-}
-
-function fromPgVectorLiteral(value: unknown, expectedLength: number): number[] {
-  if (typeof value !== 'string') return new Array<number>(expectedLength).fill(0);
-  const trimmed = value.trim();
-  const inner = trimmed.startsWith('[') && trimmed.endsWith(']')
-    ? trimmed.slice(1, -1)
-    : trimmed;
-  if (!inner) return new Array<number>(expectedLength).fill(0);
-  const values = inner.split(',').map((part) => Number.parseFloat(part.trim()));
-  const out = new Array<number>(expectedLength).fill(0);
-  for (let i = 0; i < expectedLength && i < values.length; i++) {
-    out[i] = Number.isFinite(values[i]) ? values[i] : 0;
-  }
-  return out;
-}
-
 function valueToTableValue(value: unknown): TableRowValue {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return value;
+  if (value instanceof Date) return value.toISOString();
   if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
     return `base64:${Buffer.from(value).toString('base64')}`;
   }
@@ -299,6 +279,7 @@ export class LabbyStore {
   private readonly pgPool: Pool | null;
   private readonly dialect: StoreConnectionConfig['dialect'];
   private readonly ready: Promise<void>;
+  private similarityQueue: Promise<unknown> = Promise.resolve();
 
   constructor(config: StoreConnectionConfig) {
     this.dialect = config.dialect;
@@ -319,7 +300,38 @@ export class LabbyStore {
       this.db = drizzlePostgres(this.pgPool);
     }
 
-    this.ready = this.initializeSchema();
+    this.ready = this.checkSchema();
+    void this.ready.catch(() => {});
+  }
+
+  withSimilarityLock<T>(work: () => Promise<T>): Promise<T> {
+    const run = async () => {
+      await this.ensureReady();
+      if (!this.pgPool) return work();
+      const connection = await this.pgPool.connect();
+      try {
+        await connection.query('SELECT pg_advisory_lock(192837466)');
+        return await work();
+      } finally {
+        try { await connection.query('SELECT pg_advisory_unlock(192837466)'); }
+        finally { connection.release(); }
+      }
+    };
+    const next = this.similarityQueue.then(run, run);
+    this.similarityQueue = next.catch(() => {});
+    return next;
+  }
+
+  private async transaction<T>(work: (query: (text: string, params?: unknown[]) => Promise<unknown>) => Promise<T>): Promise<T> {
+    if (this.pglite) return this.pglite.transaction(tx => work((text,params) => tx.query(text,params)));
+    const connection = await this.pgPool!.connect();
+    try {
+      await connection.query('BEGIN');
+      const result = await work((text,params) => connection.query(text,params));
+      await connection.query('COMMIT');
+      return result;
+    } catch(error) { await connection.query('ROLLBACK'); throw error; }
+    finally { connection.release(); }
   }
 
   private async queryRows(query: ReturnType<typeof sql>): Promise<DbRow[]> {
@@ -334,10 +346,13 @@ export class LabbyStore {
     await this.db.execute(query as never);
   }
 
-  private async initializeSchema(): Promise<void> {
-    const rows = await this.queryRows(sql.raw("SELECT to_regclass('public.persons') AS table_name"));
-    if (rows[0]?.table_name) return;
-    await initializePostgresSchema(this.executeCommand.bind(this));
+  private async checkSchema(): Promise<void> {
+    if (this.pglite) {
+      await checkPostgresSchema({ query: async (text, params) => this.pglite!.query(text, params) });
+    } else {
+      const connection = await this.pgPool!.connect();
+      try { await checkPostgresSchema(connection); } finally { connection.release(); }
+    }
   }
 
   private async ensureReady(): Promise<void> {
@@ -377,18 +392,9 @@ export class LabbyStore {
   }
 
   private parseKeywordVectorRow(row: DbRow): KeywordVector {
-    const keywordId = String(row.keyword_id ?? row.keywordId ?? '');
-    const updatedAt = Number(row.updated_at ?? row.updatedAt ?? Date.now());
-
-    const vector64 = fromPgVectorLiteral(row.vector64, LATENT_DIM);
-    const projection = fromPgVectorLiteral(row.projection2d, PROJECTION_DIM);
-    return {
-      keywordId,
-      vector64,
-      x: Number(row.x ?? projection[0] ?? 0),
-      y: Number(row.y ?? projection[1] ?? 0),
-      updatedAt,
-    };
+    const value = this.parsePayload<KeywordVector>(row.payload);
+    validateKeywordVector(value);
+    return value;
   }
 
   private async exportTable(tableName: string): Promise<Array<Record<string, string | number | null>>> {
@@ -424,103 +430,6 @@ export class LabbyStore {
     });
   }
 
-  private normalizeKeywordVectorBackupRows(rows: TableRow[]): TableRow[] {
-    return rows.map((row) => {
-      const parsedPayload = this.parseKeywordVectorPayload(row.payload);
-      const keywordId = String(row.keyword_id ?? parsedPayload?.keywordId ?? '');
-      if (!keywordId) {
-        throw new Error('Invalid backup payload: keyword_vectors row missing keyword_id');
-      }
-
-      const updatedAt = Number(row.updated_at ?? parsedPayload?.updatedAt ?? nowMs());
-      const x = Number(row.x ?? parsedPayload?.x ?? 0);
-      const y = Number(row.y ?? parsedPayload?.y ?? 0);
-      const vector64 = this.resolveKeywordVector64(row, parsedPayload);
-      const payload = this.resolveKeywordVectorPayload(row.payload, {
-        keywordId,
-        vector64,
-        x,
-        y,
-        updatedAt,
-      });
-
-      const pgRow: TableRow = {
-        keyword_id: keywordId,
-        x,
-        y,
-        vector64: toPgVectorLiteral(vector64, LATENT_DIM),
-        projection2d: toPgVectorLiteral([x, y], PROJECTION_DIM),
-        updated_at: updatedAt,
-        payload,
-      };
-      return pgRow;
-    });
-  }
-
-  private parseKeywordVectorPayload(payload: TableRowValue): Partial<KeywordVector> | null {
-    if (typeof payload !== 'string') return null;
-    try {
-      const parsed = JSON.parse(payload) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return null;
-      }
-      return parsed as Partial<KeywordVector>;
-    } catch {
-      return null;
-    }
-  }
-
-  private resolveKeywordVector64(row: TableRow, payload: Partial<KeywordVector> | null): number[] {
-    if (payload?.vector64 && Array.isArray(payload.vector64)) {
-      const out = new Array<number>(LATENT_DIM).fill(0);
-      for (let i = 0; i < LATENT_DIM; i++) {
-        const value = payload.vector64[i];
-        out[i] = typeof value === 'number' && Number.isFinite(value) ? value : 0;
-      }
-      return out;
-    }
-
-    if (typeof row.vector64 === 'string') {
-      return fromPgVectorLiteral(row.vector64, LATENT_DIM);
-    }
-
-    return new Array<number>(LATENT_DIM).fill(0);
-  }
-
-  private resolveKeywordVectorPayload(
-    payload: TableRowValue,
-    fallback: KeywordVector,
-  ): string {
-    if (typeof payload === 'string') {
-      return payload;
-    }
-    return JSON.stringify(fallback);
-  }
-
-  private async restoreTableRows(tableName: string, rows: TableRow[]): Promise<void> {
-    if (rows.length === 0) {
-      return;
-    }
-
-    const columns = Object.keys(rows[0]);
-    if (columns.length === 0) {
-      throw new Error(`Invalid backup payload: table ${tableName} row has no columns`);
-    }
-
-    for (const row of rows) {
-      const values = columns.map((column) => row[column] ?? null);
-      const statement = sql.raw(`INSERT INTO ${tableName} (${columns.map((column) => `"${column}"`).join(', ')}) VALUES (${values.map((value) => this.toSqlValue(value)).join(', ')})`);
-      await this.executeCommand(statement);
-    }
-  }
-
-  private toSqlValue(value: TableRowValue): string {
-    if (value === null) return 'NULL';
-    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL';
-    const escaped = value.replace(/'/g, "''");
-    return `'${escaped}'`;
-  }
-
   private async run(sqlText: string): Promise<void> {
     for (const statement of sqlText
       .split(';')
@@ -533,6 +442,8 @@ export class LabbyStore {
   async clearAllEntityData(): Promise<void> {
     await this.ensureReady();
     await this.run(`
+      DELETE FROM ranking_judgments;
+      DELETE FROM embedding_migration_archive;
       DELETE FROM keyword_vectors;
       DELETE FROM system_settings;
       DELETE FROM email_tasks;
@@ -603,18 +514,24 @@ export class LabbyStore {
 
   async deleteKeyword(id: string): Promise<void> {
     await this.ensureReady();
-    await this.executeCommand(sql`DELETE FROM keywords WHERE id = ${id}`);
+    await this.withSimilarityLock(() => this.transaction(async query => {
+      await query("DELETE FROM ranking_judgments WHERE payload->>'anchorId'=$1 OR EXISTS(SELECT 1 FROM jsonb_array_elements(payload->'groups') g, jsonb_array_elements_text(g) candidate WHERE candidate=$1)", [id]);
+      await query('DELETE FROM keywords WHERE id=$1',[id]);
+    }));
   }
 
   async clearKeywords(): Promise<void> {
     await this.ensureReady();
-    await this.executeCommand(sql`DELETE FROM keywords`);
+    await this.withSimilarityLock(() => this.transaction(async query => {
+      await query('DELETE FROM ranking_judgments');
+      await query('DELETE FROM keywords');
+    }));
   }
 
   async getKeywordVector(keywordId: string): Promise<KeywordVector | undefined> {
     await this.ensureReady();
     const rows = await this.queryRows(sql`
-      SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+      SELECT payload
       FROM keyword_vectors
       WHERE keyword_id = ${keywordId}
     `);
@@ -628,7 +545,7 @@ export class LabbyStore {
 
     const escapedIds = keywordIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
     const rows = await this.queryRows(sql.raw(`
-      SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+      SELECT payload
       FROM keyword_vectors
       WHERE keyword_id IN (${escapedIds})
     `));
@@ -638,24 +555,20 @@ export class LabbyStore {
   async listKeywordVectors(): Promise<KeywordVector[]> {
     await this.ensureReady();
     const rows = await this.queryRows(sql`
-      SELECT keyword_id, x, y, vector64::text AS vector64, projection2d::text AS projection2d, updated_at
+      SELECT payload
       FROM keyword_vectors
       ORDER BY updated_at DESC, keyword_id DESC
     `);
     return rows.map((row) => this.parseKeywordVectorRow(row));
   }
 
-  async getGraphSnapshot(): Promise<GraphSnapshot> {
+  async listGraph(query: GraphQuery = {}): Promise<GraphPage> {
     await this.ensureReady();
-    const [keywords, keywordVectors] = await Promise.all([this.listKeywords(), this.listKeywordVectors()]);
-    const latestKeyword = keywords.reduce((latest, item) => Math.max(latest, item.modifiedAt ?? 0), 0);
-    const latestVector = keywordVectors.reduce((latest, item) => Math.max(latest, item.updatedAt), 0);
-    return {
-      revision: `${keywords.length}:${keywordVectors.length}:${latestKeyword}:${latestVector}`,
-      keywords,
-      keywordVectors,
-      edges: buildSimilarityGraphEdges(keywordVectors),
-    };
+    return listGraphPage({
+      query: (text, params) => this.pglite
+        ? this.pglite.query(text, params)
+        : this.pgPool!.query(text, params),
+    }, query);
   }
 
   async putKeywordVector(vector: KeywordVector): Promise<void> {
@@ -664,70 +577,43 @@ export class LabbyStore {
 
   async putKeywordVectors(vectors: KeywordVector[]): Promise<void> {
     await this.ensureReady();
-    if (vectors.length === 0) return;
+    for (const value of vectors) validateKeywordVector(value);
+    await this.writeEmbeddingBatch(vectors);
+  }
 
-    if (this.pgPool) {
-      const keywordIds: string[] = [];
-      const xs: number[] = [];
-      const ys: number[] = [];
-      const vector64Literals: string[] = [];
-      const projection2dLiterals: string[] = [];
-      const updatedAts: number[] = [];
-      const payloads: string[] = [];
-
-      for (const vector of vectors) {
-        keywordIds.push(vector.keywordId);
-        xs.push(vector.x);
-        ys.push(vector.y);
-        vector64Literals.push(toPgVectorLiteral(vector.vector64, LATENT_DIM));
-        projection2dLiterals.push(toPgVectorLiteral([vector.x, vector.y], PROJECTION_DIM));
-        updatedAts.push(vector.updatedAt);
-        payloads.push(JSON.stringify(vector));
+  private async writeEmbeddingBatch(vectors: KeywordVector[], history?: RankingJudgment[]): Promise<void> {
+    const write = async (query: (text: string, params?: unknown[]) => Promise<unknown>) => {
+      if (vectors.length) await query(
+        `INSERT INTO keyword_vectors(keyword_id,x,y,embedding,geometry,updated_at,payload)
+         SELECT v->>'keywordId',(v->>'x')::float8,(v->>'y')::float8,v->'embedding',v->'geometry',(v->>'updatedAt')::bigint,v
+         FROM jsonb_array_elements($1::jsonb) AS v
+         ON CONFLICT(keyword_id) DO UPDATE SET x=excluded.x,y=excluded.y,embedding=excluded.embedding,
+           geometry=excluded.geometry,updated_at=excluded.updated_at,payload=excluded.payload`,
+        [JSON.stringify(vectors)]);
+      if (history) {
+        await query('DELETE FROM ranking_judgments');
+        if (history.length) await query("INSERT INTO ranking_judgments(id,payload) SELECT v->>'id',v FROM jsonb_array_elements($1::jsonb) v", [JSON.stringify(history)]);
       }
+    };
+    await this.transaction(write);
+  }
 
-      await this.pgPool.query(
-        `
-          INSERT INTO keyword_vectors (keyword_id, x, y, vector64, projection2d, updated_at, payload)
-          SELECT t.keyword_id, t.x, t.y, t.vector64_text::vector(64), t.projection2d_text::vector(2), t.updated_at, t.payload::jsonb
-          FROM UNNEST($1::text[], $2::double precision[], $3::double precision[], $4::text[], $5::text[], $6::bigint[], $7::text[])
-            AS t(keyword_id, x, y, vector64_text, projection2d_text, updated_at, payload)
-          ON CONFLICT(keyword_id) DO UPDATE SET
-            x = excluded.x,
-            y = excluded.y,
-            vector64 = excluded.vector64,
-            projection2d = excluded.projection2d,
-            updated_at = excluded.updated_at,
-            payload = excluded.payload
-        `,
-        [keywordIds, xs, ys, vector64Literals, projection2dLiterals, updatedAts, payloads],
-      );
-      return;
-    }
 
-    for (const item of vectors) {
-      const vector64 = escapeSqlLiteral(toPgVectorLiteral(item.vector64, LATENT_DIM));
-      const projection2d = escapeSqlLiteral(toPgVectorLiteral([item.x, item.y], PROJECTION_DIM));
-      const payload = escapeSqlLiteral(JSON.stringify(item));
-      await this.executeCommand(sql.raw(`
-        INSERT INTO keyword_vectors (keyword_id, x, y, vector64, projection2d, updated_at, payload)
-        VALUES (
-          '${escapeSqlLiteral(item.keywordId)}',
-          ${Number(item.x)},
-          ${Number(item.y)},
-          '${vector64}'::vector(64),
-          '${projection2d}'::vector(2),
-          ${Number(item.updatedAt)},
-          '${payload}'::jsonb
-        )
-        ON CONFLICT(keyword_id) DO UPDATE SET
-          x = excluded.x,
-          y = excluded.y,
-          vector64 = excluded.vector64,
-          projection2d = excluded.projection2d,
-          updated_at = excluded.updated_at,
-          payload = excluded.payload
-      `));
-    }
+  async forgetRankingJudgment(id: string): Promise<void> {
+    await this.withSimilarityLock(() => this.transaction(async query => { await query('DELETE FROM ranking_judgments WHERE id=$1',[id]); }));
+  }
+
+  async getRankingHistory(): Promise<RankingJudgment[]> {
+    await this.ensureReady();
+    return this.listPayloads<RankingJudgment>(sql`SELECT payload FROM ranking_judgments ORDER BY id`);
+  }
+
+  async commitRanking(vectors: KeywordVector[], history: RankingJudgment[]): Promise<void> {
+    await this.ensureReady();
+    const ids = new Set((await this.listKeywords()).map(k => k.id));
+    for (const value of vectors) validateKeywordVector(value);
+    for (const judgment of history) validateRankingJudgment(judgment, ids);
+    await this.writeEmbeddingBatch(vectors, history);
   }
 
   async deleteKeywordVector(keywordId: string): Promise<void> {
@@ -1061,34 +947,10 @@ export class LabbyStore {
     });
 
     const personIdSet = new Set<string>();
-    for (const row of scheduleRows) {
-      const ids = (() => {
-        try {
-          return uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]);
-        } catch {
-          return [];
-        }
-      })();
-      for (const id of ids) personIdSet.add(id);
-    }
-    for (const row of constraintRows) {
-      const ids = (() => {
-        try {
-          return uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]);
-        } catch {
-          return [];
-        }
-      })();
-      for (const id of ids) personIdSet.add(id);
-    }
-    for (const row of unavailabilityRows) {
-      const ids = (() => {
-        try {
-          return uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]);
-        } catch {
-          return [];
-        }
-      })();
+    for (const row of [...scheduleRows, ...constraintRows, ...unavailabilityRows]) {
+      let ids: string[] = [];
+      try { ids = uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]); }
+      catch { /* Missing foreign-key index. */ }
       for (const id of ids) personIdSet.add(id);
     }
 
@@ -1474,12 +1336,14 @@ export class LabbyStore {
   async exportBackupSnapshot(): Promise<DatabaseBackupSnapshot> {
     await this.ensureReady();
     return {
-      version: 1,
+      version: 2,
       createdAt: Date.now(),
       tables: {
         persons: await this.exportTable('persons'),
         keywords: await this.exportTable('keywords'),
         keywordVectors: await this.exportTable('keyword_vectors'),
+        rankingJudgments: await this.exportTable('ranking_judgments'),
+        embeddingMigrationArchive: await this.exportTable('embedding_migration_archive'),
         configs: await this.exportTable('configs'),
         constraints: await this.exportTable('constraints'),
         schedules: await this.exportTable('schedules'),
@@ -1505,7 +1369,7 @@ export class LabbyStore {
       tables?: Record<string, unknown>;
     };
 
-    if (snapshotObject.version !== 1) {
+    if (snapshotObject.version !== 2) {
       throw new Error('Unsupported backup snapshot version');
     }
     if (!snapshotObject.tables || typeof snapshotObject.tables !== 'object' || Array.isArray(snapshotObject.tables)) {
@@ -1515,9 +1379,9 @@ export class LabbyStore {
     const tables = {
       persons: this.validateTableRows('persons', snapshotObject.tables.persons),
       keywords: this.validateTableRows('keywords', snapshotObject.tables.keywords),
-      keyword_vectors: this.normalizeKeywordVectorBackupRows(
-        this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
-      ),
+      keyword_vectors: this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
+      ranking_judgments: this.validateTableRows('ranking_judgments', snapshotObject.tables.rankingJudgments),
+      embedding_migration_archive: this.validateTableRows('embedding_migration_archive', snapshotObject.tables.embeddingMigrationArchive),
       configs: this.validateTableRows('configs', snapshotObject.tables.configs),
       constraints: this.validateTableRows('constraints', snapshotObject.tables.constraints ?? []),
       schedules: this.validateTableRows('schedules', snapshotObject.tables.schedules),
@@ -1532,33 +1396,25 @@ export class LabbyStore {
       ),
     };
 
-    await this.run(`
-      DELETE FROM refresh_tokens;
-      DELETE FROM auth_verification_codes;
-      DELETE FROM users;
-      DELETE FROM keyword_vectors;
-      DELETE FROM system_settings;
-      DELETE FROM email_tasks;
-      DELETE FROM unavailabilities;
-      DELETE FROM schedules;
-      DELETE FROM constraints;
-      DELETE FROM configs;
-      DELETE FROM keywords;
-      DELETE FROM persons;
-    `);
-
-    await this.restoreTableRows('persons', tables.persons);
-    await this.restoreTableRows('keywords', tables.keywords);
-    await this.restoreTableRows('keyword_vectors', tables.keyword_vectors);
-    await this.restoreTableRows('configs', tables.configs);
-    await this.restoreTableRows('constraints', tables.constraints);
-    await this.restoreTableRows('schedules', tables.schedules);
-    await this.restoreTableRows('unavailabilities', tables.unavailabilities);
-    await this.restoreTableRows('email_tasks', tables.email_tasks);
-    await this.restoreTableRows('system_settings', tables.system_settings);
-    await this.restoreTableRows('users', tables.users);
-    await this.restoreTableRows('refresh_tokens', tables.refresh_tokens);
-    await this.restoreTableRows('auth_verification_codes', tables.auth_verification_codes);
+    const keywordIds = new Set(tables.keywords.map(row => String(row.id)));
+    for (const row of tables.keyword_vectors) {
+      const value = this.parsePayload<KeywordVector>(row.payload);
+      validateKeywordVector(value);
+      if (!keywordIds.has(value.keywordId) || row.keyword_id !== value.keywordId) throw new Error('Invalid backup embedding keyword');
+    }
+    const judgments = tables.ranking_judgments.map(row => this.parsePayload<RankingJudgment>(row.payload));
+    for (const j of judgments) validateRankingJudgment(j, keywordIds);
+    const restore = async (query: (text: string, params?: unknown[]) => Promise<unknown>) => {
+      for (const name of ['refresh_tokens','auth_verification_codes','users','ranking_judgments','embedding_migration_archive','keyword_vectors','system_settings','email_tasks','unavailabilities','schedules','constraints','configs','keywords','persons']) await query('DELETE FROM '+name);
+      for (const [name, rows] of Object.entries(tables)) {
+        for (const row of rows) {
+          const columns = Object.keys(row);
+          if (!columns.length || columns.some(column => !/^[a-z_]+$/.test(column))) throw new Error('Invalid backup column');
+          await query('INSERT INTO '+name+' ('+columns.map(c => '"'+c+'"').join(',')+') VALUES ('+columns.map((_,i) => '$'+(i+1)).join(',')+')', columns.map(c => row[c] ?? null));
+        }
+      }
+    };
+    await this.withSimilarityLock(() => this.transaction(restore));
   }
 
   getDialect(): StoreConnectionConfig['dialect'] {
@@ -1566,7 +1422,7 @@ export class LabbyStore {
   }
 
   async close(): Promise<void> {
-    await this.ensureReady();
+    await this.ready.catch(() => {});
     await this.pglite?.close();
     if (this.pgPool) {
       await this.pgPool.end();

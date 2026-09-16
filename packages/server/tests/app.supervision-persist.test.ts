@@ -1,132 +1,115 @@
+import { createTestApp } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-
-import type { Keyword, KeywordVector } from '@labby/core';
+import { productDistance, type RankingJudgment, type RankingQuery, type TrainingResult } from '@labby/core';
 import { createApp } from '../src/app.js';
 
-function createTempDbPath(prefix: string): string {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
-  return path.join(tempDir, 'labby.db');
-}
-
 function makeHeaders(token?: string): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    'X-Request-Id': 'test-request-id',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  return { 'Content-Type': 'application/json', 'X-Request-Id': 'test-request-id', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
-async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise<string> {
-  const response = await app.request('/api/v1/auth/login', {
-    method: 'POST',
-    headers: makeHeaders(),
-    body: JSON.stringify({ identity: 'root', password: 'root-pass' }),
-  });
+async function login(app: Awaited<ReturnType<typeof createApp>>['app'], identity = 'root', password = 'root-pass'): Promise<string> {
+  const response = await app.request('/api/v1/auth/login', { method: 'POST', headers: makeHeaders(), body: JSON.stringify({ identity, password }) });
   assert.equal(response.status, 200);
-  const payload = await response.json() as { access_token: string };
-  return payload.access_token;
+  return (await response.json() as { access_token: string }).access_token;
 }
 
-function axisVector(axis: number, value: number): number[] {
-  return Array.from({ length: 64 }, (_, i) => (i === axis ? value : 0));
-}
-
-test('nlp update-similarity persists vectors immediately', async () => {
-  const runtime = await createApp({
-    db: { dialect: 'pglite', dataDir: createTempDbPath('labby-app-supervision-persist') },
-    rootUsername: 'root',
-    rootPassword: 'root-pass',
-  });
-
+test('joint list training persists vectors and history immediately, survives restart, and rejects conflicts atomically', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'labby-ranking-api-'));
+  const config = { db: { dialect: 'pglite' as const, dataDir: path.join(tempDir, 'db') }, rootUsername: 'root', rootPassword: 'root-pass' };
+  let runtime = await createTestApp(config);
   try {
-    const token = await login(runtime.app);
-
-    const keywords: Keyword[] = [
-      { id: 'k1', name: 'K1', names: { en: 'K1' }, metadata: {} },
-      { id: 'k2', name: 'K2', names: { en: 'K2' }, metadata: {} },
-      { id: 'k3', name: 'K3', names: { en: 'K3' }, metadata: {} },
-    ];
-
-    const vectors: KeywordVector[] = [
-      {
-        keywordId: 'k1',
-        vector64: axisVector(0, 0.0),
-        x: 0,
-        y: 0,
-        updatedAt: Date.now(),
-      },
-      {
-        keywordId: 'k2',
-        vector64: axisVector(0, 3.0),
-        x: 3,
-        y: 0,
-        updatedAt: Date.now(),
-      },
-      {
-        keywordId: 'k3',
-        vector64: axisVector(0, 0.4),
-        x: 0.4,
-        y: 0,
-        updatedAt: Date.now(),
-      },
-    ];
-
-    for (const keyword of keywords) {
-      const response = await runtime.app.request(`/api/v1/db/keywords/${keyword.id}`, {
-        method: 'PUT',
-        headers: makeHeaders(token),
-        body: JSON.stringify(keyword),
-      });
-      assert.ok(response.status === 200 || response.status === 201);
+    let token = await login(runtime.app);
+    let seed = 1;
+    const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+    for (const id of ['0', '1', '2', '3', '4', '5']) {
+      await runtime.store.putKeyword({ id, name: id, names: {}, metadata: {} });
+      await runtime.store.putKeywordVector({ keywordId: id, geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 }, embedding: Array.from({ length: 8 }, () => (random() - 0.5) / 2), x: 0, y: 0, updatedAt: 1 });
     }
+    const graphResponse = await runtime.app.request('/api/v1/db/graph?limit=2', { headers: makeHeaders(token) });
+    assert.equal(graphResponse.status, 200);
+    const graphPage = (await graphResponse.json() as { data: {items:unknown[];nextCursor:string} }).data;
+    assert.equal(graphPage.items.length, 2);
+    assert.ok(graphPage.nextCursor);
+    const invalidGraph = await runtime.app.request('/api/v1/db/graph?cursor=broken', { headers: makeHeaders(token) });
+    assert.equal(invalidGraph.status, 400);
+    const anonymousGraph = await runtime.app.request('/api/v1/db/graph', { headers: makeHeaders() });
+    assert.equal(anonymousGraph.status, 401);
+    const removedGraph = await runtime.app.request('/api/v1/db/graph-snapshot', { headers: makeHeaders(token) });
+    assert.equal(removedGraph.status, 404);
+    const initial = await runtime.store.listKeywordVectors();
+    const j: RankingJudgment = { id: 'list-1', anchorId: '0', groups: [['1', '2'], ['3'], ['4', '5']], confidence: 1, createdAt: 1 };
+    const train = (body: unknown, auth = token) => runtime.app.request('/api/v1/nlp/train-ranking', { method: 'POST', headers: makeHeaders(auth), body: JSON.stringify(body) });
+    const response = await train(j);
+    assert.equal(response.status, 200);
+    const result = (await response.json() as { data: TrainingResult }).data;
+    assert.equal(result.accepted, true, result.conflicts.join('; '));
+    assert.ok(result.updatedVectors.length > 0);
+    const persisted = await runtime.store.listKeywordVectors();
+    assert.notDeepEqual(persisted, initial);
+    assert.deepEqual(await runtime.store.getRankingHistory(), [j]);
+    const byId = new Map(persisted.map(v => [v.keywordId, v]));
+    for (const updated of result.updatedVectors) assert.deepEqual(byId.get(updated.keywordId), updated);
+    const distance = (id: string) => productDistance(byId.get('0')!, byId.get(id)!) ** 2;
+    assert.ok(Math.abs(distance('1') - distance('2')) <= 0.04000001);
+    for (const near of ['1', '2']) assert.ok(distance(near) < distance('3'));
+    for (const far of ['4', '5']) assert.ok(distance('3') < distance(far));
 
-    for (const vector of vectors) {
-      const response = await runtime.app.request(`/api/v1/db/keyword-vectors/${vector.keywordId}`, {
-        method: 'PUT',
-        headers: makeHeaders(token),
-        body: JSON.stringify(vector),
-      });
-      assert.ok(response.status === 200 || response.status === 201);
-    }
+    const duplicate = await train(j);
+    assert.equal(duplicate.status, 200);
+    assert.deepEqual((await duplicate.json() as { data: TrainingResult }).data.updatedVectors, []);
+    const reorderedTie = await train({ ...j, groups: [['2', '1'], ['3'], ['5', '4']] });
+    assert.equal(reorderedTie.status, 200);
+    assert.deepEqual((await reorderedTie.json() as { data: TrainingResult }).data.updatedVectors, []);
+    // A rejected judgment must not persist even lazy initialization of another keyword.
+    await runtime.store.putKeyword({ id: 'uninitialized', name: 'Uninitialized', names: {}, metadata: {} });
+    const rejected = await train({ ...j, id: 'conflict', groups: [['3'], ['1']] });
+    assert.equal(rejected.status, 200);
+    assert.equal((await rejected.json() as { data: TrainingResult }).data.accepted, false);
+    assert.deepEqual(await runtime.store.listKeywordVectors(), persisted);
+    assert.deepEqual(await runtime.store.getRankingHistory(), [j]);
+    await runtime.store.deleteKeyword('uninitialized');
 
-    const updateRes = await runtime.app.request('/api/v1/nlp/update-similarity', {
-      method: 'POST',
-      headers: makeHeaders(token),
-      body: JSON.stringify({
-        anchorId: 'k1',
-        positiveId: 'k2',
-        negativeId: 'k3',
-        margin: 0.2,
-        updateOptions: {
-          learningRate: 0.06,
-          minIters: 1,
-          maxIters: 1,
-        },
-      }),
-    });
+    const recommend = (body: unknown) => runtime.app.request('/api/v1/nlp/recommend-ranking', { method: 'POST', headers: makeHeaders(token), body: JSON.stringify(body) });
+    const recommendation = await recommend({ size: 4, excludedKeys: [] });
+    assert.equal(recommendation.status, 200);
+    const query = (await recommendation.json() as { data: { query: RankingQuery } }).data.query;
+    assert.equal(query.candidateIds.length, 4);
+    assert.equal(new Set(query.candidateIds).size, 4);
+    assert.ok(!query.candidateIds.includes(query.anchorId));
+    const nextRecommendation = await recommend({ size: 4, excludedKeys: [query.key] });
+    assert.equal(nextRecommendation.status, 200);
+    assert.notEqual((await nextRecommendation.json() as { data: { query: RankingQuery } }).data.query.key, query.key);
 
-    assert.equal(updateRes.status, 200);
-    const updatePayload = await updateRes.json() as {
-      data: { loss: number; updatedVectors: KeywordVector[] };
-    };
-    assert.ok(updatePayload.data.updatedVectors.length > 0);
+    assert.equal((await train(j, '')).status, 401);
+    const createUser = await runtime.app.request('/api/v1/users', { method: 'POST', headers: makeHeaders(token), body: JSON.stringify({ username: 'reader', password: 'reader-password', role: 0 }) });
+    assert.equal(createUser.status, 201);
+    const readerToken = await login(runtime.app, 'reader', 'reader-password');
+    assert.equal((await train(j, readerToken)).status, 403);
+    assert.equal((await runtime.app.request('/api/v1/nlp/recommend-ranking', { method: 'POST', headers: makeHeaders(readerToken), body: '{}' })).status, 403);
+    assert.equal((await runtime.app.request('/api/v1/nlp/history', { headers: makeHeaders(readerToken) })).status, 403);
+    for (const groups of [[['1'], ['1']], [['0'], ['1']], [['1'], ['missing']], [[]]]) assert.equal((await train({ ...j, id: 'invalid', groups })).status, 400);
+    assert.equal((await train({ ...j, confidence: 0 })).status, 400);
+    assert.equal((await recommend({ size: 1 })).status, 400);
+    assert.equal((await runtime.app.request('/api/v1/nlp/update-similarity', { method: 'POST', headers: makeHeaders(token), body: '{}' })).status, 404);
+    assert.deepEqual(await runtime.store.listKeywordVectors(), persisted);
+    assert.deepEqual(await runtime.store.getRankingHistory(), [j]);
 
-    const persistedRes = await runtime.app.request('/api/v1/db/keyword-vectors/k1', {
-      method: 'GET',
-      headers: makeHeaders(token),
-    });
-    assert.equal(persistedRes.status, 200);
-    const persistedPayload = await persistedRes.json() as { data: KeywordVector | null };
-    assert.ok(persistedPayload.data, 'persisted vector should exist');
-
-    const before = vectors[0].vector64[0] ?? 0;
-    const after = persistedPayload.data?.vector64?.[0] ?? 0;
-    assert.notEqual(after, before, 'vector should be persisted immediately after supervision');
+    await runtime.close();
+    runtime = await createTestApp(config);
+    token = await login(runtime.app);
+    assert.deepEqual(await runtime.store.listKeywordVectors(), persisted);
+    const historyResponse = await runtime.app.request('/api/v1/nlp/history', { headers: makeHeaders(token) });
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual((await historyResponse.json() as { data: RankingJudgment[] }).data, [j]);
+    const restartedConflict = await train({ ...j, id: 'after-restart', groups: [['3'], ['1']] });
+    assert.equal((await restartedConflict.json() as { data: TrainingResult }).data.accepted, false);
+    assert.deepEqual(await runtime.store.listKeywordVectors(), persisted);
   } finally {
     await runtime.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

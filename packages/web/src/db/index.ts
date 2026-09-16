@@ -82,7 +82,7 @@ export function useDatabase() {
 export async function dumpDatabase(): Promise<DatabaseDump> {
   const dbInstance = db.value;
   if (!dbInstance) throw new Error('Database is not initialized');
-  const [persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings] = await Promise.all([
+  const [persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory] = await Promise.all([
     listAllPaginated(dbInstance.persons),
     listAllPaginated(dbInstance.keywords),
     listAllPaginated(dbInstance.keywordVectors),
@@ -92,8 +92,9 @@ export async function dumpDatabase(): Promise<DatabaseDump> {
     listAllPaginated(dbInstance.unavailabilities),
     listAllPaginated(dbInstance.emailTasks),
     dbInstance.systemSettings.get(),
+    dbInstance.similarity.getHistory(),
   ]);
-  return { persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings };
+  return { persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory };
 }
 
 export async function restoreDatabase(dump: DatabaseDump): Promise<void> {

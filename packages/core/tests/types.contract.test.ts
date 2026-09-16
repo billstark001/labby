@@ -59,6 +59,7 @@ describe('core type contracts', () => {
 
   test('database dump includes email tasks', () => {
     const dump: DatabaseDump = {
+      rankingHistory: [],
       persons: [],
       keywords: [],
       keywordVectors: [],
