@@ -1,8 +1,8 @@
+import { toast } from './ui/Toast';
 import { syncGraph } from '@/lib/graph-sync';
 /** Keyword management panel. */
-import { useEffect, useState } from 'preact/hooks';
-import { nanoid } from 'nanoid';
-import { graphEdgesSignal, keywordVectorsSignal, keywordsSignal, personsSignal } from '../store/index';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { KeywordForm } from './KeywordForm';
 import { displayName } from '@/i18n';
 import { buildKeywordReferenceCount, listKeywordsPage, readKeywordForeignKeys, useDatabase } from '../db/index';
 import * as s from '../styles/components.css';
@@ -17,83 +17,12 @@ import { Dialog, confirmDialog } from './ui/Dialog';
 import type { EntityListSortBy, Keyword, ListSortDirection } from '@labby/core';
 import { i18n } from '@/i18n';
 
-interface KeywordFormProps {
-  initial?: Partial<Keyword>;
-  onSave: (k: Keyword) => void;
-  onCancel: () => void;
-}
-
-function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
-  const { t } = i18n;
-  const [nameEn, setNameEn] = useState(initial?.names?.['en'] ?? initial?.name ?? '');
-  const [nameZh, setNameZh] = useState(initial?.names?.['zh'] ?? '');
-  const [nameJa, setNameJa] = useState(initial?.names?.['ja'] ?? '');
-  const [notes, setNotes] = useState(initial?.notes ?? '');
-
-  function handleSave() {
-    if (!nameEn.trim()) return;
-    onSave({
-      id: initial?.id ?? nanoid(),
-      name: nameEn.trim(),
-      names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() },
-      metadata: initial?.metadata ?? {},
-      disabled: initial?.disabled,
-      notes: notes.trim() || undefined,
-    });
-  }
-
-  return (
-    <div>
-      <div class={s.formGroup}>
-        <label class={s.label}>Name (EN)</label>
-        <input
-          class={s.input}
-          value={nameEn}
-          onInput={e => setNameEn((e.target as HTMLInputElement).value)}
-        />
-      </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>Name (中文)</label>
-        <input
-          class={s.input}
-          value={nameZh}
-          onInput={e => setNameZh((e.target as HTMLInputElement).value)}
-        />
-      </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>Name (日本語)</label>
-        <input
-          class={s.input}
-          value={nameJa}
-          onInput={e => setNameJa((e.target as HTMLInputElement).value)}
-        />
-      </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('notes')}</label>
-        <textarea
-          class={s.input}
-          rows={3}
-          value={notes}
-          onInput={e => setNotes((e.target as HTMLTextAreaElement).value)}
-        />
-      </div>
-      <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={handleSave}>
-          {t('save')}
-        </Button>
-        <Button variant="secondary" onClick={onCancel}>
-          {t('cancel')}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 export function KeywordList() {
   const db = useDatabase();
   const { t } = i18n;
   const [pagedKeywords, setPagedKeywords] = useState<Keyword[]>([]);
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
+  const request = useRef(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
@@ -101,18 +30,14 @@ export function KeywordList() {
   const [totalItems, setTotalItems] = useState(0);
   const [keywordReferenceCount, setKeywordReferenceCount] = useState<Map<string, number>>(new Map());
 
-  function defaultSortDirection(nextSortBy: EntityListSortBy): ListSortDirection {
-    return nextSortBy === 'modifiedAt' ? 'desc' : 'asc';
-  }
 
-  async function refreshForeignKeyContext(keywordIds: string[]) {
+  async function refreshForeignKeyContext(keywordIds: string[], ticket: number) {
     if (keywordIds.length === 0) {
-      personsSignal.value = [];
       setKeywordReferenceCount(new Map());
       return;
     }
     const bundle = await readKeywordForeignKeys(db, keywordIds);
-    personsSignal.value = bundle.persons;
+    if (ticket !== request.current) return;
     setKeywordReferenceCount(buildKeywordReferenceCount(bundle));
   }
 
@@ -122,6 +47,7 @@ export function KeywordList() {
     targetSortBy = sortBy,
     targetSortDirection = sortDirection,
   ) {
+    const ticket = ++request.current;
     const safePage = Math.max(1, targetPage);
     const offset = (safePage - 1) * targetPageSize;
     const result = await listKeywordsPage(db, {
@@ -130,8 +56,10 @@ export function KeywordList() {
       sortBy: targetSortBy,
       sortDirection: targetSortDirection,
     });
+    if (ticket !== request.current) return;
     setPagedKeywords(result.items);
-    await refreshForeignKeyContext(result.items.map((item) => item.id));
+    await refreshForeignKeyContext(result.items.map((item) => item.id), ticket);
+    if (ticket !== request.current) return;
     setTotalItems(result.total);
 
     const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
@@ -146,7 +74,8 @@ export function KeywordList() {
 
 
   useEffect(() => {
-    void refreshKeywordsPage(page, pageSize);
+    void refreshKeywordsPage(page, pageSize).catch(error => toast.error(String(error)));
+    return () => { request.current++; };
   }, [db, page, pageSize, sortBy, sortDirection]);
 
   /** Check if a keyword is referenced by any person */
@@ -161,7 +90,7 @@ export function KeywordList() {
   }
 
   async function handleDisableToggle(k: Keyword) {
-    const updated: Keyword = { ...k, disabled: !k.disabled };
+    const updated: Keyword = { ...k, disabled: !k.disabled, modifiedAt: Date.now() };
     await db.keywords.put(updated);
     await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
   }
@@ -184,36 +113,6 @@ export function KeywordList() {
         <Button onClick={() => setEditing('new')}>{t('addKeyword')}</Button>
       </div>
 
-      <div class={`${s.toolbar} ${s.mb8}`}>
-        <div class={s.flexGapSm}>
-          <select
-            class={`${s.input} ${s.autoWidthInput}`}
-            value={sortBy}
-            onChange={(event) => {
-              const nextSortBy = (event.target as HTMLSelectElement).value as EntityListSortBy;
-              setSortBy(nextSortBy);
-              setSortDirection(defaultSortDirection(nextSortBy));
-              setPage(1);
-            }}
-          >
-            <option value="modifiedAt">{t('modifiedAt')}</option>
-            <option value="name">{t('name')}</option>
-            <option value="notes">{t('notes')}</option>
-          </select>
-          <select
-            class={`${s.input} ${s.autoWidthInput}`}
-            value={sortDirection}
-            onChange={(event) => {
-              setSortDirection((event.target as HTMLSelectElement).value as ListSortDirection);
-              setPage(1);
-            }}
-          >
-            <option value="asc">ASC</option>
-            <option value="desc">DESC</option>
-          </select>
-        </div>
-      </div>
-
       {editing && (
         <Dialog
           open={true}
@@ -230,10 +129,19 @@ export function KeywordList() {
       )}
 
       <ResponsiveDataView
+        sorting={{
+          key: sortBy, direction: sortDirection,
+          options: [
+            {key:'name',label:t('name')}, {key:'notes',label:t('notes')},
+            {key:'modifiedAt',label:t('modifiedAt'),defaultDirection:'desc'},
+          ],
+          onChange: (key, direction) => {setSortBy(key as EntityListSortBy);setSortDirection(direction);setPage(1);},
+        }}
         items={pagedKeywords}
         columns={[
-          { header: t('name') },
-          { header: t('notes') },
+          { header: t('name'), sortKey: 'name' },
+          { header: t('notes'), sortKey: 'notes' },
+          { header: t('modifiedAt'), sortKey: 'modifiedAt' },
         ]}
         getKey={kw => kw.id}
         getDesktopRowProps={kw => ({ style: { opacity: kw.disabled ? 0.5 : 1 } })}
@@ -250,6 +158,7 @@ export function KeywordList() {
             <td class={`${s.td} ${s.notesCell}`}>
               {kw.notes && <span class={s.textMuted}>{kw.notes}</span>}
             </td>
+            <td class={s.td}>{kw.modifiedAt ? new Date(kw.modifiedAt!).toLocaleString() : '—'}</td>
           </>
         )}
         renderMobileCard={kw => (

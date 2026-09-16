@@ -8,6 +8,22 @@ export const root = style({
   gap: vars.space.md,
 });
 
+export const sortHeader = style({
+  border: 0,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  cursor: 'pointer',
+  padding: '8px 0',
+  textAlign: 'inherit',
+  width: '100%',
+});
+export const mobileSort = style({
+  display: 'none',
+  gap: vars.space.sm,
+  '@media': { [`(max-width: ${breakpoints.tablet})`]: { display: 'flex', flexWrap: 'wrap' } },
+});
+
 export const desktopViewport = style({
   width: '100%',
   overflowX: 'auto',

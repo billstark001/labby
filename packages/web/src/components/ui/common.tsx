@@ -5,7 +5,7 @@ import * as s from '../../styles/components.css';
 export { Pagination } from './Pagination';
 export type { PaginationProps } from './Pagination';
 export { ResponsiveDataField, ResponsiveDataView, responsiveDataStyles } from './ResponsiveData';
-export type { ResponsiveDataColumn } from './ResponsiveData';
+export type { ResponsiveDataColumn, DataSorting } from './ResponsiveData';
 
 interface ButtonProps extends h.JSX.HTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';

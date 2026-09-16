@@ -1788,3 +1788,19 @@ retry:
   zh-CN: "重试"
   ja-JP: "再試行"
 
+sortByLabel:
+  en: Sort by
+  zh-CN: 排序栏目
+  ja-JP: 並べ替え項目
+sortDirectionLabel:
+  en: Direction
+  zh-CN: 排序方向
+  ja-JP: 並び順
+sortAscending:
+  en: Ascending
+  zh-CN: 升序
+  ja-JP: 昇順
+sortDescending:
+  en: Descending
+  zh-CN: 降序
+  ja-JP: 降順

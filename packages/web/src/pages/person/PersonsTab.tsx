@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'preact/hooks';
+import { toast } from '@/components/ui/Toast';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { nanoid } from 'nanoid';
 import type { EntityListSortBy, Keyword, ListSortDirection, Person } from '@labby/core';
 
-import { personsSignal, keywordsSignal, keywordMapSignal } from '@/store';
+import { keywordsSignal, keywordMapSignal } from '@/store';
 import { fallbackEntityId, displayName, i18n } from '@/i18n';
 import { buildPersonReferenceCount, listPersonsPage, readPersonForeignKeys, useDatabase } from '@/db';
 import * as s from '@/styles/components.css';
@@ -156,8 +157,9 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
 export function PersonsTab() {
   const db = useDatabase();
   const { t } = i18n;
-  const persons = personsSignal.value;
+  const [persons, setPersons] = useState<Person[]>([]);
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
+  const request = useRef(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
@@ -165,17 +167,15 @@ export function PersonsTab() {
   const [totalItems, setTotalItems] = useState(0);
   const [personReferenceCount, setPersonReferenceCount] = useState<Map<string, number>>(new Map());
 
-  function defaultSortDirection(nextSortBy: EntityListSortBy): ListSortDirection {
-    return nextSortBy === 'modifiedAt' ? 'desc' : 'asc';
-  }
 
-  async function refreshForeignKeyContext(personIds: string[]) {
+  async function refreshForeignKeyContext(personIds: string[], ticket: number) {
     if (personIds.length === 0) {
       keywordsSignal.value = [];
       setPersonReferenceCount(new Map());
       return;
     }
     const bundle = await readPersonForeignKeys(db, personIds);
+    if (ticket !== request.current) return;
     keywordsSignal.value = bundle.keywords;
     setPersonReferenceCount(buildPersonReferenceCount(bundle));
   }
@@ -186,6 +186,7 @@ export function PersonsTab() {
     targetSortBy = sortBy,
     targetSortDirection = sortDirection,
   ) {
+    const ticket = ++request.current;
     const safePage = Math.max(1, targetPage);
     const offset = (safePage - 1) * targetPageSize;
     const result = await listPersonsPage(db, {
@@ -194,8 +195,10 @@ export function PersonsTab() {
       sortBy: targetSortBy,
       sortDirection: targetSortDirection,
     });
-    personsSignal.value = result.items;
-    await refreshForeignKeyContext(result.items.map((item) => item.id));
+    if (ticket !== request.current) return;
+    setPersons(result.items);
+    await refreshForeignKeyContext(result.items.map((item) => item.id), ticket);
+    if (ticket !== request.current) return;
     setTotalItems(result.total);
 
     const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
@@ -209,7 +212,8 @@ export function PersonsTab() {
   }
 
   useEffect(() => {
-    void refreshPersonsPage(page, pageSize);
+    void refreshPersonsPage(page, pageSize).catch(error => toast.error(String(error)));
+    return () => { request.current++; };
   }, [db, page, pageSize, sortBy, sortDirection]);
 
   function isPersonReferenced(id: string): boolean {
@@ -247,36 +251,6 @@ export function PersonsTab() {
         <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
       </div>
 
-      <div class={`${s.toolbar} ${s.mb8}`}>
-        <div class={s.flexGapSm}>
-          <select
-            class={`${s.input} ${s.autoWidthInput}`}
-            value={sortBy}
-            onChange={(event) => {
-              const nextSortBy = (event.target as HTMLSelectElement).value as EntityListSortBy;
-              setSortBy(nextSortBy);
-              setSortDirection(defaultSortDirection(nextSortBy));
-              setPage(1);
-            }}
-          >
-            <option value="modifiedAt">{t('modifiedAt')}</option>
-            <option value="name">{t('name')}</option>
-            <option value="notes">{t('notes')}</option>
-          </select>
-          <select
-            class={`${s.input} ${s.autoWidthInput}`}
-            value={sortDirection}
-            onChange={(event) => {
-              setSortDirection((event.target as HTMLSelectElement).value as ListSortDirection);
-              setPage(1);
-            }}
-          >
-            <option value="asc">ASC</option>
-            <option value="desc">DESC</option>
-          </select>
-        </div>
-      </div>
-
       {editing && (
         <Dialog
           open={true}
@@ -293,11 +267,20 @@ export function PersonsTab() {
       )}
 
       <ResponsiveDataView
+        sorting={{
+          key: sortBy, direction: sortDirection,
+          options: [
+            {key:'name',label:t('name')}, {key:'notes',label:t('notes')},
+            {key:'modifiedAt',label:t('modifiedAt'),defaultDirection:'desc'},
+          ],
+          onChange: (key, direction) => {setSortBy(key as EntityListSortBy);setSortDirection(direction);setPage(1);},
+        }}
         items={persons}
         columns={[
-          { header: t('name') },
+          { header: t('name'), sortKey: 'name' },
           { header: t('keywords') },
-          { header: t('notes') },
+          { header: t('notes'), sortKey: 'notes' },
+          { header: t('modifiedAt'), sortKey: 'modifiedAt' },
         ]}
         getKey={(person) => person.id}
         getDesktopRowProps={(person) => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
@@ -325,6 +308,7 @@ export function PersonsTab() {
             <td class={`${s.td} ${s.notesCell}`}>
               {person.notes && <span class={s.textMuted}>{person.notes}</span>}
             </td>
+            <td class={s.td}>{person.modifiedAt ? new Date(person.modifiedAt!).toLocaleString() : '—'}</td>
           </>
         )}
         renderMobileCard={(person) => (

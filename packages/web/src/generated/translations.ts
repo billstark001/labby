@@ -358,7 +358,11 @@ export const en = {
   "graphSyncing": "Syncing graph changes…",
   "graphLoadFailed": "Graph loading failed. Retry",
   "appLoading": "Loading…",
-  "retry": "Retry"
+  "retry": "Retry",
+  "sortByLabel": "Sort by",
+  "sortDirectionLabel": "Direction",
+  "sortAscending": "Ascending",
+  "sortDescending": "Descending"
 } as const
 
 export const zhCN = {
@@ -719,7 +723,11 @@ export const zhCN = {
   "graphSyncing": "正在同步图的变化…",
   "graphLoadFailed": "图加载失败，点击重试",
   "appLoading": "正在加载…",
-  "retry": "重试"
+  "retry": "重试",
+  "sortByLabel": "排序栏目",
+  "sortDirectionLabel": "排序方向",
+  "sortAscending": "升序",
+  "sortDescending": "降序"
 } as const
 
 export const jaJP = {
@@ -1080,7 +1088,11 @@ export const jaJP = {
   "graphSyncing": "グラフの変更を同期中…",
   "graphLoadFailed": "グラフの読み込みに失敗しました。再試行",
   "appLoading": "読み込み中…",
-  "retry": "再試行"
+  "retry": "再試行",
+  "sortByLabel": "並べ替え項目",
+  "sortDirectionLabel": "並び順",
+  "sortAscending": "昇順",
+  "sortDescending": "降順"
 } as const
 
 export type Lang = 'en' | 'zh-CN' | 'ja-JP'

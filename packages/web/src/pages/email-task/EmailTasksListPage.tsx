@@ -1,4 +1,4 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { EmailTask } from '@labby/core';
 
 import { Button, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles, toast } from '@/components/ui';
@@ -44,6 +44,7 @@ export function EmailTasksListPage() {
   const db = useDatabase();
   const capability = getEmailTaskCapability();
   const tasks = emailTasksSignal.value;
+  const [sort, setSort] = useState<{key:string;direction:'asc'|'desc'}>({key:'modifiedAt',direction:'desc'});
   const configs = configsSignal.value;
 
   useEffect(() => {
@@ -95,12 +96,23 @@ export function EmailTasksListPage() {
         <strong>{t('emailTaskList')}</strong>
         <div class={s.mt8}>
           <ResponsiveDataView
-            items={tasks}
+            items={[...tasks].sort((a,b) => {
+              const value = (task: EmailTask): string | number => sort.key === 'modifiedAt' ? task.modifiedAt ?? 0
+                : sort.key === 'config' ? findConfigLabel(task.configId)
+                : sort.key === 'cadence' ? summarizeCadence(task) : task.emails.join(', ');
+              const left=value(a), right=value(b);
+              const result=typeof left==='number' && typeof right==='number' ? left-right : String(left).localeCompare(String(right), i18n.lang.value, {numeric:true});
+              return (sort.direction==='asc'?result:-result) || a.id.localeCompare(b.id);
+            })}
+            sorting={{...sort,options:[
+              {key:'config',label:t('emailTaskConfig')}, {key:'cadence',label:t('emailTaskCadence')},
+              {key:'emails',label:t('emailTaskEmails')}, {key:'modifiedAt',label:t('modifiedAt'),defaultDirection:'desc'},
+            ],onChange:(key,direction)=>setSort({key,direction})}}
             columns={[
-              { header: t('emailTaskConfig') },
-              { header: t('emailTaskCadence') },
-              { header: t('emailTaskEmails') },
-              { header: t('modifiedAt') },
+              { header: t('emailTaskConfig'), sortKey:'config' },
+              { header: t('emailTaskCadence'), sortKey:'cadence' },
+              { header: t('emailTaskEmails'), sortKey:'emails' },
+              { header: t('modifiedAt'), sortKey:'modifiedAt' },
             ]}
             empty={<p class={`${s.text14} ${s.textMuted}`}>{t('noEmailTasksYet')}</p>}
             getKey={(task) => task.id}
