@@ -281,3 +281,19 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
     await store.close();
   }
 });
+
+test('JSONB schedule foreign keys load presenters, questioners, constraints and unavailable people', async () => {
+  const store = await createTestStore({dialect:'pglite',dataDir:'memory://'});
+  try {
+    await store.putKeyword(sampleKeyword());
+    for (const id of ['p1','p2','p3','p4']) await store.putPerson(samplePerson(id));
+    await store.putConfig(sampleConfig());
+    await store.putSchedule(samplePlan());
+    await store.putConstraint({id:'constraint',configId:'c1',type:'no-overlap',personIds:['p3'],weight:1});
+    await store.putUnavailability(sampleUnavailability('u1','p4'));
+    const bundle=await store.listScheduleForeignKeys({configIds:['c1']});
+    assert.deepEqual(bundle.persons.map(person=>person.id).sort(),['p1','p2','p3','p4']);
+    assert.ok(bundle.persons.every(person=>person.name?.startsWith('Person')));
+    assert.equal(bundle.keywords[0]?.id,'k1');
+  } finally {await store.close();}
+});

@@ -131,3 +131,38 @@ test('Postgres mode locks on the supplied connection inside the transaction', as
 
 import { SERVER_SCHEMA_VERSION } from '../src/store/schema-state.js';
 import { initializePostgresSchema } from '../src/store/initialize.js';
+
+test('v4 converts legacy TEXT documents and defaults, preserving values and resetting cursors', async () => {
+  const db = await memoryDatabase();
+  try {
+    await initializePostgresSchema(db);
+    await db.exec("DELETE FROM schema_migrations WHERE version=4");
+    await db.exec("ALTER TABLE keywords ALTER COLUMN payload TYPE text USING payload::text");
+    await db.exec("ALTER TABLE persons ALTER COLUMN keyword_ids DROP DEFAULT; ALTER TABLE persons ALTER COLUMN keyword_ids TYPE text USING keyword_ids::text; ALTER TABLE persons ALTER COLUMN keyword_ids SET DEFAULT '[]'");
+    await db.query('INSERT INTO keywords(id,payload) VALUES($1,$2)', ['physics', JSON.stringify({id:'physics', names:{zh:'物理'}, nested:{preserve:[1,null,true]}})]);
+    const before = (await db.query('SELECT payload::jsonb AS payload FROM keywords')).rows;
+    const epoch = (await db.query('SELECT epoch FROM graph_clock')).rows[0]!.epoch;
+    await migratePostgresSchema(db);
+    assert.deepEqual((await db.query('SELECT payload FROM keywords')).rows, before);
+    assert.notEqual((await db.query('SELECT epoch FROM graph_clock')).rows[0]!.epoch, epoch);
+    await db.query("INSERT INTO persons(id,payload) VALUES('p','{}')");
+    assert.deepEqual((await db.query("SELECT keyword_ids FROM persons WHERE id='p'")).rows, [{keyword_ids:[]}]);
+    const { listGraphPage } = await import('../src/store/graph.js');
+    assert.equal((await listGraphPage(db)).items[0]!.keyword!.id, 'physics');
+  } finally { await db.close(); }
+});
+
+test('v4 invalid JSON rolls back earlier column conversions and migration version', async () => {
+  const db = await memoryDatabase();
+  try {
+    await initializePostgresSchema(db);
+    await db.exec("DELETE FROM schema_migrations WHERE version=4");
+    await db.exec("ALTER TABLE configs ALTER COLUMN payload TYPE text USING payload::text; ALTER TABLE keywords ALTER COLUMN payload TYPE text USING payload::text");
+    await db.query("INSERT INTO keywords(id,payload) VALUES('broken','invalid JSON')");
+    const before = (await db.query('SELECT * FROM graph_clock')).rows;
+    await assert.rejects(migratePostgresSchema(db), /json/i);
+    assert.deepEqual((await db.query("SELECT data_type FROM information_schema.columns WHERE table_name='configs' AND column_name='payload'")).rows,[{data_type:'text'}]);
+    assert.deepEqual((await db.query('SELECT * FROM graph_clock')).rows,before);
+    assert.equal((await db.query('SELECT max(version) AS version FROM schema_migrations')).rows[0]!.version,3);
+  } finally { await db.close(); }
+});

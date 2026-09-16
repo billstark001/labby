@@ -17,6 +17,9 @@ import {
 } from '@/store/index';
 import { displayName } from '@/i18n';
 import {
+  loadAllPersons,
+  loadAllKeywords,
+  loadAllSimilarities,
   loadAllConfigs,
   loadAllEmailTasks,
   readScheduleForeignKeys,
@@ -138,6 +141,9 @@ export function SchedulePage() {
     let cancelled = false;
     const run = async () => {
       await Promise.all([
+        loadAllPersons(db),
+        loadAllKeywords(db),
+        loadAllSimilarities(db),
         loadAllConfigs(db),
         loadAllEmailTasks(db),
       ]);
@@ -147,16 +153,13 @@ export function SchedulePage() {
         setSelectedConfigId(remembered);
       }
     };
-    void run();
+    void run().catch(error => toast.error(String(error)));
     return () => { cancelled = true; };
   }, [db]);
 
   useEffect(() => {
     let cancelled = false;
     if (!selectedConfigId) {
-      personsSignal.value = [];
-      keywordsSignal.value = [];
-      keywordVectorsSignal.value = [];
       constraintsSignal.value = [];
       schedulesSignal.value = [];
       unavailabilitiesSignal.value = [];
@@ -165,13 +168,10 @@ export function SchedulePage() {
     void (async () => {
       const foreignKeys = await readScheduleForeignKeys(db, [selectedConfigId]);
       if (cancelled) return;
-      personsSignal.value = foreignKeys.persons;
-      keywordsSignal.value = foreignKeys.keywords;
-      keywordVectorsSignal.value = foreignKeys.keywordVectors;
       constraintsSignal.value = foreignKeys.constraints;
       schedulesSignal.value = foreignKeys.schedules;
       unavailabilitiesSignal.value = foreignKeys.unavailabilities;
-    })();
+    })().catch(error => { if (!cancelled) toast.error(String(error)); });
     return () => { cancelled = true; };
   }, [db, selectedConfigId]);
 

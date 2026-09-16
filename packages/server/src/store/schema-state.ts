@@ -1,9 +1,10 @@
 import type { MigrationClient } from './migrate/runtime.js';
-export const SERVER_SCHEMA_VERSION = 3;
+export const SERVER_SCHEMA_VERSION = 4;
 export const SCHEMA_NAMES = [
   'baseline',
   'product-embedding-and-ranking-history',
   'graph-change-feed',
+  'jsonb-documents',
 ] as const;
 
 export async function checkPostgresSchema(client: MigrationClient): Promise<void> {

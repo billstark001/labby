@@ -948,10 +948,12 @@ export class LabbyStore {
 
     const personIdSet = new Set<string>();
     for (const row of [...scheduleRows, ...constraintRows, ...unavailabilityRows]) {
-      let ids: string[] = [];
-      try { ids = uniqueIds(JSON.parse(String(row.person_ids ?? '[]')) as string[]); }
-      catch { /* Missing foreign-key index. */ }
-      for (const id of ids) personIdSet.add(id);
+      // JSONB arrays are already decoded by both PostgreSQL and PGlite.
+      if (!Array.isArray(row.person_ids)) throw new Error('Invalid person_ids: expected JSONB array');
+      for (const id of row.person_ids) {
+        if (typeof id !== 'string') throw new Error('Invalid person ID in foreign-key index');
+        personIdSet.add(id);
+      }
     }
 
     const persons = await this.listPayloadsByIds<Person>('persons', 'id', [...personIdSet]);

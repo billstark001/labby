@@ -183,5 +183,6 @@ CREATE TABLE schema_migrations (
   applied_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO schema_migrations(version,name) VALUES
-  (1,'baseline'), (2,'product-embedding-and-ranking-history'), (3,'graph-change-feed');
+  (1,'baseline'), (2,'product-embedding-and-ranking-history'), (3,'graph-change-feed'),
+  (4,'jsonb-documents');
 CREATE INDEX keywords_graph_id_idx ON keywords(id COLLATE "C");

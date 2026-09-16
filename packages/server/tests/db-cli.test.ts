@@ -59,7 +59,7 @@ test('CLI dotenv status diagnoses legacy schema, default command migrates, repea
     const status = JSON.parse((await cli('--action', 'status', '--json')).stdout);
     assert.equal(status.state, 'legacy');
     assert.deepEqual(status.applied, []);
-    assert.deepEqual(status.pendingVersions, [2, 3]);
+    assert.deepEqual(status.pendingVersions, [2, 3, 4]);
     assert.equal(status.migrated, false);
     assert.match(status.nextCommand, /db:migrate/);
     const migrated = await cli();
@@ -68,7 +68,7 @@ test('CLI dotenv status diagnoses legacy schema, default command migrates, repea
     const again = JSON.parse((await cli('--json')).stdout);
     assert.equal(again.state, 'current');
     assert.equal(again.migrated, false);
-    assert.equal(again.applied.length, 3);
+    assert.equal(again.applied.length, 4);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -43,6 +43,9 @@ Production execution must be explicitly authorized; ordinary server startup rema
    - Store embedding and geometry as JSONB with a dimension-shape constraint.
    - Remove vector64 and projection2d columns; add ranking_judgments.
 3. Graph change feed: transactionally ordered revision clock, per-keyword latest changes and deletion tombstones.
+4. JSONB documents: convert legacy TEXT JSON columns and their defaults to JSONB, matching fresh
+   initialization. Invalid JSON rolls back the entire migration. Refresh the graph epoch so clients
+   discard pre-migration cursors and reload their cached records.
 
 Conversion is approximate: it cannot preserve all old Euclidean distances or reconstruct
 judgments that the old application never saved. The original rows remain in
