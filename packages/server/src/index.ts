@@ -19,7 +19,7 @@ const publicBaseUrl = resolvePublicBaseUrl(process.env, port);
 
 const requestedSchedulerMode = resolveSchedulerMode(process.env.SCHEDULER_MODE);
 let schedulerMode: SchedulerMode = requestedSchedulerMode;
-if (requestedSchedulerMode !== 'cron') {
+if (requestedSchedulerMode === 'cloud' || requestedSchedulerMode === 'hybrid') {
   const mirror = createCloudSchedulerMirrorFromEnv();
   if (mirror) {
     scheduler.setMirror(mirror);

@@ -13,6 +13,7 @@ import {
 import * as s from './Dialog.css';
 import * as btnStyles from '../../styles/components.css';
 import { i18n } from '@/i18n';
+import { X } from 'lucide-preact';
 
 // Re-export primitive components for convenience
 export { useDialog, type DialogHandle };
@@ -38,9 +39,16 @@ export function Dialog({ open, onClose, closeOnOverlayClick = true, title, descr
     <PrimitiveDialog open={open} onClose={onClose} closeOnOverlayClick={closeOnOverlayClick}>
       <PrimitiveDialogOverlay class={s.dialogOverlay} />
       <PrimitiveDialogContent class={s.dialogContent} style={widthStyle}>
-        {title && <PrimitiveDialogTitle class={s.dialogTitle}>{title}</PrimitiveDialogTitle>}
-        {description && <PrimitiveDialogDescription class={s.dialogDescription}>{description}</PrimitiveDialogDescription>}
-        {children}
+        <header class={s.dialogHeader}>
+          {title ? <PrimitiveDialogTitle class={s.dialogTitle}>{title}</PrimitiveDialogTitle> : <span />}
+          <button class={s.dialogClose} type="button" onClick={onClose} aria-label={i18n.t('close')}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+        <div class={s.dialogBody}>
+          {description && <PrimitiveDialogDescription class={s.dialogDescription}>{description}</PrimitiveDialogDescription>}
+          {children}
+        </div>
         {actions && <div class={s.dialogActions}>{actions}</div>}
       </PrimitiveDialogContent>
     </PrimitiveDialog>

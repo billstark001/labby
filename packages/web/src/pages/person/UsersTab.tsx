@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
-import { Button } from '@/components/ui';
+import { Button, ContentSkeleton } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { createUser, deleteUser, fetchUsers, SafeUser, updateUser, USER_ROLE_ADMIN, USER_ROLE_ROOT, USER_ROLE_USER, UserRoleWithoutRoot } from '@/api-server/users';
+import { useAsyncResource } from '@/lib/use-async-resource';
 
 interface UsersTabProps {
   canManageUsers: boolean;
@@ -122,40 +123,28 @@ function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
 
 export function UsersTab({ canManageUsers }: UsersTabProps) {
   const { t } = i18n;
-  const [users, setUsers] = useState<SafeUser[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
-
-  async function loadUsers() {
-    setLoading(true);
-    try {
-      const data = await fetchUsers();
-      setUsers(data);
-    } catch (err) {
-      toast.error(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const usersQuery = useAsyncResource(fetchUsers);
+  const users = usersQuery.data ?? [];
 
   useEffect(() => {
-    void loadUsers();
-  }, []);
+    if (usersQuery.error) toast.error(String(usersQuery.error));
+  }, [usersQuery.error]);
 
   function handleDelete(user: SafeUser) {
     confirmDialog(t('deleteUser'), t('deleteUserWarning'), async () => {
       try {
         await deleteUser(user.id);
-        await loadUsers();
+        await usersQuery.refetch();
       } catch (err) {
         toast.error(String(err));
       }
     });
   }
 
-  if (loading) {
-    return <div class={`${s.text14} ${s.textMuted}`}>{t('serverCapabilitiesLoading')}</div>;
+  if (usersQuery.isPending && !usersQuery.data) {
+    return <ContentSkeleton rows={5} />;
   }
 
   return (
@@ -207,7 +196,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
           <CreateUserForm
             onSave={async () => {
               setShowCreateDialog(false);
-              await loadUsers();
+              await usersQuery.refetch();
             }}
             onCancel={() => setShowCreateDialog(false)}
           />
@@ -220,7 +209,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
             user={editingUser}
             onSave={async () => {
               setEditingUser(null);
-              await loadUsers();
+              await usersQuery.refetch();
             }}
             onCancel={() => setEditingUser(null)}
           />

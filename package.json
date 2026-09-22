@@ -7,7 +7,7 @@
     "pnpm": ">=12 <13"
   },
   "devEngines": {
-    "packageManager": { "name": "pnpm", "version": "^12.0.0" }
+    "packageManager": { "name": "pnpm", "version": "12.0.0", "onFail": "warn" }
   },
   "description": "Academic seminar scheduling system",
   "scripts": {
@@ -23,6 +23,9 @@
     "db:init": "pnpm --filter @labby/server run db:init",
     "db:migrate": "pnpm --filter @labby/server run db:migrate",
     "deploy:cloudrun:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/cloud-run-incremental-deploy.ts",
+    "deploy:railway": "tsx scripts/railway-deploy.ts --full",
+    "deploy:railway:incremental": "tsx scripts/railway-deploy.ts --incremental",
+    "railway:cron": "tsx scripts/railway-cron-dispatch.ts",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint"

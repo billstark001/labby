@@ -7,6 +7,7 @@ import { useDatabase } from '@/db';
 import { recommendRanking, trainRanking } from '@/lib/embedding-engine';
 import { rankingGroups } from '@/lib/ranking-editor';
 import { Button } from './ui/common';
+import { ContentSkeleton } from './ui/Skeleton';
 import * as s from '@/styles/components.css';
 
 export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved?: () => void }) {
@@ -86,7 +87,7 @@ export function RankingCard() {
       <input type="checkbox" checked={includeDisabled} onChange={event => setIncludeDisabled(event.currentTarget.checked)} />
       {' '}{t('rankingIncludeDisabled')}
     </label>
-    {loading ? <p role="status">{t('rankingLoading')}</p> : error ? <p role="alert">{error}</p>
+    {loading ? <ContentSkeleton rows={3} /> : error ? <p role="alert">{error}</p>
       : query ? <><RankingEditor key={query.key} query={query} onSaved={() => next(true)} />
         <Button variant="ghost" onClick={() => next(false)}>{t('rankingSkip')}</Button></>
       : <p>{keywords.length < 3 ? t('rankingNeedKeywords') : t('rankingNoQuestions')}</p>}

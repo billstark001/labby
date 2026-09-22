@@ -25,7 +25,7 @@ export interface CronJobDefinition {
   timezone?: string;
 }
 
-export type SchedulerMode = 'cron' | 'cloud' | 'hybrid';
+export type SchedulerMode = 'cron' | 'cloud' | 'external' | 'hybrid';
 
 export interface SchedulerMirror {
   upsert(definition: CronJobDefinition): Promise<void>;
@@ -169,6 +169,7 @@ export class CronScheduler {
 export function resolveSchedulerMode(value: string | undefined): SchedulerMode {
   const normalized = value?.trim().toLowerCase();
   if (normalized === 'cloud') return 'cloud';
+  if (normalized === 'external' || normalized === 'railway') return 'external';
   if (normalized === 'hybrid' || normalized === 'both') return 'hybrid';
   return 'cron';
 }
