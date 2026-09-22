@@ -20,26 +20,59 @@ export const dialogContent = style({
   transform: 'translate(-50%, -50%)',
   background: vars.color.surface,
   borderRadius: vars.radius.lg,
-  padding: vars.space.xl,
+  padding: 0,
   minWidth: '320px',
   maxWidth: '90vw',
   maxHeight: '80vh',
-  overflow: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden',
   boxShadow: vars.shadow.lg,
   outline: 'none',
   zIndex: 1001,
   '@media': {
     [`(max-width: ${breakpoints.tablet})`]: {
-      padding: vars.space.md,
+      minWidth: 'min(320px, 92vw)',
     },
   },
 });
 
 export const dialogTitle = style({
-  margin: `0 0 ${vars.space.sm}`,
+  margin: 0,
+  minWidth: 0,
   fontSize: vars.font.size.lg,
   fontWeight: vars.font.weight.bold,
+  overflowWrap: 'anywhere',
   color: vars.color.text,
+});
+
+export const dialogHeader = style({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: vars.space.md,
+  minHeight: '56px',
+  padding: `${vars.space.md} ${vars.space.lg}`,
+  borderBottom: `1px solid ${vars.color.border}`,
+  flex: '0 0 auto',
+});
+
+export const dialogClose = style({
+  display: 'grid',
+  placeItems: 'center',
+  flex: '0 0 auto',
+  width: '36px',
+  height: '36px',
+  margin: '-8px',
+  border: 0,
+  borderRadius: vars.radius.md,
+  color: vars.color.textMuted,
+  background: 'transparent',
+  cursor: 'pointer',
+  selectors: {
+    '&:hover': { color: vars.color.text, background: vars.color.background },
+    '&:focus-visible': { outline: `2px solid ${vars.color.primary}`, outlineOffset: '2px' },
+  },
 });
 
 export const dialogDescription = style({
@@ -50,11 +83,17 @@ export const dialogDescription = style({
 
 export const dialogBody = style({
   color: vars.color.text,
+  padding: `${vars.space.lg} ${vars.space.lg}`,
+  minHeight: 0,
+  overflowY: 'auto',
 });
 
 export const dialogActions = style({
   display: 'flex',
+  flexWrap: 'wrap',
   gap: vars.space.md,
-  marginTop: vars.space.lg,
+  padding: `${vars.space.md} ${vars.space.lg}`,
   justifyContent: 'flex-end',
+  borderTop: `1px solid ${vars.color.border}`,
+  flex: '0 0 auto',
 });

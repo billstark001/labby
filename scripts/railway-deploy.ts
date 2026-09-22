@@ -1,0 +1,108 @@
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+
+export type RailwayServiceKind = 'server' | 'cron';
+
+const SHARED_DEPLOY_PATTERNS = [
+  /^Dockerfile$/,
+  /^package\.json$/,
+  /^pnpm-lock\.yaml$/,
+  /^pnpm-workspace\.yaml$/,
+  /^packages\/core\//,
+  /^packages\/server\//,
+];
+
+const TARGET_DEPLOY_PATTERNS: Record<RailwayServiceKind, RegExp[]> = {
+  server: [/^railway\.json$/, /^packages\/web\//],
+  cron: [/^railway\.cron\.json$/],
+};
+
+function run(command: string, args: string[], capture = false): string {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+  });
+  if (result.status !== 0) {
+    const detail = capture ? (result.stderr ?? '').trim() : '';
+    throw new Error(`${command} ${args.join(' ')} failed with code ${result.status ?? 1}${detail ? `: ${detail}` : ''}`);
+  }
+  return (result.stdout ?? '').trim();
+}
+
+function tryRun(command: string, args: string[]): string | null {
+  try {
+    return run(command, args, true);
+  } catch {
+    return null;
+  }
+}
+
+export function shouldDeployRailway(files: string[], target: RailwayServiceKind): boolean {
+  const patterns = [...SHARED_DEPLOY_PATTERNS, ...TARGET_DEPLOY_PATTERNS[target]];
+  return files.some((file) => patterns.some((pattern) => pattern.test(file)));
+}
+
+function changedFiles(): { base: string; files: string[] } | null {
+  const requestedBase = process.env.DEPLOY_DIFF_BASE?.trim();
+  const candidates = requestedBase ? [requestedBase] : ['origin/main', 'main', 'HEAD^'];
+  for (const candidate of candidates) {
+    const base = tryRun('git', ['merge-base', 'HEAD', candidate]);
+    if (!base) continue;
+    const output = tryRun('git', ['diff', '--name-only', `${base}..HEAD`]);
+    if (output === null) continue;
+    return { base, files: output.split('\n').map((file) => file.trim()).filter(Boolean) };
+  }
+  return null;
+}
+
+export function parseRailwayDeployArguments(args: string[]): { incremental: boolean; target: RailwayServiceKind } {
+  let incremental = false;
+  let full = false;
+  let target: RailwayServiceKind = 'server';
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === '--incremental') {
+      incremental = true;
+    } else if (argument === '--full') {
+      full = true;
+    } else if (argument === '--target') {
+      const value = args[index + 1];
+      if (value !== 'server' && value !== 'cron') throw new Error('--target must be server or cron');
+      target = value;
+      index += 1;
+    } else {
+      throw new Error(`Unknown argument: ${argument}`);
+    }
+  }
+  if (incremental === full) throw new Error('Specify exactly one of --full or --incremental');
+  return { incremental, target };
+}
+
+export function main(args = process.argv.slice(2)): void {
+  const { incremental, target } = parseRailwayDeployArguments(args);
+  if (incremental) {
+    const changes = changedFiles();
+    if (!changes) {
+      console.warn('[railway] Could not determine a safe diff base; deploying instead of skipping.');
+    } else if (!shouldDeployRailway(changes.files, target)) {
+      console.info(`[railway] No ${target} runtime changes since ${changes.base}; deployment skipped.`);
+      return;
+    }
+  }
+
+  const railwayArgs = ['up'];
+  if (process.env.RAILWAY_DETACH === 'true') railwayArgs.push('--detach');
+  if (process.env.RAILWAY_SERVICE?.trim()) railwayArgs.push('--service', process.env.RAILWAY_SERVICE.trim());
+  if (process.env.RAILWAY_ENVIRONMENT?.trim()) railwayArgs.push('--environment', process.env.RAILWAY_ENVIRONMENT.trim());
+  if (process.env.RAILWAY_PROJECT_ID?.trim()) {
+    if (!process.env.RAILWAY_ENVIRONMENT?.trim()) {
+      throw new Error('RAILWAY_PROJECT_ID requires RAILWAY_ENVIRONMENT');
+    }
+    railwayArgs.push('--project', process.env.RAILWAY_PROJECT_ID.trim());
+  }
+  console.info(`[railway] Starting ${incremental ? 'incremental' : 'full'} ${target} deployment.`);
+  run(process.env.RAILWAY_CLI?.trim() || 'railway', railwayArgs);
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
+if (import.meta.url === invokedPath) main();

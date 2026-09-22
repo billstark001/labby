@@ -1,5 +1,6 @@
 /** Business-layer Dialog wrapper and utilities. */
 import { type ComponentChildren } from 'preact';
+import { useId } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import {
   Dialog as PrimitiveDialog,
@@ -13,6 +14,7 @@ import {
 import * as s from './Dialog.css';
 import * as btnStyles from '../../styles/components.css';
 import { i18n } from '@/i18n';
+import { X } from 'lucide-preact';
 
 // Re-export primitive components for convenience
 export { useDialog, type DialogHandle };
@@ -23,24 +25,39 @@ interface DialogProps {
   open: boolean;
   onClose: () => void;
   closeOnOverlayClick?: boolean;
-  title?: ComponentChildren;
+  title: ComponentChildren;
   description?: ComponentChildren;
-  children: ComponentChildren;
+  children?: ComponentChildren;
   actions?: ComponentChildren;
   width?: string | number;
 }
 
 export function Dialog({ open, onClose, closeOnOverlayClick = true, title, description, children, actions, width }: DialogProps) {
+  const titleId = useId();
+  const descriptionId = useId();
   const widthStyle = width
     ? { width: typeof width === 'number' ? `${width}px` : width }
     : undefined;
   return (
-    <PrimitiveDialog open={open} onClose={onClose} closeOnOverlayClick={closeOnOverlayClick}>
+    <PrimitiveDialog
+      open={open}
+      onClose={onClose}
+      closeOnOverlayClick={closeOnOverlayClick}
+      labelledBy={titleId}
+      describedBy={description ? descriptionId : undefined}
+    >
       <PrimitiveDialogOverlay class={s.dialogOverlay} />
       <PrimitiveDialogContent class={s.dialogContent} style={widthStyle}>
-        {title && <PrimitiveDialogTitle class={s.dialogTitle}>{title}</PrimitiveDialogTitle>}
-        {description && <PrimitiveDialogDescription class={s.dialogDescription}>{description}</PrimitiveDialogDescription>}
-        {children}
+        <header class={s.dialogHeader}>
+          <PrimitiveDialogTitle class={s.dialogTitle} id={titleId}>{title}</PrimitiveDialogTitle>
+          <button class={s.dialogClose} type="button" onClick={onClose} aria-label={i18n.t('close')}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+        {(description || children) && <div class={s.dialogBody}>
+          {description && <PrimitiveDialogDescription class={s.dialogDescription} id={descriptionId}>{description}</PrimitiveDialogDescription>}
+          {children}
+        </div>}
         {actions && <div class={s.dialogActions}>{actions}</div>}
       </PrimitiveDialogContent>
     </PrimitiveDialog>
@@ -137,7 +154,6 @@ export function ConfirmDialogComponent() {
       onClose={handleCancel}
       title={state.title}
       description={state.message}
-      children={<div class={s.dialogBody} />}
       actions={
         <>
           <button class={btnStyles.btnVariants.secondary} onClick={handleCancel}>

@@ -1,4 +1,5 @@
 export * from './common';
+export * from './Skeleton';
 export * from './Dialog';
 export * from './Menu';
 export * from './Pagination';

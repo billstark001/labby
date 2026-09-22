@@ -306,6 +306,8 @@ export class LabbyStore {
         connectionString: config.connectionString,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
         connectionTimeoutMillis: 10000,
+        idleTimeoutMillis: 10000,
+        allowExitOnIdle: true,
         query_timeout: 20000,
       });
       this.db = drizzlePostgres(this.pgPool);

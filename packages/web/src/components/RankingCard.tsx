@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import type { RankingJudgment, RankingQuery } from '@labby/core';
 import { graphData } from '@/lib/graph-sync';
 import { RankingOrder } from './RankingOrder';
@@ -7,6 +7,9 @@ import { useDatabase } from '@/db';
 import { recommendRanking, trainRanking } from '@/lib/embedding-engine';
 import { rankingGroups } from '@/lib/ranking-editor';
 import { Button } from './ui/common';
+import { ContentSkeleton } from './ui/Skeleton';
+import { toast } from './ui/Toast';
+import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
 
 export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved?: () => void }) {
@@ -54,42 +57,50 @@ export function RankingCard() {
   const keywords = graphData.value.keywords;
   const keywordKey = keywords.map(k => k.id).sort().join('\n');
   const [excludedKeys, setExcluded] = useState<string[]>([]);
-  const [query, setQuery] = useState<RankingQuery | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [answered, setAnswered] = useState(0);
-  const [history, setHistory] = useState<RankingJudgment[]>([]);
   const [revision, setRevision] = useState(0);
   const [includeDisabled, setIncludeDisabled] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true); setError('');
-    void Promise.all([recommendRanking(db, excludedKeys, includeDisabled), db.similarity.getHistory()]).then(([next, judgments]) => {
-      if (!cancelled) { setQuery(next); setHistory(judgments); }
-    })
-      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : t('rankingFailed')); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+  const [mutationPending, setMutationPending] = useState(false);
+  const resource = useAsyncResource(async () => {
+    const [query, history] = await Promise.all([
+      recommendRanking(db, excludedKeys, includeDisabled),
+      db.similarity.getHistory(),
+    ]);
+    return { query, history };
   }, [db, keywordKey, excludedKeys, revision, includeDisabled]);
+  const query = resource.data?.query ?? null;
+  const history: RankingJudgment[] = resource.data?.history ?? [];
+
   async function forget(id: string) {
-    setLoading(true);
-    try { await db.similarity.forgetJudgment(id); setExcluded([]); setRevision(n => n + 1); }
-    catch (e) { setError(e instanceof Error ? e.message : t('rankingFailed')); setLoading(false); }
+    setMutationPending(true);
+    try {
+      await db.similarity.forgetJudgment(id);
+      setExcluded([]);
+      setRevision(n => n + 1);
+    } catch (error) {
+      // Mutation failures are deliberately separate from query state.
+      toast.error(error instanceof Error ? error.message : t('rankingFailed'));
+    } finally {
+      setMutationPending(false);
+    }
   }
   function next(saved: boolean) {
     if (!query) return;
     if (saved) setAnswered(n => n + 1);
     setExcluded(previous => [...previous, query.key].slice(-200));
   }
-  return <div class={`${s.card} ${s.mb24}`}>
+  const errorMessage = resource.error instanceof Error ? resource.error.message : resource.error ? String(resource.error) : '';
+  return <div class={`${s.card} ${s.mb24}`} aria-busy={resource.isPending || mutationPending}>
     <label class={s.label}>
-      <input type="checkbox" checked={includeDisabled} onChange={event => setIncludeDisabled(event.currentTarget.checked)} />
+      <input type="checkbox" checked={includeDisabled} disabled={resource.isPending} onChange={event => setIncludeDisabled(event.currentTarget.checked)} />
       {' '}{t('rankingIncludeDisabled')}
     </label>
-    {loading ? <p role="status">{t('rankingLoading')}</p> : error ? <p role="alert">{error}</p>
-      : query ? <><RankingEditor key={query.key} query={query} onSaved={() => next(true)} />
+    {resource.isInitialLoading ? <ContentSkeleton rows={3} /> : <>
+      {errorMessage && <p role="alert" class={s.textDanger}>{errorMessage} <Button variant="secondary" onClick={() => void resource.refetch()}>{t('retry')}</Button></p>}
+      {resource.data && (query ? <><RankingEditor key={query.key} query={query} onSaved={() => next(true)} />
         <Button variant="ghost" onClick={() => next(false)}>{t('rankingSkip')}</Button></>
-      : <p>{keywords.length < 3 ? t('rankingNeedKeywords') : t('rankingNoQuestions')}</p>}
+      : <p>{keywords.length < 3 ? t('rankingNeedKeywords') : t('rankingNoQuestions')}</p>)}
+    </>}
     {answered > 0 && <p class={s.mutedParagraph}>{t('rankingAnswered', String(answered))}</p>}
     <details class={s.mt16}>
       <summary>{t('rankingHistoryCount', String(history.length))}</summary>
@@ -98,7 +109,7 @@ export function RankingCard() {
         const name = (id: string) => { const k = keywords.find(k => k.id === id); return k ? displayName(k) : id; };
         return <div key={j.id} class={s.formGroup}>
           <p>{name(j.anchorId)}: {j.groups.map(g => g.map(name).join(' = ')).join(' → ')}</p>
-          <Button variant="ghost" disabled={loading} onClick={() => void forget(j.id)}>{t('rankingForget')}</Button>
+          <Button variant="ghost" disabled={resource.isPending || mutationPending} onClick={() => void forget(j.id)}>{t('rankingForget')}</Button>
         </div>;
       })}
     </details>

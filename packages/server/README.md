@@ -122,9 +122,10 @@ If SMTP is not configured, the cron subsystem stays disabled.
 
 ## Scheduler Modes
 
-The scheduler can run in three modes using `SCHEDULER_MODE`:
+The scheduler can run in four modes using `SCHEDULER_MODE`:
 
 - `cron`: local node-cron only
+- `external` (alias `railway`): register dispatchable jobs without local timers or a provider mirror
 - `cloud`: Cloud Scheduler only
 - `hybrid`: local cron + Cloud Scheduler mirrored jobs
 
