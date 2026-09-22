@@ -10,6 +10,8 @@ import type {
   KeywordVectorStore,
   LabbyDB,
   Person,
+  PersonTag,
+  PersonTagStore,
   PersonStore,
   PersonUnavailability,
   PersonUnavailabilityStore,
@@ -82,6 +84,7 @@ function createEntityStore<T extends { id: string }>(client: ApiClient, path: st
 
 export function createApiDB(client: ApiClient = apiClient): LabbyDB {
   const persons = createEntityStore<Person>(client, '/db/persons') satisfies PersonStore;
+  const personTags = createEntityStore<PersonTag>(client, '/db/person-tags') satisfies PersonTagStore;
   const keywords = createEntityStore<Keyword>(client, '/db/keywords') satisfies KeywordStore;
   const configs = createEntityStore<ScheduleConfig>(client, '/db/configs') satisfies ScheduleConfigStore;
   const constraints = createEntityStore<ScheduleConstraint>(client, '/db/constraints') satisfies ScheduleConstraintStore;
@@ -178,6 +181,7 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
       commit: async () => { throw new Error('Use the ranking API to update server-owned embeddings'); },
     },
     persons,
+    personTags,
     keywords,
     keywordVectors,
     configs,

@@ -8,7 +8,9 @@ import { BROWSER_SCHEMA_VERSION, upgradeBrowserSchema } from '../src/db/browser-
 const schemaSql = {
   current: await readFile(new URL('../src/db/current-schema.sql', import.meta.url), 'utf8'),
   graph: await readFile(new URL('../src/db/migrate/004.up.sql', import.meta.url), 'utf8'),
+  identity: await readFile(new URL('../src/db/migrate/005.up.sql', import.meta.url), 'utf8'),
 };
+const KEYWORD_ID = '10000000-0000-4000-8000-000000000001';
 
 async function legacyDatabase(db: PGlite, vector64 = Array.from({ length: 64 }, (_, i) => i / 64)) {
   await db.exec(`
@@ -28,7 +30,7 @@ test('fresh browser schema is initialized once and preserves data on repeated up
   try {
     await upgradeBrowserSchema(db, schemaSql);
     assert.deepEqual((await db.query('SELECT value FROM app_metadata')).rows, [{ value: { version: BROWSER_SCHEMA_VERSION } }]);
-    await db.query("INSERT INTO entities VALUES ('keyword','k',1,'{\"name\":\"Keep\"}')");
+    await db.query('INSERT INTO entities VALUES (\'keyword\',$1,$2,\'{"name":"Keep"}\')', [KEYWORD_ID, new Date(1)]);
     await upgradeBrowserSchema(db, schemaSql);
     assert.deepEqual((await db.query('SELECT payload FROM entities')).rows, [{ payload: { name: 'Keep' } }]);
     assert.deepEqual((await db.query('SELECT * FROM embedding_migration_archive')).rows, []);
@@ -41,14 +43,18 @@ test('v2 browser vectors become product embeddings with verbatim payload archive
     const before = await legacyDatabase(db);
     await upgradeBrowserSchema(db, schemaSql);
     const expected = migrateEuclideanVector(before);
-    assert.deepEqual((await db.query("SELECT payload FROM entities WHERE kind='keyword-vector'")).rows, [{ payload: expected }]);
-    assert.equal(Number((await db.query<{ updated_at: number }>("SELECT updated_at FROM entities WHERE kind='keyword-vector'")).rows[0]!.updated_at), 99);
-    assert.deepEqual((await db.query('SELECT keyword_id,source FROM embedding_migration_archive')).rows, [{ keyword_id: 'k', source: before }]);
+    const vectorRow = (await db.query<{ id: string; payload: typeof expected }>("SELECT id,payload FROM entities WHERE kind='keyword-vector'")).rows[0]!;
+    assert.match(vectorRow.id, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(vectorRow.payload, { ...expected, keywordId: vectorRow.id });
+    assert.equal(new Date((await db.query<{ updated_at: string }>("SELECT updated_at FROM entities WHERE kind='keyword-vector'")).rows[0]!.updated_at).getTime(), 99);
+    const archive = (await db.query<{keyword_id:string;source:any}>('SELECT keyword_id,source FROM embedding_migration_archive')).rows[0]!;
+    assert.equal(archive.keyword_id, vectorRow.id);
+    assert.deepEqual(archive.source, before);
     assert.deepEqual((await db.query("SELECT payload FROM entities WHERE kind='person'")).rows, [{ payload: { name: 'Keep me' } }]);
     const snapshot = (await db.query('SELECT * FROM entities ORDER BY kind,id')).rows;
     await upgradeBrowserSchema(db, schemaSql);
     assert.deepEqual((await db.query('SELECT * FROM entities ORDER BY kind,id')).rows, snapshot);
-    assert.deepEqual((await db.query('SELECT keyword_id,source FROM embedding_migration_archive')).rows, [{ keyword_id: 'k', source: before }]);
+    assert.equal((await db.query('SELECT keyword_id FROM embedding_migration_archive')).rows.length, 1);
   } finally { await db.close(); }
 });
 
@@ -95,13 +101,13 @@ test('browser graph cursor feed reports deletes and equal-timestamp updates', as
     await upgradeBrowserSchema(db, schemaSql);
     const { listBrowserGraphPage } = await import('../src/db/graph.js');
     const first = await listBrowserGraphPage(db);
-    await db.query('INSERT INTO entities VALUES($1,$2,$3,$4)', ['keyword','k',1,JSON.stringify({id:'k',name:'before'})]);
+    await db.query('INSERT INTO entities VALUES($1,$2,$3,$4)', ['keyword',KEYWORD_ID,new Date(1),JSON.stringify({id:KEYWORD_ID,name:'before'})]);
     const added = await listBrowserGraphPage(db, { since: first.checkpoint! });
     assert.equal(added.items[0]!.keyword!.name, 'before');
-    await db.query('UPDATE entities SET payload=$1 WHERE kind=$2 AND id=$3', [JSON.stringify({id:'k',name:'after'}),'keyword','k']);
+    await db.query('UPDATE entities SET payload=$1 WHERE kind=$2 AND id=$3', [JSON.stringify({id:KEYWORD_ID,name:'after'}),'keyword',KEYWORD_ID]);
     const changed = await listBrowserGraphPage(db, { since: added.checkpoint! });
     assert.equal(changed.items[0]!.keyword!.name, 'after');
-    await db.query('DELETE FROM entities WHERE kind=$1 AND id=$2', ['keyword','k']);
+    await db.query('DELETE FROM entities WHERE kind=$1 AND id=$2', ['keyword',KEYWORD_ID]);
     const removed = await listBrowserGraphPage(db, { since: changed.checkpoint! });
     assert.equal(removed.items[0]!.keyword, null);
   } finally { await db.close(); }

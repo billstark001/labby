@@ -16,22 +16,27 @@ import type {
 } from '@labby/core';
 import { LabbyStore, UserRole, type RefreshTokenRecord, type StoredUser } from '../src/store/index';
 
+function testUuid(seed: string): string {
+  const hex = [...seed].reduce((value, char) => Math.imul(value ^ char.charCodeAt(0), 16777619) >>> 0, 2166136261).toString(16).padStart(8, '0');
+  return `${hex}-0000-4000-8000-000000000001`;
+}
+
 function createTempDbPath(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
   return path.join(tempDir, 'labby.db');
 }
 
-function samplePerson(id = 'p1'): Person {
+function samplePerson(id = testUuid('p1')): Person {
   return {
     id,
     name: `Person ${id}`,
     names: { en: `Person ${id}` },
     metadata: {},
-    keywordIds: ['k1'],
+    keywordIds: [testUuid('k1')],
   };
 }
 
-function sampleKeyword(id = 'k1'): Keyword {
+function sampleKeyword(id = testUuid('k1')): Keyword {
   return {
     id,
     name: `Keyword ${id}`,
@@ -40,7 +45,7 @@ function sampleKeyword(id = 'k1'): Keyword {
   };
 }
 
-function sampleConfig(id = 'c1'): ScheduleConfig {
+function sampleConfig(id = testUuid('c1')): ScheduleConfig {
   return {
     id,
     daysOfWeek: [1],
@@ -54,7 +59,7 @@ function sampleConfig(id = 'c1'): ScheduleConfig {
   };
 }
 
-function samplePlan(id = 's1', configId = 'c1'): SchedulePlan {
+function samplePlan(id = testUuid('s1'), configId = testUuid('c1')): SchedulePlan {
   return {
     id,
     configId,
@@ -62,13 +67,13 @@ function samplePlan(id = 's1', configId = 'c1'): SchedulePlan {
     sessions: [
       {
         date: '2026-01-02',
-        presentations: [{ presenterId: 'p1', questionerIds: ['p2'] }],
+        presentations: [{ presenterId: testUuid('p1'), questionerIds: [testUuid('p2')] }],
       },
     ],
   };
 }
 
-function sampleUnavailability(id = 'u1', personId = 'p1', configId = 'c1'): PersonUnavailability {
+function sampleUnavailability(id = testUuid('u1'), personId = testUuid('p1'), configId = testUuid('c1')): PersonUnavailability {
   return {
     id,
     personId,
@@ -78,7 +83,7 @@ function sampleUnavailability(id = 'u1', personId = 'p1', configId = 'c1'): Pers
   };
 }
 
-function sampleVector(keywordId = 'k1'): KeywordVector {
+function sampleVector(keywordId = testUuid('k1')): KeywordVector {
   const embedding = Array.from({ length: 8 }, (_, i) => (i === 0 ? 0.5 : 0));
   return {
     keywordId,
@@ -90,7 +95,7 @@ function sampleVector(keywordId = 'k1'): KeywordVector {
   };
 }
 
-function sampleEmailTask(id = 'et1', configId = 'c1'): EmailTask {
+function sampleEmailTask(id = testUuid('et1'), configId = testUuid('c1')): EmailTask {
   return {
     id,
     configId,
@@ -103,7 +108,7 @@ function sampleEmailTask(id = 'et1', configId = 'c1'): EmailTask {
   };
 }
 
-function sampleUser(id = 'user-1'): StoredUser {
+function sampleUser(id = testUuid('user-1')): StoredUser {
   return {
     id,
     username: 'alice',
@@ -115,10 +120,10 @@ function sampleUser(id = 'user-1'): StoredUser {
   };
 }
 
-function sampleRefreshToken(userId = 'user-1'): RefreshTokenRecord {
+function sampleRefreshToken(userId = testUuid('user-1')): RefreshTokenRecord {
   const now = Date.now();
   return {
-    tokenId: 'token-1',
+    tokenId: testUuid('token-1'),
     userId,
     createdAt: now,
     expiresAt: now + 60_000,
@@ -141,7 +146,10 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     const emailTask = sampleEmailTask();
     const user = sampleUser();
     const token = sampleRefreshToken(user.id);
+    const tag = { id: testUuid('tag-1'), name: 'Core team', color: '#336699', notes: 'test' };
+    person.tagIds = [tag.id];
 
+    await store.putPersonTag(tag);
     await store.putPerson(person);
     await store.putKeyword(keyword);
     await store.putConfig(config);
@@ -153,6 +161,7 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     await store.saveRefreshToken(token);
 
     assert.equal((await store.getPerson(person.id))?.id, person.id);
+    assert.equal((await store.getPersonTag(tag.id))?.color, '#336699');
     assert.equal((await store.getKeyword(keyword.id))?.id, keyword.id);
     assert.equal((await store.getConfig(config.id))?.id, config.id);
     assert.equal((await store.getSchedule(plan.id))?.id, plan.id);
@@ -162,6 +171,8 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     assert.equal((await store.getEmailTask(emailTask.id))?.id, emailTask.id);
     assert.equal((await store.findUserByIdentity('ALICE'))?.id, user.id);
     assert.equal((await store.getRefreshToken(token.tokenId))?.tokenId, token.tokenId);
+    await store.deletePersonTag(tag.id);
+    assert.deepEqual((await store.getPerson(person.id))?.tagIds, []);
   } finally {
     await store.close();
   }
@@ -174,11 +185,11 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
   const target = await createTestStore({ dialect: 'pglite', dataDir: targetPath });
 
   try {
-    await source.putPerson(samplePerson('p-a'));
-    await source.putKeyword(sampleKeyword('k-a'));
-    await source.putKeywordVector(sampleVector('k-a'));
-    await source.putKeyword(sampleKeyword('k-b'));
-    await source.putKeywordVector(sampleVector('k-b'));
+    await source.putPerson(samplePerson(testUuid('p-a')));
+    await source.putKeyword(sampleKeyword(testUuid('k-a')));
+    await source.putKeywordVector(sampleVector(testUuid('k-a')));
+    await source.putKeyword(sampleKeyword(testUuid('k-b')));
+    await source.putKeywordVector(sampleVector(testUuid('k-b')));
 
     const graph = await source.listGraph();
     assert.equal(graph.items.filter(item => item.keyword).length, 2);
@@ -186,7 +197,7 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     assert.ok(graph.checkpoint);
 
     const snapshot = await source.exportBackupSnapshot();
-    assert.equal(snapshot.version, 2);
+    assert.equal(snapshot.version, 3);
     assert.deepEqual(snapshot.tables.rankingJudgments, []);
     assert.deepEqual(snapshot.tables.embeddingMigrationArchive, []);
     await target.restoreBackupSnapshot(snapshot);
@@ -205,12 +216,12 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
   const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
 
   try {
-    const older = samplePerson('p-old');
+    const older = samplePerson(testUuid('p-old'));
     older.name = 'Zulu';
     older.names.en = 'Zulu';
     older.notes = 'later note';
     older.modifiedAt = 10;
-    const newer = samplePerson('p-new');
+    const newer = samplePerson(testUuid('p-new'));
     newer.name = 'Alpha';
     newer.names.en = 'Alpha';
     newer.notes = 'earlier note';
@@ -219,23 +230,23 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
     await store.putPerson(newer);
 
     const persons = await store.listPersons();
-    assert.equal(persons[0]?.id, 'p-new');
-    assert.equal(persons[1]?.id, 'p-old');
+    assert.equal(persons[0]?.id, newer.id);
+    assert.equal(persons[1]?.id, older.id);
 
     const personsByName = await store.listPersons({ sortBy: 'name', sortDirection: 'asc' });
-    assert.equal(personsByName[0]?.id, 'p-new');
-    assert.equal(personsByName[1]?.id, 'p-old');
+    assert.equal(personsByName[0]?.id, newer.id);
+    assert.equal(personsByName[1]?.id, older.id);
 
     const personsByNotes = await store.listPersons({ sortBy: 'notes', sortDirection: 'asc' });
-    assert.equal(personsByNotes[0]?.id, 'p-new');
-    assert.equal(personsByNotes[1]?.id, 'p-old');
+    assert.equal(personsByNotes[0]?.id, newer.id);
+    assert.equal(personsByNotes[1]?.id, older.id);
 
-    const keywordZeta = sampleKeyword('k-zeta');
+    const keywordZeta = sampleKeyword(testUuid('k-zeta'));
     keywordZeta.name = 'Zeta';
     keywordZeta.names.en = 'Zeta';
     keywordZeta.notes = 'zzz';
     keywordZeta.modifiedAt = 5;
-    const keywordAlpha = sampleKeyword('k-alpha');
+    const keywordAlpha = sampleKeyword(testUuid('k-alpha'));
     keywordAlpha.name = 'Alpha';
     keywordAlpha.names.en = 'Alpha';
     keywordAlpha.notes = 'aaa';
@@ -244,28 +255,28 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
     await store.putKeyword(keywordAlpha);
 
     const keywordsByName = await store.listKeywords({ sortBy: 'name', sortDirection: 'asc' });
-    assert.equal(keywordsByName[0]?.id, 'k-alpha');
-    assert.equal(keywordsByName[1]?.id, 'k-zeta');
+    assert.equal(keywordsByName[0]?.id, keywordAlpha.id);
+    assert.equal(keywordsByName[1]?.id, keywordZeta.id);
 
     const keywordsByNotes = await store.listKeywords({ sortBy: 'notes', sortDirection: 'asc' });
-    assert.equal(keywordsByNotes[0]?.id, 'k-alpha');
-    assert.equal(keywordsByNotes[1]?.id, 'k-zeta');
+    assert.equal(keywordsByNotes[0]?.id, keywordAlpha.id);
+    assert.equal(keywordsByNotes[1]?.id, keywordZeta.id);
 
-    const config = sampleConfig('cfg-constraints');
+    const config = sampleConfig(testUuid('cfg-constraints'));
     await store.putConfig(config);
 
     await store.putConstraint({
-      id: 'constraint-1',
+      id: testUuid('constraint-1'),
       configId: config.id,
       type: 'no-overlap',
-      personIds: ['p-old', 'p-new'],
+      personIds: [older.id, newer.id],
       weight: 2,
     });
     await store.putConstraint({
-      id: 'constraint-2',
+      id: testUuid('constraint-2'),
       configId: config.id,
       type: 'frequency-multiplier',
-      personIds: ['p-new'],
+      personIds: [newer.id],
       baseline: 1,
       multiplier: 2,
       roleScope: 'presenter',
@@ -286,14 +297,14 @@ test('JSONB schedule foreign keys load presenters, questioners, constraints and 
   const store = await createTestStore({dialect:'pglite',dataDir:'memory://'});
   try {
     await store.putKeyword(sampleKeyword());
-    for (const id of ['p1','p2','p3','p4']) await store.putPerson(samplePerson(id));
+    for (const id of ['p1','p2','p3','p4'].map(testUuid)) await store.putPerson(samplePerson(id));
     await store.putConfig(sampleConfig());
     await store.putSchedule(samplePlan());
-    await store.putConstraint({id:'constraint',configId:'c1',type:'no-overlap',personIds:['p3'],weight:1});
-    await store.putUnavailability(sampleUnavailability('u1','p4'));
-    const bundle=await store.listScheduleForeignKeys({configIds:['c1']});
-    assert.deepEqual(bundle.persons.map(person=>person.id).sort(),['p1','p2','p3','p4']);
+    await store.putConstraint({id:testUuid('constraint'),configId:testUuid('c1'),type:'no-overlap',personIds:[testUuid('p3')],weight:1});
+    await store.putUnavailability(sampleUnavailability(testUuid('u1'),testUuid('p4')));
+    const bundle=await store.listScheduleForeignKeys({configIds:[testUuid('c1')]});
+    assert.deepEqual(bundle.persons.map(person=>person.id).sort(),['p1','p2','p3','p4'].map(testUuid).sort());
     assert.ok(bundle.persons.every(person=>person.name?.startsWith('Person')));
-    assert.equal(bundle.keywords[0]?.id,'k1');
+    assert.equal(bundle.keywords[0]?.id,testUuid('k1'));
   } finally {await store.close();}
 });

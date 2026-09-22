@@ -4,6 +4,7 @@ import type {
   KeywordVector,
   RankingJudgment,
   Person,
+  PersonTag,
   PersonUnavailability,
   ScheduleConfig,
   ScheduleConstraint,
@@ -39,6 +40,14 @@ export interface PersonStore {
   get(id: string): Promise<Person | undefined>;
   list(query: ListQuery): Promise<PaginatedResult<Person>>;
   put(value: Person): Promise<void>;
+  delete(id: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+export interface PersonTagStore {
+  get(id: string): Promise<PersonTag | undefined>;
+  list(query: ListQuery): Promise<PaginatedResult<PersonTag>>;
+  put(value: PersonTag): Promise<void>;
   delete(id: string): Promise<void>;
   clear(): Promise<void>;
 }
@@ -124,6 +133,7 @@ export interface SimilarityStore {
 
 export interface ScheduleForeignKeyBundle {
   persons: Person[];
+  personTags: PersonTag[];
   keywords: Keyword[];
   keywordVectors: KeywordVector[];
   configs: ScheduleConfig[];
@@ -138,6 +148,7 @@ export interface ScheduleForeignKeyQuery {
 
 export interface PersonForeignKeyBundle {
   keywords: Keyword[];
+  personTags: PersonTag[];
   schedules: SchedulePlan[];
   constraints: ScheduleConstraint[];
   unavailabilities: PersonUnavailability[];
@@ -201,6 +212,7 @@ export interface GraphStore {
 export interface LabbyDB {
   similarity: SimilarityStore;
   persons: PersonStore;
+  personTags: PersonTagStore;
   keywords: KeywordStore;
   keywordVectors: KeywordVectorStore;
   configs: ScheduleConfigStore;
@@ -216,6 +228,7 @@ export interface LabbyDB {
 export interface DatabaseDump {
   rankingHistory: RankingJudgment[];
   persons: Person[];
+  personTags: PersonTag[];
   keywords: Keyword[];
   keywordVectors: KeywordVector[];
   configs: ScheduleConfig[];

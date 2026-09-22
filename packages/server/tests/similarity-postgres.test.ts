@@ -9,6 +9,7 @@ import { Client, type Pool } from 'pg';
 import { initializePostgresSchema } from '../src/store/initialize.js';
 import { LabbyStore } from '../src/store/index.js';
 import { EmbeddingService } from '../src/lib/embedding-service.js';
+import { testUuid } from './support/database.js';
 
 const exec = promisify(execFile);
 test(
@@ -61,7 +62,9 @@ test(
       await store.listKeywords();
       // A single client pool makes an accidental second checkout fail deterministically.
       (store as unknown as { pgPool: Pool }).pgPool.options.max = 1;
-      for (const id of ['a', 'b', 'c']) await store.putKeyword({ id, name: id });
+      const [a, b, c, judgmentId, retryId] = ['a', 'b', 'c', 'test', 'retry'].map(testUuid);
+      for (const [id, name] of [[a, 'a'], [b, 'b'], [c, 'c']] as const)
+        await store.putKeyword({ id, name });
       const service = new EmbeddingService(store);
       await service.start();
       await store.withSimilarityLock(async () => {
@@ -76,24 +79,24 @@ test(
         assert.equal(held.rows[0].count, 1);
       });
       const judgment = {
-        id: 'test',
-        anchorId: 'a',
-        groups: [['b'], ['c']],
+        id: judgmentId,
+        anchorId: a,
+        groups: [[b], [c]],
         confidence: 1,
         createdAt: 1,
       };
       const result = await service.trainRanking(judgment);
       assert.equal(result.accepted, true);
       assert.equal((await store.getRankingHistory()).length, 1);
-      const before = await store.getKeyword('a');
+      const before = await store.getKeyword(a);
       await assert.rejects(
         store.withSimilarityLock(async () => {
-          await store!.putKeyword({ id: 'a', name: 'must roll back' });
+          await store!.putKeyword({ id: a, name: 'must roll back' });
           throw new Error('injected failure');
         }),
         /injected failure/,
       );
-      assert.deepEqual(await store.getKeyword('a'), before);
+      assert.deepEqual(await store.getKeyword(a), before);
 
       await observer.query('BEGIN');
       await observer.query('SELECT pg_advisory_xact_lock(192837466)');
@@ -109,7 +112,7 @@ test(
       );
       await observer.query('ROLLBACK');
       await service.recommendRanking({});
-      await service.trainRanking({ ...judgment, id: 'retry' });
+      await service.trainRanking({ ...judgment, id: retryId });
       await service.shutdown();
       const leaked = await observer.query(
         "SELECT count(*)::int AS count FROM pg_locks WHERE locktype='advisory' AND objid=192837466",

@@ -46,6 +46,12 @@ Production execution must be explicitly authorized; ordinary server startup rema
 4. JSONB documents: convert legacy TEXT JSON columns and their defaults to JSONB, matching fresh
    initialization. Invalid JSON rolls back the entire migration. Refresh the graph epoch so clients
    discard pre-migration cursors and reload their cached records.
+5. UUID/timestamp normalization and person tags:
+   - Deterministically map every legacy text identifier to UUID while preserving existing UUIDs and
+     rewriting relational keys, JSON indexes, and embedded payload references in the same transaction.
+   - Convert persisted epoch-millisecond columns to `timestamptz` with millisecond-equivalent instants;
+     public payload timestamps remain epoch milliseconds for API compatibility.
+   - Add the UUID/timestamptz `person_tags` table and refresh graph cursors.
 
 Conversion is approximate: it cannot preserve all old Euclidean distances or reconstruct
 judgments that the old application never saved. The original rows remain in
@@ -62,16 +68,17 @@ Browser-local PGlite is explicitly allowed to initialize and migrate automatical
 mounts notification UI before opening the database. Actual initialization, schema upgrade or
 legacy import displays progress and completion; failures remain visible with a retry action.
 
-Empty browser databases use current-schema.sql directly. Existing databases migrate to version 4:
-version 3 archives and converts old keyword vectors, while version 4 installs the graph revision
-clock and change-feed triggers. Each upgrade transaction includes its schema version updates.
+Empty browser databases use current-schema.sql directly. Existing databases migrate to version 5:
+version 3 archives and converts old keyword vectors, version 4 installs the graph revision clock and
+change-feed triggers, and version 5 normalizes entity IDs/timestamps before enabling person-tag
+entities. Each upgrade transaction includes its schema version updates.
 ranking-judgment entities store accepted lists.
 The earlier IndexedDB import is a one-time migration; source vectors are archived and the
 source IndexedDB database is not deleted. No old runtime aliases are retained.
 
 ## Backups and recovery
 
-Server backup format is version 2 and contains rankingJudgments and embeddingMigrationArchive.
+Server backup format is version 3 and contains personTags, rankingJudgments and embeddingMigrationArchive.
 Old backup format 1 is not accepted by the new restore API. To use such a backup, restore with
 the old application into an isolated database first, then run the migration.
 
@@ -91,6 +98,8 @@ Server migrations live in packages/server/src/store/migrate:
 - 001.up.sql defines the baseline.
 - 002.up.ts runs 002.prepare.sql, the fixed signed projection, then 002.finish.sql.
 - 003.up.sql installs the graph change feed.
+- 004.up.sql converts legacy text JSON documents to JSONB.
+- 005.up.sql atomically maps IDs to UUID, converts relational timestamps, and creates person_tags.
 - current-schema.sql describes the complete latest schema independently; db:init uses it directly.
 - schema-state.ts only checks the version and is the sole schema dependency of server startup.
 - runtime.ts loads SQL batches without splitting on semicolons; schema.ts owns the

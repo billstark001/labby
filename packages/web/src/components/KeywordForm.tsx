@@ -1,5 +1,4 @@
 import { useState } from 'preact/hooks';
-import { nanoid } from 'nanoid';
 import type { Keyword } from '@labby/core';
 import { i18n } from '@/i18n';
 import { Button } from './ui/common';
@@ -26,7 +25,7 @@ export function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
     setError('');
     try {
       await onSave({
-        id: initial?.id ?? nanoid(),
+        id: initial?.id ?? crypto.randomUUID(),
         name: nameEn.trim(),
         names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() },
         metadata: initial?.metadata ?? {},

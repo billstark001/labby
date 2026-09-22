@@ -1,5 +1,4 @@
 import { useState } from 'preact/hooks';
-import { nanoid } from 'nanoid';
 import type { PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
 import { SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
 
@@ -46,7 +45,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
       delete nextMetadata.title;
     }
     onSave({
-      id: initial?.id ?? nanoid(),
+      id: initial?.id ?? crypto.randomUUID(),
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
       timeRange: [startTime, endTime],
       presentersPerSession: presenters,
@@ -183,7 +182,7 @@ export function UnavailForm({ configId, initial, onSave, onCancel }: UnavailForm
   function handleSave() {
     if (personIds.length === 0 || !startDate || !endDate) return;
     onSave({
-      id: initial?.id ?? nanoid(),
+      id: initial?.id ?? crypto.randomUUID(),
       personId: personIds[0],
       personIds,
       configId,

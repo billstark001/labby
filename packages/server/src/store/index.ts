@@ -17,6 +17,7 @@ import type {
   RankingJudgment,
   ListSortDirection,
   Person,
+  PersonTag,
   PersonUnavailability,
   ScheduleConfig,
   ScheduleConstraint,
@@ -25,7 +26,7 @@ import type {
   GraphQuery,
   GraphPage,
 } from '@labby/core';
-import { validateKeywordVector, validateRankingJudgment } from '@labby/core';
+import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, validateKeywordVector, validateRankingJudgment } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
 export const UserRole = {
@@ -71,10 +72,11 @@ export interface AuthVerificationCodeRecord {
 }
 
 export interface DatabaseBackupSnapshot {
-  version: 2;
+  version: 3;
   createdAt: number;
   tables: {
     persons: Array<Record<string, string | number | null>>;
+    personTags: Array<Record<string, string | number | null>>;
     keywords: Array<Record<string, string | number | null>>;
     keywordVectors: Array<Record<string, string | number | null>>;
     rankingJudgments: Array<Record<string, string | number | null>>;
@@ -93,6 +95,7 @@ export interface DatabaseBackupSnapshot {
 
 interface ScheduleForeignKeyBundle {
   persons: Person[];
+  personTags: PersonTag[];
   keywords: Keyword[];
   keywordVectors: KeywordVector[];
   configs: ScheduleConfig[];
@@ -103,6 +106,7 @@ interface ScheduleForeignKeyBundle {
 
 interface PersonForeignKeyBundle {
   keywords: Keyword[];
+  personTags: PersonTag[];
   constraints: ScheduleConstraint[];
   schedules: SchedulePlan[];
   unavailabilities: PersonUnavailability[];
@@ -143,7 +147,7 @@ type TableRow = Record<string, TableRowValue>;
 type PostgresDrizzleDb = ReturnType<typeof drizzlePostgres>;
 type PgliteDrizzleDb = ReturnType<typeof drizzlePglite>;
 
-const SYSTEM_SETTINGS_ID = 'system';
+const SYSTEM_SETTINGS_ID = CORE_SYSTEM_SETTINGS_ID;
 
 type EntityListSort = {
   sortBy: EntityListSortBy;
@@ -479,6 +483,7 @@ export class LabbyStore {
       DELETE FROM constraints;
       DELETE FROM configs;
       DELETE FROM keywords;
+      DELETE FROM person_tags;
       DELETE FROM persons;
     `);
   }
@@ -499,7 +504,7 @@ export class LabbyStore {
     const updated = { ...person, modifiedAt: person.modifiedAt ?? nowMs() };
     const keywordIds = JSON.stringify(uniqueIds(updated.keywordIds ?? []));
     await this.executeCommand(sql`
-      INSERT INTO persons (id, updated_at, keyword_ids, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${keywordIds}, ${JSON.stringify(updated)})
+      INSERT INTO persons (id, updated_at, keyword_ids, payload) VALUES (${updated.id}, ${new Date(updated.modifiedAt)}, ${keywordIds}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         updated_at = excluded.updated_at,
         keyword_ids = excluded.keyword_ids,
@@ -517,6 +522,46 @@ export class LabbyStore {
     await this.executeCommand(sql`DELETE FROM persons`);
   }
 
+  async getPersonTag(id: string): Promise<PersonTag | undefined> {
+    await this.ensureReady();
+    return this.getPayload<PersonTag>(sql`SELECT payload FROM person_tags WHERE id = ${id}`);
+  }
+
+  async listPersonTags(sort?: Partial<EntityListSort>): Promise<PersonTag[]> {
+    await this.ensureReady();
+    const tags = await this.listPayloads<PersonTag>(sql`SELECT payload FROM person_tags`);
+    return tags.sort((left, right) => compareSortableEntities(left, right, sort));
+  }
+
+  async putPersonTag(tag: PersonTag): Promise<void> {
+    await this.ensureReady();
+    const updated = { ...tag, modifiedAt: tag.modifiedAt ?? nowMs() };
+    await this.executeCommand(sql`
+      INSERT INTO person_tags (id, updated_at, payload)
+      VALUES (${updated.id}, ${new Date(updated.modifiedAt)}, ${JSON.stringify(updated)})
+      ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,payload=excluded.payload
+    `);
+  }
+
+  async deletePersonTag(id: string): Promise<void> {
+    await this.ensureReady();
+    await this.transaction(async query => {
+      const result = await query('SELECT id,payload FROM persons') as { rows: Array<{ id: string; payload: Person }> };
+      const rows = result.rows;
+      for (const row of rows) {
+        if (!row.payload.tagIds?.includes(id)) continue;
+        const payload = { ...row.payload, tagIds: row.payload.tagIds.filter(tagId => tagId !== id), modifiedAt: nowMs() };
+        await query('UPDATE persons SET updated_at=$1,payload=$2::jsonb WHERE id=$3', [new Date(payload.modifiedAt), JSON.stringify(payload), row.id]);
+      }
+      await query('DELETE FROM person_tags WHERE id=$1', [id]);
+    });
+  }
+
+  async clearPersonTags(): Promise<void> {
+    const tags = await this.listPersonTags();
+    for (const tag of tags) await this.deletePersonTag(tag.id);
+  }
+
   async getKeyword(id: string): Promise<Keyword | undefined> {
     await this.ensureReady();
     return this.getPayload<Keyword>(sql`SELECT payload FROM keywords WHERE id = ${id}`);
@@ -532,7 +577,7 @@ export class LabbyStore {
     await this.ensureReady();
     const updated = { ...keyword, modifiedAt: keyword.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
-      INSERT INTO keywords (id, updated_at, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      INSERT INTO keywords (id, updated_at, payload) VALUES (${updated.id}, ${new Date(updated.modifiedAt)}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         updated_at = excluded.updated_at,
         payload = excluded.payload
@@ -612,14 +657,14 @@ export class LabbyStore {
     const write = async (query: (text: string, params?: unknown[]) => Promise<unknown>) => {
       if (vectors.length) await query(
         `INSERT INTO keyword_vectors(keyword_id,x,y,embedding,geometry,updated_at,payload)
-         SELECT v->>'keywordId',(v->>'x')::float8,(v->>'y')::float8,v->'embedding',v->'geometry',(v->>'updatedAt')::bigint,v
+         SELECT (v->>'keywordId')::uuid,(v->>'x')::float8,(v->>'y')::float8,v->'embedding',v->'geometry',to_timestamp((v->>'updatedAt')::double precision/1000),v
          FROM jsonb_array_elements($1::jsonb) AS v
          ON CONFLICT(keyword_id) DO UPDATE SET x=excluded.x,y=excluded.y,embedding=excluded.embedding,
            geometry=excluded.geometry,updated_at=excluded.updated_at,payload=excluded.payload`,
         [JSON.stringify(vectors)]);
       if (history) {
         await query('DELETE FROM ranking_judgments');
-        if (history.length) await query("INSERT INTO ranking_judgments(id,payload) SELECT v->>'id',v FROM jsonb_array_elements($1::jsonb) v", [JSON.stringify(history)]);
+        if (history.length) await query("INSERT INTO ranking_judgments(id,payload) SELECT (v->>'id')::uuid,v FROM jsonb_array_elements($1::jsonb) v", [JSON.stringify(history)]);
       }
     };
     await this.transaction(write);
@@ -667,7 +712,7 @@ export class LabbyStore {
     await this.ensureReady();
     const updated = { ...config, modifiedAt: config.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
-      INSERT INTO configs (id, updated_at, payload) VALUES (${updated.id}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      INSERT INTO configs (id, updated_at, payload) VALUES (${updated.id}, ${new Date(updated.modifiedAt)}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         updated_at = excluded.updated_at,
         payload = excluded.payload
@@ -732,7 +777,7 @@ export class LabbyStore {
     const personIds = JSON.stringify(extractConstraintPersonIds(updated));
     await this.executeCommand(sql`
       INSERT INTO constraints (id, config_id, type, person_ids, payload, created_at, updated_at)
-      VALUES (${updated.id}, ${updated.configId}, ${updated.type}, ${personIds}, ${JSON.stringify(updated)}, ${updated.modifiedAt ?? 0}, ${updated.modifiedAt ?? 0})
+      VALUES (${updated.id}, ${updated.configId || null}, ${updated.type}, ${personIds}, ${JSON.stringify(updated)}, ${new Date(updated.modifiedAt)}, ${new Date(updated.modifiedAt)})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         type = excluded.type,
@@ -757,7 +802,7 @@ export class LabbyStore {
     const rows = await this.queryRows(sql`
       SELECT id, config_id, payload
       FROM constraints
-      WHERE config_id = ${configId} OR config_id = ''
+      WHERE config_id = ${configId} OR config_id IS NULL
       ORDER BY updated_at DESC, id DESC
     `);
     return rows.map((row) => {
@@ -786,7 +831,7 @@ export class LabbyStore {
     const updated = { ...task, modifiedAt: task.modifiedAt ?? nowMs() };
     await this.executeCommand(sql`
       INSERT INTO email_tasks (id, config_id, updated_at, payload)
-      VALUES (${updated.id}, ${updated.configId}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      VALUES (${updated.id}, ${updated.configId}, ${new Date(updated.modifiedAt)}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         updated_at = excluded.updated_at,
@@ -819,7 +864,7 @@ export class LabbyStore {
     };
     await this.executeCommand(sql`
       INSERT INTO system_settings (id, updated_at, payload)
-      VALUES (${SYSTEM_SETTINGS_ID}, ${updated.modifiedAt ?? 0}, ${JSON.stringify(updated)})
+      VALUES (${SYSTEM_SETTINGS_ID}, ${new Date(updated.modifiedAt!)}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         updated_at = excluded.updated_at,
         payload = excluded.payload
@@ -842,7 +887,7 @@ export class LabbyStore {
     const personIds = JSON.stringify(extractSchedulePersonIds(updated));
     await this.executeCommand(sql`
       INSERT INTO schedules (id, config_id, created_at, updated_at, person_ids, payload)
-      VALUES (${updated.id}, ${updated.configId}, ${updated.createdAt}, ${updated.modifiedAt ?? 0}, ${personIds}, ${JSON.stringify(updated)})
+      VALUES (${updated.id}, ${updated.configId}, ${new Date(updated.createdAt)}, ${new Date(updated.modifiedAt)}, ${personIds}, ${JSON.stringify(updated)})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         created_at = excluded.created_at,
@@ -922,6 +967,7 @@ export class LabbyStore {
     if (configIds.length === 0) {
       return {
         persons: [],
+        personTags: [],
         keywords: [],
         keywordVectors: [],
         configs: [],
@@ -945,7 +991,7 @@ export class LabbyStore {
     const constraintRows = await this.queryRows(sql.raw(`
       SELECT id, config_id, payload, person_ids
       FROM constraints
-      WHERE config_id IN (${configInList}) OR config_id = ''
+      WHERE config_id IN (${configInList}) OR config_id IS NULL
       ORDER BY updated_at DESC, id DESC
     `));
     const constraints = constraintRows.map((row) => {
@@ -989,13 +1035,16 @@ export class LabbyStore {
       for (const keywordId of person.keywordIds ?? []) keywordIdSet.add(keywordId);
     }
     const keywordIds = [...keywordIdSet];
-    const [keywords, keywordVectors] = await Promise.all([
+    const tagIds = uniqueIds(persons.flatMap(person => person.tagIds ?? []));
+    const [keywords, keywordVectors, personTags] = await Promise.all([
       this.listPayloadsByIds<Keyword>('keywords', 'id', keywordIds),
       this.getKeywordVectors(keywordIds),
+      this.listPayloadsByIds<PersonTag>('person_tags', 'id', tagIds),
     ]);
 
     return {
       persons,
+      personTags,
       keywords,
       keywordVectors,
       configs,
@@ -1011,6 +1060,7 @@ export class LabbyStore {
     if (personIds.length === 0) {
       return {
         keywords: [],
+        personTags: [],
         constraints: [],
         schedules: [],
         unavailabilities: [],
@@ -1023,6 +1073,8 @@ export class LabbyStore {
       for (const keywordId of person.keywordIds ?? []) keywordIdSet.add(keywordId);
     }
     const keywords = await this.listPayloadsByIds<Keyword>('keywords', 'id', [...keywordIdSet]);
+    const tagIds = uniqueIds(persons.flatMap(person => person.tagIds ?? []));
+    const personTags = await this.listPayloadsByIds<PersonTag>('person_tags', 'id', tagIds);
 
     const overlapCondition = this.buildJsonArrayOverlapCondition('person_ids', personIds);
 
@@ -1067,6 +1119,7 @@ export class LabbyStore {
 
     return {
       keywords,
+      personTags,
       constraints,
       schedules,
       unavailabilities,
@@ -1138,7 +1191,7 @@ export class LabbyStore {
         ${user.role},
         ${user.passwordHash},
         ${user.disabled ? 1 : 0},
-        ${user.createdAt},
+        ${new Date(user.createdAt)},
         ${JSON.stringify(user)}
       )
     `);
@@ -1175,9 +1228,9 @@ export class LabbyStore {
       VALUES (
         ${record.tokenId},
         ${record.userId},
-        ${record.expiresAt},
-        ${record.createdAt},
-        ${record.revokedAt},
+        ${new Date(record.expiresAt)},
+        ${new Date(record.createdAt)},
+        ${record.revokedAt === null ? null : new Date(record.revokedAt)},
         ${record.replacedByTokenId},
         ${JSON.stringify(record)}
       )
@@ -1214,14 +1267,14 @@ export class LabbyStore {
     const now = Date.now();
     await this.executeCommand(sql`
       UPDATE refresh_tokens
-      SET revoked_at = coalesce(revoked_at, ${now})
+      SET revoked_at = coalesce(revoked_at, ${new Date(now)})
       WHERE user_id = ${userId}
     `);
   }
 
   async pruneExpiredRefreshTokens(now = Date.now()): Promise<void> {
     await this.ensureReady();
-    await this.executeCommand(sql`DELETE FROM refresh_tokens WHERE expires_at < ${now} OR revoked_at IS NOT NULL`);
+    await this.executeCommand(sql`DELETE FROM refresh_tokens WHERE expires_at < ${new Date(now)} OR revoked_at IS NOT NULL`);
   }
 
   async saveAuthVerificationCode(record: AuthVerificationCodeRecord): Promise<void> {
@@ -1246,9 +1299,9 @@ export class LabbyStore {
         ${record.targetEmail},
         ${record.pendingEmail},
         ${record.codeHash},
-        ${record.expiresAt},
-        ${record.createdAt},
-        ${record.consumedAt},
+        ${new Date(record.expiresAt)},
+        ${new Date(record.createdAt)},
+        ${record.consumedAt === null ? null : new Date(record.consumedAt)},
         ${JSON.stringify(record)}
       )
       ON CONFLICT(token_id) DO UPDATE SET
@@ -1280,7 +1333,7 @@ export class LabbyStore {
         WHERE purpose = ${input.purpose}
           AND user_id = ${input.userId}
           AND consumed_at IS NULL
-          AND expires_at > ${now}
+          AND expires_at > ${new Date(now)}
         ORDER BY created_at DESC
         LIMIT 1
       `);
@@ -1293,7 +1346,7 @@ export class LabbyStore {
         WHERE purpose = ${input.purpose}
           AND lower(target_email) = ${normalizeIdentity(input.targetEmail)}
           AND consumed_at IS NULL
-          AND expires_at > ${now}
+          AND expires_at > ${new Date(now)}
         ORDER BY created_at DESC
         LIMIT 1
       `);
@@ -1338,7 +1391,7 @@ export class LabbyStore {
     await this.ensureReady();
     await this.executeCommand(sql`
       UPDATE auth_verification_codes
-      SET consumed_at = coalesce(consumed_at, ${consumedAt})
+      SET consumed_at = coalesce(consumed_at, ${new Date(consumedAt)})
       WHERE token_id = ${tokenId}
     `);
   }
@@ -1357,18 +1410,19 @@ export class LabbyStore {
 
     await this.executeCommand(sql`
       DELETE FROM auth_verification_codes
-      WHERE (consumed_at IS NOT NULL AND consumed_at < ${consumedBefore})
-         OR (expires_at < ${now} AND created_at < ${expiredCreatedBefore})
+      WHERE (consumed_at IS NOT NULL AND consumed_at < ${new Date(consumedBefore)})
+         OR (expires_at < ${new Date(now)} AND created_at < ${new Date(expiredCreatedBefore)})
     `);
   }
 
   async exportBackupSnapshot(): Promise<DatabaseBackupSnapshot> {
     await this.ensureReady();
     return {
-      version: 2,
+      version: 3,
       createdAt: Date.now(),
       tables: {
         persons: await this.exportTable('persons'),
+        personTags: await this.exportTable('person_tags'),
         keywords: await this.exportTable('keywords'),
         keywordVectors: await this.exportTable('keyword_vectors'),
         rankingJudgments: await this.exportTable('ranking_judgments'),
@@ -1398,7 +1452,7 @@ export class LabbyStore {
       tables?: Record<string, unknown>;
     };
 
-    if (snapshotObject.version !== 2) {
+    if (snapshotObject.version !== 3) {
       throw new Error('Unsupported backup snapshot version');
     }
     if (!snapshotObject.tables || typeof snapshotObject.tables !== 'object' || Array.isArray(snapshotObject.tables)) {
@@ -1407,6 +1461,7 @@ export class LabbyStore {
 
     const tables = {
       persons: this.validateTableRows('persons', snapshotObject.tables.persons),
+      person_tags: this.validateTableRows('person_tags', snapshotObject.tables.personTags ?? []),
       keywords: this.validateTableRows('keywords', snapshotObject.tables.keywords),
       keyword_vectors: this.validateTableRows('keyword_vectors', snapshotObject.tables.keywordVectors),
       ranking_judgments: this.validateTableRows('ranking_judgments', snapshotObject.tables.rankingJudgments),
@@ -1434,7 +1489,7 @@ export class LabbyStore {
     const judgments = tables.ranking_judgments.map(row => this.parsePayload<RankingJudgment>(row.payload));
     for (const j of judgments) validateRankingJudgment(j, keywordIds);
     const restore = async (query: (text: string, params?: unknown[]) => Promise<unknown>) => {
-      for (const name of ['refresh_tokens','auth_verification_codes','users','ranking_judgments','embedding_migration_archive','keyword_vectors','system_settings','email_tasks','unavailabilities','schedules','constraints','configs','keywords','persons']) await query('DELETE FROM '+name);
+      for (const name of ['refresh_tokens','auth_verification_codes','users','ranking_judgments','embedding_migration_archive','keyword_vectors','system_settings','email_tasks','unavailabilities','schedules','constraints','configs','keywords','person_tags','persons']) await query('DELETE FROM '+name);
       for (const [name, rows] of Object.entries(tables)) {
         for (const row of rows) {
           const columns = Object.keys(row);

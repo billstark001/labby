@@ -81,12 +81,13 @@ export const templatePreviewSchema = z.object({
 export const rankingRecommendSchema = z.object({
   size: z.number().int().min(2).max(8).optional(),
   excludedKeys: z.array(z.string().max(2048)).max(200).optional(),
+  includeDisabled: z.boolean().optional(),
 }).strict();
 
 export const rankingJudgmentSchema = z.object({
-  id: z.string().min(1).max(128),
-  anchorId: z.string().min(1).max(128),
-  groups: z.array(z.array(z.string().min(1).max(128)).min(1).max(12)).min(1).max(12),
+  id: z.string().uuid(),
+  anchorId: z.string().uuid(),
+  groups: z.array(z.array(z.string().uuid()).min(1).max(12)).min(1).max(12),
   confidence: z.number().positive().max(1),
   createdAt: z.number().int().nonnegative(),
 }).strict().refine(j => {

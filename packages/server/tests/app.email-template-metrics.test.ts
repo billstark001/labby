@@ -1,4 +1,4 @@
-import { createTestApp } from './support/database.js';
+import { createTestApp, testUuid } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,6 +33,8 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
 }
 
 test('template preview, email-task CRUD and metrics API work', async () => {
+  const [configId, personAId, personBId, keywordAId, keywordBId, scheduleId, taskId, failingTaskId] =
+    ['cfg-1', 'p1', 'p2', 'k1', 'k2', 'plan-1', 'et-1', 'et-fail'].map(testUuid);
   const dbPath = createTempDbPath('labby-app-p3');
   const runtime = await createTestApp({
     db: { dialect: 'pglite', dataDir: dbPath },
@@ -58,7 +60,7 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     assert.equal(previewJson.data.errors.length, 0);
 
     const config: ScheduleConfig = {
-      id: 'cfg-1',
+      id: configId,
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -70,22 +72,22 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     };
 
     const personA: Person = {
-      id: 'p1',
+      id: personAId,
       name: 'A',
       names: { en: 'A' },
       metadata: {},
-      keywordIds: ['k1'],
+      keywordIds: [keywordAId],
     };
     const personB: Person = {
-      id: 'p2',
+      id: personBId,
       name: 'B',
       names: { en: 'B' },
       metadata: {},
-      keywordIds: ['k2'],
+      keywordIds: [keywordBId],
     };
 
     const vectorA: KeywordVector = {
-      keywordId: 'k1',
+      keywordId: keywordAId,
       embedding: Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0)),
       geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
       x: 1,
@@ -93,7 +95,7 @@ test('template preview, email-task CRUD and metrics API work', async () => {
       updatedAt: Date.now(),
     };
     const vectorB: KeywordVector = {
-      keywordId: 'k2',
+      keywordId: keywordBId,
       embedding: Array.from({ length: 8 }, (_, i) => (i === 1 ? 1 : 0)),
       geometry: { hyperbolicDimensions: 4, euclideanDimensions: 4 },
       x: 0,
@@ -102,21 +104,21 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     };
 
     const schedule: SchedulePlan = {
-      id: 'plan-1',
+      id: scheduleId,
       createdAt: Date.now(),
-      configId: 'cfg-1',
-      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: 'p1', questionerIds: ['p2'] }] }],
+      configId,
+      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: personAId, questionerIds: [personBId] }] }],
     };
 
     for (const [url, body] of [
-      ['/api/v1/db/configs/cfg-1', config],
-      ['/api/v1/db/persons/p1', personA],
-      ['/api/v1/db/persons/p2', personB],
-      ['/api/v1/db/keywords/k1', { id: 'k1', name: 'K1', names: { en: 'K1' }, metadata: {} }],
-      ['/api/v1/db/keywords/k2', { id: 'k2', name: 'K2', names: { en: 'K2' }, metadata: {} }],
-      ['/api/v1/db/keyword-vectors/k1', vectorA],
-      ['/api/v1/db/keyword-vectors/k2', vectorB],
-      ['/api/v1/db/schedules/plan-1', schedule],
+      [`/api/v1/db/configs/${configId}`, config],
+      [`/api/v1/db/persons/${personAId}`, personA],
+      [`/api/v1/db/persons/${personBId}`, personB],
+      [`/api/v1/db/keywords/${keywordAId}`, { id: keywordAId, name: 'K1', names: { en: 'K1' }, metadata: {} }],
+      [`/api/v1/db/keywords/${keywordBId}`, { id: keywordBId, name: 'K2', names: { en: 'K2' }, metadata: {} }],
+      [`/api/v1/db/keyword-vectors/${keywordAId}`, vectorA],
+      [`/api/v1/db/keyword-vectors/${keywordBId}`, vectorB],
+      [`/api/v1/db/schedules/${scheduleId}`, schedule],
     ] as const) {
       const response = await runtime.app.request(url, {
         method: 'PUT',
@@ -127,8 +129,8 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     }
 
     const taskBody = {
-      id: 'et-1',
-      configId: 'cfg-1',
+      id: taskId,
+      configId,
       daysOfWeek: [1, 3],
       emails: ['x@example.com'],
       recentTimes: 0,
@@ -137,20 +139,20 @@ test('template preview, email-task CRUD and metrics API work', async () => {
       metadata: {},
     };
 
-    const putTaskRes = await runtime.app.request('/api/v1/db/email-tasks/et-1', {
+    const putTaskRes = await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {
       method: 'PUT',
       headers: makeHeaders(token),
       body: JSON.stringify(taskBody),
     });
     assert.ok(putTaskRes.status === 200 || putTaskRes.status === 201);
 
-    const getTaskRes = await runtime.app.request('/api/v1/db/email-tasks/et-1', {
+    const getTaskRes = await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {
       method: 'GET',
       headers: makeHeaders(token),
     });
     assert.equal(getTaskRes.status, 200);
     const getTaskJson = await getTaskRes.json() as { data: { id: string } };
-    assert.equal(getTaskJson.data.id, 'et-1');
+    assert.equal(getTaskJson.data.id, taskId);
 
     const failingRuntime = await createTestApp({
       db: { dialect: 'pglite', dataDir: createTempDbPath('labby-app-send-now-fail') },
@@ -162,13 +164,13 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     });
     try {
       const failingToken = await login(failingRuntime.app);
-      const failingTaskRes = await failingRuntime.app.request('/api/v1/db/email-tasks/et-fail', {
+      const failingTaskRes = await failingRuntime.app.request(`/api/v1/db/email-tasks/${failingTaskId}`, {
         method: 'PUT',
         headers: makeHeaders(failingToken),
-        body: JSON.stringify(taskBody),
+        body: JSON.stringify({ ...taskBody, id: failingTaskId }),
       });
       assert.ok(failingTaskRes.status === 200 || failingTaskRes.status === 201);
-      const sendNowRes = await failingRuntime.app.request('/api/v1/db/email-tasks/et-fail/send-now', {
+      const sendNowRes = await failingRuntime.app.request(`/api/v1/db/email-tasks/${failingTaskId}/send-now`, {
         method: 'POST',
         headers: makeHeaders(failingToken),
       });
@@ -182,7 +184,7 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     const metricsRes = await runtime.app.request('/api/v1/solver/metrics', {
       method: 'POST',
       headers: makeHeaders(token),
-      body: JSON.stringify({ scheduleId: 'plan-1' }),
+      body: JSON.stringify({ scheduleId }),
     });
     assert.equal(metricsRes.status, 200);
     const metricsJson = await metricsRes.json() as { data: { metrics: { totalCost: number }; explanations: Array<{ key: string }> } };
@@ -192,7 +194,7 @@ test('template preview, email-task CRUD and metrics API work', async () => {
     const runRes = await runtime.app.request('/api/v1/solver/run', {
       method: 'POST',
       headers: makeHeaders(token),
-      body: JSON.stringify({ configId: 'cfg-1', personIds: ['p1', 'p2'] }),
+      body: JSON.stringify({ configId, personIds: [personAId, personBId] }),
     });
     assert.equal(runRes.status, 200);
     const runJson = await runRes.json() as {
@@ -210,10 +212,10 @@ test('template preview, email-task CRUD and metrics API work', async () => {
       method: 'POST',
       headers: makeHeaders(token),
       body: JSON.stringify({
-        configId: 'cfg-1',
-        previousPlanId: 'plan-1',
+        configId,
+        previousPlanId: scheduleId,
         changeDate: '2020-01-01',
-        personIds: ['p1', 'p2'],
+        personIds: [personAId, personBId],
       }),
     });
     assert.equal(incrementalRes.status, 200);

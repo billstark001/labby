@@ -1,10 +1,10 @@
 CREATE TABLE app_metadata (key text PRIMARY KEY, value jsonb NOT NULL);
 CREATE TABLE entities (
-  kind text NOT NULL, id text NOT NULL, updated_at bigint NOT NULL DEFAULT 0,
+  kind text NOT NULL, id uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
   payload jsonb NOT NULL, PRIMARY KEY(kind,id)
 );
 CREATE INDEX entities_kind_updated_idx ON entities(kind,updated_at DESC,id);
-CREATE TABLE embedding_migration_archive(keyword_id text PRIMARY KEY,source jsonb NOT NULL);
+CREATE TABLE embedding_migration_archive(keyword_id uuid PRIMARY KEY,source jsonb NOT NULL);
 CREATE TABLE graph_clock (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   revision bigint NOT NULL DEFAULT 0,
@@ -13,12 +13,12 @@ CREATE TABLE graph_clock (
 INSERT INTO graph_clock(singleton) VALUES(true);
 -- Retain deletion tombstones; only the latest change per keyword is needed.
 CREATE TABLE graph_changes (
-  keyword_id text PRIMARY KEY,
+  keyword_id uuid PRIMARY KEY,
   revision bigint NOT NULL UNIQUE
 );
 CREATE FUNCTION record_graph_change() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
-  changed_id text;
+  changed_id uuid;
   changed_kind text;
   next_revision bigint;
 BEGIN
@@ -33,5 +33,5 @@ END;
 $$;
 CREATE TRIGGER entities_graph_change AFTER INSERT OR UPDATE OR DELETE ON entities
 FOR EACH ROW EXECUTE FUNCTION record_graph_change();
-INSERT INTO app_metadata VALUES('schema-version','{"version":4}');
-CREATE INDEX entities_graph_id_idx ON entities(kind, id COLLATE "C");
+INSERT INTO app_metadata VALUES('schema-version','{"version":5}');
+CREATE INDEX entities_graph_id_idx ON entities(kind, id);

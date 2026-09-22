@@ -1,4 +1,3 @@
-import { nanoid } from 'nanoid';
 import {
   computeScheduleMetrics,
   explainScheduleMetrics,
@@ -128,7 +127,7 @@ export class LocalSolverBackend implements ISolverBackend {
   async runFull(config: ScheduleConfig, ctx: SolverContext): Promise<unknown> {
     return {
       plan: {
-        id: nanoid(),
+        id: crypto.randomUUID(),
         createdAt: Date.now(),
         configId: config.id,
         sessions: solveFull({
@@ -151,7 +150,7 @@ export class LocalSolverBackend implements ISolverBackend {
   ): Promise<unknown> {
     return {
       plan: {
-        id: nanoid(),
+        id: crypto.randomUUID(),
         createdAt: Date.now(),
         configId: config.id,
         sessions: solveIncremental({

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { nanoid } from 'nanoid';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
@@ -365,7 +364,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
   async function saveTask(): Promise<void> {
     if (!configId) return;
-    const nextId = selectedTaskId || nanoid();
+    const nextId = selectedTaskId || crypto.randomUUID();
     const timezoneSource = taskTimezone === EMAIL_TASK_TIMEZONE_SCHEDULE
       ? 'schedule'
       : taskTimezone === EMAIL_TASK_TIMEZONE_SYSTEM

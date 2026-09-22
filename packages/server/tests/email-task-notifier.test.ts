@@ -1,4 +1,4 @@
-import { createTestStore } from './support/database.js';
+import { createTestStore, testUuid } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +8,9 @@ import test from 'node:test';
 import type { Mailer } from '../src/lib/mailer.js';
 import { EmailTaskNotifier } from '../src/cron/email-task-notifier.js';
 import { LabbyStore } from '../src/store/index.js';
+import { SYSTEM_SETTINGS_ID } from '@labby/core';
+
+const id = testUuid;
 
 function createTempDbPath(prefix: string): string {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
@@ -45,7 +48,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
 
   try {
     await store.putConfig({
-      id: 'cfg-1',
+      id: id('cfg-1'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -57,15 +60,15 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
     });
 
     await store.putSchedule({
-      id: 'plan-1',
+      id: id('plan-1'),
       createdAt: Date.now(),
-      configId: 'cfg-1',
+      configId: id('cfg-1'),
       sessions: [{ date: '2099-01-05', presentations: [] }],
     });
 
     await store.putEmailTask({
-      id: 'task-1',
-      configId: 'cfg-1',
+      id: id('task-1'),
+      configId: id('cfg-1'),
       daysOfWeek: [1, 3],
       emails: ['a@example.com', 'b@example.com'],
       recentTimes: 1,
@@ -82,9 +85,9 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
     });
 
     await notifier.syncJobs();
-    assert.ok(scheduler.registeredJobs.includes('email-task:task-1'));
+    assert.ok(scheduler.registeredJobs.includes(`email-task:${id('task-1')}`));
 
-    await notifier.runTask('task-1');
+    await notifier.runTask(id('task-1'));
 
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0]?.to, ['b@example.com']);
@@ -93,7 +96,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
     assert.ok(sent[0]?.attachments?.some((item) => item.filename.endsWith('.csv')));
     assert.ok(sent[0]?.attachments?.some((item) => item.filename.endsWith('.ics')));
 
-    const updated = await store.getEmailTask('task-1');
+    const updated = await store.getEmailTask(id('task-1'));
     assert.equal(updated?.sentCounts?.['a@example.com'], 1);
     assert.equal(updated?.sentCounts?.['b@example.com'], 1);
     assert.equal(typeof updated?.lastRunAt, 'number');
@@ -116,7 +119,7 @@ test('EmailTaskNotifier sends scheduled delivery on every matching run', async (
 
   try {
     await store.putConfig({
-      id: 'cfg-stale',
+      id: id('cfg-stale'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -128,15 +131,15 @@ test('EmailTaskNotifier sends scheduled delivery on every matching run', async (
     });
 
     await store.putSchedule({
-      id: 'plan-stale',
+      id: id('plan-stale'),
       createdAt: Date.now(),
-      configId: 'cfg-stale',
+      configId: id('cfg-stale'),
       sessions: [{ date: '2026-01-05', presentations: [] }],
     });
 
     await store.putEmailTask({
-      id: 'task-stale',
-      configId: 'cfg-stale',
+      id: id('task-stale'),
+      configId: id('cfg-stale'),
       daysOfWeek: [1],
       emails: ['stale@example.com'],
       recentTimes: 0,
@@ -151,8 +154,8 @@ test('EmailTaskNotifier sends scheduled delivery on every matching run', async (
       defaultHour: 9,
     });
 
-    await notifier.runTask('task-stale');
-    await notifier.runTask('task-stale');
+    await notifier.runTask(id('task-stale'));
+    await notifier.runTask(id('task-stale'));
 
     assert.equal(sent.length, 2);
   } finally {
@@ -174,7 +177,7 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
 
   try {
     await store.putConfig({
-      id: 'cfg-skip-next',
+      id: id('cfg-skip-next'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -186,15 +189,15 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
     });
 
     await store.putSchedule({
-      id: 'plan-skip-next',
+      id: id('plan-skip-next'),
       createdAt: Date.now(),
-      configId: 'cfg-skip-next',
+      configId: id('cfg-skip-next'),
       sessions: [{ date: '2026-01-05', presentations: [] }],
     });
 
     await store.putEmailTask({
-      id: 'task-skip-next',
-      configId: 'cfg-skip-next',
+      id: id('task-skip-next'),
+      configId: id('cfg-skip-next'),
       daysOfWeek: [1],
       emails: ['skip-next@example.com'],
       recentTimes: 0,
@@ -211,20 +214,20 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
     });
 
     // Manual run should send immediately and keep skip-next for the next scheduled run.
-    await notifier.runTaskNow('task-skip-next');
+    await notifier.runTaskNow(id('task-skip-next'));
     assert.equal(sent.length, 1);
 
     // First scheduled run consumes skip-next and should not send.
-    await notifier.runTask('task-skip-next');
+    await notifier.runTask(id('task-skip-next'));
     assert.equal(sent.length, 1);
-    const afterFirstScheduled = await store.getEmailTask('task-skip-next');
+    const afterFirstScheduled = await store.getEmailTask(id('task-skip-next'));
     assert.equal(afterFirstScheduled?.skipNextRun, false);
     assert.equal(typeof afterFirstScheduled?.lastSkippedAt, 'number');
 
     // Later scheduled runs can send again once skip-next has been consumed.
-    await notifier.runTask('task-skip-next');
+    await notifier.runTask(id('task-skip-next'));
     assert.equal(sent.length, 2);
-    const afterSecondScheduled = await store.getEmailTask('task-skip-next');
+    const afterSecondScheduled = await store.getEmailTask(id('task-skip-next'));
     assert.equal(afterSecondScheduled?.skipNextRun, false);
   } finally {
     await store.close();
@@ -242,7 +245,7 @@ test('EmailTaskNotifier invalidates jobs when config period already ended', asyn
 
   try {
     await store.putConfig({
-      id: 'cfg-ended',
+      id: id('cfg-ended'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -254,8 +257,8 @@ test('EmailTaskNotifier invalidates jobs when config period already ended', asyn
     });
 
     await store.putEmailTask({
-      id: 'task-ended',
-      configId: 'cfg-ended',
+      id: id('task-ended'),
+      configId: id('cfg-ended'),
       daysOfWeek: [1],
       emails: ['ended@example.com'],
       recentTimes: 0,
@@ -291,7 +294,7 @@ test('EmailTaskNotifier skips disabled scheduled runs but allows manual send wit
 
   try {
     await store.putConfig({
-      id: 'cfg-disabled',
+      id: id('cfg-disabled'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -303,15 +306,15 @@ test('EmailTaskNotifier skips disabled scheduled runs but allows manual send wit
     });
 
     await store.putSchedule({
-      id: 'plan-disabled',
+      id: id('plan-disabled'),
       createdAt: Date.now(),
-      configId: 'cfg-disabled',
+      configId: id('cfg-disabled'),
       sessions: [{ date: '2026-01-05', presentations: [] }],
     });
 
     await store.putEmailTask({
-      id: 'task-disabled',
-      configId: 'cfg-disabled',
+      id: id('task-disabled'),
+      configId: id('cfg-disabled'),
       disabled: true,
       daysOfWeek: [1],
       emails: ['disabled@example.com'],
@@ -331,15 +334,15 @@ test('EmailTaskNotifier skips disabled scheduled runs but allows manual send wit
     await notifier.syncJobs();
     assert.deepEqual(scheduler.registeredJobs, []);
 
-    await notifier.runTask('task-disabled');
+    await notifier.runTask(id('task-disabled'));
     assert.equal(sent.length, 0);
-    const afterScheduled = await store.getEmailTask('task-disabled');
+    const afterScheduled = await store.getEmailTask(id('task-disabled'));
     assert.equal(typeof afterScheduled?.lastSkippedAt, 'number');
 
-    await notifier.runTaskNow('task-disabled');
+    await notifier.runTaskNow(id('task-disabled'));
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0]?.to, ['disabled@example.com']);
-    assert.equal(sent[0]?.fromName, 'Labby cfg-disabled');
+    assert.equal(sent[0]?.fromName, `Labby ${id('cfg-disabled')}`);
   } finally {
     await store.close();
   }
@@ -359,7 +362,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
 
   try {
     await store.putConfig({
-      id: 'cfg-template-errors',
+      id: id('cfg-template-errors'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -371,15 +374,15 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
     });
 
     await store.putSchedule({
-      id: 'plan-template-errors',
+      id: id('plan-template-errors'),
       createdAt: Date.now(),
-      configId: 'cfg-template-errors',
+      configId: id('cfg-template-errors'),
       sessions: [{ date: '2026-01-05', presentations: [] }],
     });
 
     await store.putEmailTask({
-      id: 'task-template-helper',
-      configId: 'cfg-template-errors',
+      id: id('task-template-helper'),
+      configId: id('cfg-template-errors'),
       daysOfWeek: [1],
       emails: ['helper@example.com'],
       recentTimes: 0,
@@ -394,13 +397,13 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
       defaultHour: 9,
     });
 
-    await notifier.runTaskNow('task-template-helper');
+    await notifier.runTaskNow(id('task-template-helper'));
     assert.equal(sent.length, 1);
     assert.match(sent[0]?.text ?? '', /2026/);
 
     await store.putEmailTask({
-      id: 'task-template-error',
-      configId: 'cfg-template-errors',
+      id: id('task-template-error'),
+      configId: id('cfg-template-errors'),
       daysOfWeek: [1],
       emails: ['error@example.com'],
       recentTimes: 0,
@@ -409,7 +412,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
     });
 
     await assert.rejects(
-      () => notifier.runTaskNow('task-template-error'),
+      () => notifier.runTaskNow(id('task-template-error')),
       /failed for 1 recipient/,
     );
   } finally {
@@ -431,12 +434,12 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
 
   try {
     await store.putSystemSettings({
-      id: 'system',
+      id: SYSTEM_SETTINGS_ID,
       timezone: 'Asia/Tokyo',
     });
 
     await store.putConfig({
-      id: 'cfg-tz',
+      id: id('cfg-tz'),
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -448,7 +451,7 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
     });
 
     await store.putPerson({
-      id: 'presenter',
+      id: id('presenter'),
       name: 'Presenter',
       names: { en: 'Presenter' },
       metadata: {},
@@ -456,15 +459,15 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
     });
 
     await store.putSchedule({
-      id: 'plan-tz',
+      id: id('plan-tz'),
       createdAt: Date.UTC(2026, 0, 1, 0, 0, 0),
-      configId: 'cfg-tz',
-      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: 'presenter', questionerIds: [] }] }],
+      configId: id('cfg-tz'),
+      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: id('presenter'), questionerIds: [] }] }],
     });
 
     await store.putEmailTask({
-      id: 'task-tz',
-      configId: 'cfg-tz',
+      id: id('task-tz'),
+      configId: id('cfg-tz'),
       daysOfWeek: [1],
       emails: ['tz@example.com'],
       recentTimes: 0,
@@ -484,7 +487,7 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
       publicBaseUrl: 'https://example.test',
     });
 
-    await notifierWithoutPublicIcs.runTaskNow('task-tz');
+    await notifierWithoutPublicIcs.runTaskNow(id('task-tz'));
     assert.equal(sent[0]?.text, 'Asia/Tokyo|missing');
     const firstIcs = sent[0]?.attachments?.find((item) => item.filename.endsWith('.ics'));
     assert.match(firstIcs?.content.toString('utf-8') ?? '', /DTSTART;TZID=Asia\/Tokyo:/);
@@ -498,8 +501,8 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
       publicBaseUrl: 'https://example.test/',
     });
 
-    await notifierWithPublicIcs.runTaskNow('task-tz');
-    assert.equal(sent[1]?.text, 'Asia/Tokyo|https://example.test/public/email-tasks/task-tz/schedule.ics');
+    await notifierWithPublicIcs.runTaskNow(id('task-tz'));
+    assert.equal(sent[1]?.text, `Asia/Tokyo|https://example.test/public/email-tasks/${id('task-tz')}/schedule.ics`);
   } finally {
     await store.close();
   }

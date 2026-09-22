@@ -1,117 +1,117 @@
 CREATE TABLE persons (
-    id TEXT PRIMARY KEY,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    id UUID PRIMARY KEY,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     keyword_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     payload JSONB NOT NULL
   );
 
   CREATE TABLE keywords (
-    id TEXT PRIMARY KEY,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    id UUID PRIMARY KEY,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
   );
 
   CREATE TABLE keyword_relations (
-    id TEXT PRIMARY KEY,
-    source_id TEXT NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
-    target_id TEXT NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY,
+    source_id UUID NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+    target_id UUID NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
     kind TEXT NOT NULL,
     directed BOOLEAN NOT NULL DEFAULT FALSE,
     weight DOUBLE PRECISION NOT NULL DEFAULT 1,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     UNIQUE (source_id, target_id, kind)
   );
 
   CREATE TABLE configs (
-    id TEXT PRIMARY KEY,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    id UUID PRIMARY KEY,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
   );
 
   CREATE TABLE constraints (
-    id TEXT PRIMARY KEY,
-    config_id TEXT NOT NULL,
+    id UUID PRIMARY KEY,
+    config_id UUID,
     type TEXT NOT NULL,
     person_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     payload JSONB NOT NULL,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
   );
 
   CREATE TABLE schedules (
-    id TEXT PRIMARY KEY,
-    config_id TEXT NOT NULL,
-    created_at BIGINT NOT NULL,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    id UUID PRIMARY KEY,
+    config_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     person_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     payload JSONB NOT NULL
   );
 
   CREATE TABLE unavailabilities (
-    id TEXT PRIMARY KEY,
-    person_id TEXT NOT NULL,
+    id UUID PRIMARY KEY,
+    person_id UUID,
     person_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    config_id TEXT NOT NULL,
+    config_id UUID NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
     payload JSONB NOT NULL
   );
 
   CREATE TABLE email_tasks (
-    id TEXT PRIMARY KEY,
-    config_id TEXT NOT NULL,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    id UUID PRIMARY KEY,
+    config_id UUID NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
   );
 
   CREATE TABLE system_settings (
-    id TEXT PRIMARY KEY,
-    updated_at BIGINT NOT NULL DEFAULT 0,
+    id UUID PRIMARY KEY,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     payload JSONB NOT NULL
   );
 
   CREATE TABLE users (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     email TEXT UNIQUE,
     role INTEGER NOT NULL,
     password_hash TEXT NOT NULL,
     disabled INTEGER NOT NULL DEFAULT 0,
-    created_at BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
     payload JSONB NOT NULL
   );
 
   CREATE TABLE refresh_tokens (
-    token_id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at BIGINT NOT NULL,
-    created_at BIGINT NOT NULL,
-    revoked_at BIGINT,
-    replaced_by_token_id TEXT,
+    token_id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    replaced_by_token_id UUID,
     payload JSONB NOT NULL
   );
 
   CREATE TABLE auth_verification_codes (
-    token_id TEXT PRIMARY KEY,
+    token_id UUID PRIMARY KEY,
     purpose TEXT NOT NULL,
-    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     target_email TEXT NOT NULL,
     pending_email TEXT,
     code_hash TEXT NOT NULL,
-    expires_at BIGINT NOT NULL,
-    created_at BIGINT NOT NULL,
-    consumed_at BIGINT,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ,
     payload JSONB NOT NULL
   );
 
   CREATE TABLE keyword_vectors (
-    keyword_id TEXT PRIMARY KEY REFERENCES keywords(id) ON DELETE CASCADE,
+    keyword_id UUID PRIMARY KEY REFERENCES keywords(id) ON DELETE CASCADE,
     x DOUBLE PRECISION NOT NULL,
     y DOUBLE PRECISION NOT NULL,
     embedding JSONB NOT NULL,
     geometry JSONB NOT NULL,
-    updated_at BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     payload JSONB NOT NULL
   );
 
@@ -136,7 +136,7 @@ CREATE TABLE persons (
   CREATE INDEX auth_verification_codes_expires_idx ON auth_verification_codes (expires_at);
 
 CREATE TABLE embedding_migration_archive (
-  keyword_id text PRIMARY KEY, source jsonb NOT NULL,
+  keyword_id uuid PRIMARY KEY, source jsonb NOT NULL,
   archived_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE keyword_vectors ADD CONSTRAINT embedding_shape CHECK (
@@ -144,7 +144,7 @@ ALTER TABLE keyword_vectors ADD CONSTRAINT embedding_shape CHECK (
   AND jsonb_array_length(embedding) =
     (geometry->>'hyperbolicDimensions')::int + (geometry->>'euclideanDimensions')::int
 );
-CREATE TABLE ranking_judgments (id text PRIMARY KEY, payload jsonb NOT NULL);
+CREATE TABLE ranking_judgments (id uuid PRIMARY KEY, payload jsonb NOT NULL);
 CREATE TABLE graph_clock (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   revision bigint NOT NULL DEFAULT 0,
@@ -153,12 +153,12 @@ CREATE TABLE graph_clock (
 INSERT INTO graph_clock(singleton) VALUES(true);
 -- Retain deletion tombstones; only the latest change per keyword is needed.
 CREATE TABLE graph_changes (
-  keyword_id text PRIMARY KEY,
+  keyword_id uuid PRIMARY KEY,
   revision bigint NOT NULL UNIQUE
 );
 CREATE FUNCTION record_graph_change() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
-  changed_id text;
+  changed_id uuid;
   next_revision bigint;
 BEGIN
   IF TG_TABLE_NAME = 'keywords' THEN
@@ -184,5 +184,12 @@ CREATE TABLE schema_migrations (
 );
 INSERT INTO schema_migrations(version,name) VALUES
   (1,'baseline'), (2,'product-embedding-and-ranking-history'), (3,'graph-change-feed'),
-  (4,'jsonb-documents');
-CREATE INDEX keywords_graph_id_idx ON keywords(id COLLATE "C");
+  (4,'jsonb-documents'), (5,'uuid-timestamptz-person-tags');
+CREATE INDEX keywords_graph_id_idx ON keywords(id);
+
+CREATE TABLE person_tags (
+  id uuid PRIMARY KEY,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  payload jsonb NOT NULL
+);
+CREATE INDEX person_tags_updated_at_idx ON person_tags(updated_at DESC,id DESC);

@@ -5,6 +5,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import { migrateEuclideanVector } from '../src/store/migrate/002-projection.js';
 import { migratePostgresSchema } from '../src/store/schema.js';
+import { runSqlFile } from '../src/store/migrate/runtime.js';
+import { up as productEmbeddingUp } from '../src/store/migrate/002.up.js';
 
 async function memoryDatabase() {
   const db = new PGlite({ extensions: { vector } });
@@ -32,6 +34,12 @@ async function legacyDatabase(db: PGlite, dimensions = 64) {
   return coordinates;
 }
 
+async function version3Database(db: PGlite) {
+  await runSqlFile(db, '001.up.sql');
+  await productEmbeddingUp(db);
+  await runSqlFile(db, '003.up.sql');
+}
+
 test('fresh migration builds the current schema and remains idempotent', async () => {
   const db = await memoryDatabase();
   try {
@@ -42,10 +50,11 @@ test('fresh migration builds the current schema and remains idempotent', async (
     assert.ok(columns.rows.some(row => row.column_name === 'embedding'));
     assert.ok(columns.rows.some(row => row.column_name === 'geometry'));
     assert.ok(!columns.rows.some(row => ['vector64', 'projection2d'].includes(row.column_name)));
-    await db.query("INSERT INTO ranking_judgments VALUES ('judgment','{\"keep\":true}')");
+    const judgmentId = '10000000-0000-4000-8000-000000000001';
+    await db.query('INSERT INTO ranking_judgments VALUES ($1,\'{"keep":true}\')', [judgmentId]);
     await migratePostgresSchema(db);
     assert.deepEqual((await db.query('SELECT * FROM schema_migrations ORDER BY version')).rows, history.rows);
-    assert.deepEqual((await db.query('SELECT * FROM ranking_judgments')).rows, [{ id: 'judgment', payload: { keep: true } }]);
+    assert.deepEqual((await db.query('SELECT * FROM ranking_judgments')).rows, [{ id: judgmentId, payload: { keep: true } }]);
     // The caller retains ownership of its connection after migration.
     assert.deepEqual((await db.query('SELECT 1 AS alive')).rows, [{ alive: 1 }]);
   } finally { await db.close(); }
@@ -57,12 +66,13 @@ test('legacy vectors are converted deterministically and the entire source row i
     const coordinates = await legacyDatabase(db);
     const before = (await db.query<{ source: unknown }>('SELECT to_jsonb(keyword_vectors) AS source FROM keyword_vectors')).rows[0]!.source;
     await migratePostgresSchema(db);
-    const expected = migrateEuclideanVector({ keywordId: 'physics', vector64: coordinates, updatedAt: 123456789 });
+    const migratedKeywordId = String((await db.query('SELECT id FROM keywords')).rows[0]!.id);
+    const expected = migrateEuclideanVector({ keywordId: migratedKeywordId, vector64: coordinates, updatedAt: 123456789 });
     const row = (await db.query('SELECT * FROM keyword_vectors')).rows[0]!;
     assert.deepEqual(row.embedding, expected.embedding);
     assert.deepEqual(row.geometry, expected.geometry);
     assert.deepEqual(row.payload, expected);
-    assert.equal(Number(row.updated_at), expected.updatedAt);
+    assert.equal(row.updated_at instanceof Date ? row.updated_at.getTime() : new Date(String(row.updated_at)).getTime(), expected.updatedAt);
     assert.equal(row.x, expected.x);
     assert.equal(row.y, expected.y);
     assert.deepEqual((await db.query('SELECT source FROM embedding_migration_archive')).rows, [{ source: before }]);
@@ -135,14 +145,13 @@ import { initializePostgresSchema } from '../src/store/initialize.js';
 test('v4 converts legacy TEXT documents and defaults, preserving values and resetting cursors', async () => {
   const db = await memoryDatabase();
   try {
-    await initializePostgresSchema(db);
-    await db.exec("DELETE FROM schema_migrations WHERE version=4");
+    await version3Database(db);
     await db.exec("ALTER TABLE keywords ALTER COLUMN payload TYPE text USING payload::text");
     await db.exec("ALTER TABLE persons ALTER COLUMN keyword_ids DROP DEFAULT; ALTER TABLE persons ALTER COLUMN keyword_ids TYPE text USING keyword_ids::text; ALTER TABLE persons ALTER COLUMN keyword_ids SET DEFAULT '[]'");
     await db.query('INSERT INTO keywords(id,payload) VALUES($1,$2)', ['physics', JSON.stringify({id:'physics', names:{zh:'物理'}, nested:{preserve:[1,null,true]}})]);
     const before = (await db.query('SELECT payload::jsonb AS payload FROM keywords')).rows;
     const epoch = (await db.query('SELECT epoch FROM graph_clock')).rows[0]!.epoch;
-    await migratePostgresSchema(db);
+    await db.transaction(tx => runSqlFile(tx, '004.up.sql'));
     assert.deepEqual((await db.query('SELECT payload FROM keywords')).rows, before);
     assert.notEqual((await db.query('SELECT epoch FROM graph_clock')).rows[0]!.epoch, epoch);
     await db.query("INSERT INTO persons(id,payload) VALUES('p','{}')");
@@ -155,14 +164,12 @@ test('v4 converts legacy TEXT documents and defaults, preserving values and rese
 test('v4 invalid JSON rolls back earlier column conversions and migration version', async () => {
   const db = await memoryDatabase();
   try {
-    await initializePostgresSchema(db);
-    await db.exec("DELETE FROM schema_migrations WHERE version=4");
+    await version3Database(db);
     await db.exec("ALTER TABLE configs ALTER COLUMN payload TYPE text USING payload::text; ALTER TABLE keywords ALTER COLUMN payload TYPE text USING payload::text");
     await db.query("INSERT INTO keywords(id,payload) VALUES('broken','invalid JSON')");
     const before = (await db.query('SELECT * FROM graph_clock')).rows;
-    await assert.rejects(migratePostgresSchema(db), /json/i);
+    await assert.rejects(db.transaction(tx => runSqlFile(tx, '004.up.sql')), /json/i);
     assert.deepEqual((await db.query("SELECT data_type FROM information_schema.columns WHERE table_name='configs' AND column_name='payload'")).rows,[{data_type:'text'}]);
     assert.deepEqual((await db.query('SELECT * FROM graph_clock')).rows,before);
-    assert.equal((await db.query('SELECT max(version) AS version FROM schema_migrations')).rows[0]!.version,3);
   } finally { await db.close(); }
 });

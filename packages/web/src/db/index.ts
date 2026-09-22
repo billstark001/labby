@@ -15,7 +15,7 @@ import { signal } from '@preact/signals';
 import { createPGliteDB } from './pglite';
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
-import { personsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, constraintsSignal, schedulesSignal, unavailabilitiesSignal, emailTasksSignal } from '@/store';
+import { personsSignal, personTagsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, constraintsSignal, schedulesSignal, unavailabilitiesSignal, emailTasksSignal } from '@/store';
 import { databaseMode } from '@/lib/runtime';
 
 const DB_CONFIG = databaseMode;
@@ -82,8 +82,9 @@ export function useDatabase() {
 export async function dumpDatabase(): Promise<DatabaseDump> {
   const dbInstance = db.value;
   if (!dbInstance) throw new Error('Database is not initialized');
-  const [persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory] = await Promise.all([
+  const [persons, personTags, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory] = await Promise.all([
     listAllPaginated(dbInstance.persons),
+    listAllPaginated(dbInstance.personTags),
     listAllPaginated(dbInstance.keywords),
     listAllPaginated(dbInstance.keywordVectors),
     listAllPaginated(dbInstance.configs),
@@ -94,7 +95,7 @@ export async function dumpDatabase(): Promise<DatabaseDump> {
     dbInstance.systemSettings.get(),
     dbInstance.similarity.getHistory(),
   ]);
-  return { persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory };
+  return { persons, personTags, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory };
 }
 
 export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
@@ -107,8 +108,9 @@ export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
 }
 
 export async function loadDatabaseSignals(db: LabbyDB) {
-  const [persons, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks] = await Promise.all([
+  const [persons, personTags, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks] = await Promise.all([
     listAllPaginated(db.persons),
+    listAllPaginated(db.personTags),
     listAllPaginated(db.keywords),
     listAllPaginated(db.keywordVectors),
     listAllPaginated(db.configs),
@@ -119,6 +121,7 @@ export async function loadDatabaseSignals(db: LabbyDB) {
   ]);
 
   personsSignal.value = persons ?? [];
+  personTagsSignal.value = personTags ?? [];
   keywordsSignal.value = keywords ?? [];
   keywordVectorsSignal.value = keywordVectors ?? [];
   configsSignal.value = configs ?? [];
@@ -166,6 +169,10 @@ export async function loadUnavailabilitiesFirstPage(db: LabbyDB, pageSize = DEFA
 
 export async function loadAllPersons(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
   personsSignal.value = await listAllPaginated(db.persons, pageSize);
+}
+
+export async function loadAllPersonTags(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
+  personTagsSignal.value = await listAllPaginated(db.personTags, pageSize);
 }
 
 export async function loadAllKeywords(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {

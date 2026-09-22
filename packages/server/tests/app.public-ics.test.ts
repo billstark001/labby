@@ -1,4 +1,4 @@
-import { createTestApp } from './support/database.js';
+import { createTestApp, testUuid } from './support/database.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,6 +33,8 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
 }
 
 test('public email task ICS endpoint is available only when enabled and task opts in', async () => {
+  const [configId, personAId, personBId, scheduleId, taskId] =
+    ['cfg-ics', 'p1', 'p2', 'plan-ics', 'task-ics'].map(testUuid);
   const runtime = await createTestApp({
     db: { dialect: 'pglite', dataDir: createTempDbPath('labby-public-ics') },
     rootUsername: 'root',
@@ -44,7 +46,7 @@ test('public email task ICS endpoint is available only when enabled and task opt
     const token = await login(runtime.app);
 
     const config: ScheduleConfig = {
-      id: 'cfg-ics',
+      id: configId,
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
       presentersPerSession: 1,
@@ -57,7 +59,7 @@ test('public email task ICS endpoint is available only when enabled and task opt
     };
 
     const personA: Person = {
-      id: 'p1',
+      id: personAId,
       name: 'Alice',
       names: { en: 'Alice' },
       metadata: {},
@@ -65,7 +67,7 @@ test('public email task ICS endpoint is available only when enabled and task opt
     };
 
     const personB: Person = {
-      id: 'p2',
+      id: personBId,
       name: 'Bob',
       names: { en: 'Bob' },
       metadata: {},
@@ -73,20 +75,20 @@ test('public email task ICS endpoint is available only when enabled and task opt
     };
 
     const schedule: SchedulePlan = {
-      id: 'plan-ics',
+      id: scheduleId,
       createdAt: Date.now(),
-      configId: 'cfg-ics',
+      configId,
       sessions: [
         {
           date: '2026-01-05',
-          presentations: [{ presenterId: 'p1', questionerIds: ['p2'] }],
+          presentations: [{ presenterId: personAId, questionerIds: [personBId] }],
         },
       ],
     };
 
     const task: EmailTask = {
-      id: 'task-ics',
-      configId: 'cfg-ics',
+      id: taskId,
+      configId,
       daysOfWeek: [1],
       emails: ['a@example.com'],
       recentTimes: 0,
@@ -97,11 +99,11 @@ test('public email task ICS endpoint is available only when enabled and task opt
     };
 
     for (const [url, body] of [
-      ['/api/v1/db/configs/cfg-ics', config],
-      ['/api/v1/db/persons/p1', personA],
-      ['/api/v1/db/persons/p2', personB],
-      ['/api/v1/db/schedules/plan-ics', schedule],
-      ['/api/v1/db/email-tasks/task-ics', task],
+      [`/api/v1/db/configs/${configId}`, config],
+      [`/api/v1/db/persons/${personAId}`, personA],
+      [`/api/v1/db/persons/${personBId}`, personB],
+      [`/api/v1/db/schedules/${scheduleId}`, schedule],
+      [`/api/v1/db/email-tasks/${taskId}`, task],
     ] as const) {
       const response = await runtime.app.request(url, {
         method: 'PUT',
@@ -111,7 +113,7 @@ test('public email task ICS endpoint is available only when enabled and task opt
       assert.ok(response.status === 200 || response.status === 201);
     }
 
-    const icsRes = await runtime.app.request('/public/email-tasks/task-ics/schedule.ics');
+    const icsRes = await runtime.app.request(`/public/email-tasks/${taskId}/schedule.ics`);
     assert.equal(icsRes.status, 200);
     assert.equal(icsRes.headers.get('content-type')?.includes('text/calendar'), true);
 
@@ -121,13 +123,13 @@ test('public email task ICS endpoint is available only when enabled and task opt
     assert.match(icsBody, /DTSTART;TZID=Asia\/Tokyo:/);
     assert.match(icsBody, /SUMMARY:Presenter: Alice/);
 
-    await runtime.app.request('/api/v1/db/email-tasks/task-ics', {
+    await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {
       method: 'PUT',
       headers: makeHeaders(token),
       body: JSON.stringify({ ...task, metadata: { serveScheduleIcs: false } }),
     });
 
-    const disabledRes = await runtime.app.request('/public/email-tasks/task-ics/schedule.ics');
+    const disabledRes = await runtime.app.request(`/public/email-tasks/${taskId}/schedule.ics`);
     assert.equal(disabledRes.status, 404);
   } finally {
     await runtime.close();

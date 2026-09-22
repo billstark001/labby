@@ -27,10 +27,11 @@ test('legacy IndexedDB upgrade uses a new version and normalizes the complete du
 });
 
 test('browser schema upgrades are ordered and reject newer databases', () => {
-  assert.deepEqual(pendingBrowserSchemaVersions(0), [1, 2, 3, 4]);
-  assert.deepEqual(pendingBrowserSchemaVersions(1), [2, 3, 4]);
-  assert.deepEqual(pendingBrowserSchemaVersions(2), [3, 4]);
-  assert.deepEqual(pendingBrowserSchemaVersions(4), []);
-  assert.throws(() => pendingBrowserSchemaVersions(5), /newer than supported/);
+  assert.deepEqual(pendingBrowserSchemaVersions(0), [1, 2, 3, 4, 5]);
+  assert.deepEqual(pendingBrowserSchemaVersions(1), [2, 3, 4, 5]);
+  assert.deepEqual(pendingBrowserSchemaVersions(2), [3, 4, 5]);
+  assert.deepEqual(pendingBrowserSchemaVersions(4), [5]);
+  assert.deepEqual(pendingBrowserSchemaVersions(5), []);
+  assert.throws(() => pendingBrowserSchemaVersions(6), /newer than supported/);
   for (const invalid of [-1, 0.5, NaN, Infinity]) assert.throws(() => pendingBrowserSchemaVersions(invalid), /Invalid/);
 });

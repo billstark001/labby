@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'preact/hooks';
-import { nanoid } from 'nanoid';
 import type { ScheduleConstraint } from '@labby/core';
 
 import { configsSignal, constraintsSignal, personsSignal } from '@/store';
@@ -67,7 +66,7 @@ function ConstraintForm({ initial, onSave, onCancel }: ConstraintFormProps) {
 
     if (constraintType === 'no-overlap') {
       onSave({
-        id: initial?.id ?? nanoid(),
+        id: initial?.id ?? crypto.randomUUID(),
         configId,
         type: 'no-overlap',
         personIds: selectedPersonIds,
@@ -79,7 +78,7 @@ function ConstraintForm({ initial, onSave, onCancel }: ConstraintFormProps) {
 
     if (constraintType === 'affinity-boost') {
       onSave({
-        id: initial?.id ?? nanoid(),
+        id: initial?.id ?? crypto.randomUUID(),
         configId,
         type: 'affinity-boost',
         personIds: selectedPersonIds,
@@ -90,7 +89,7 @@ function ConstraintForm({ initial, onSave, onCancel }: ConstraintFormProps) {
     }
 
     onSave({
-      id: initial?.id ?? nanoid(),
+      id: initial?.id ?? crypto.randomUUID(),
       configId,
       type: 'frequency-multiplier',
       personIds: selectedPersonIds,

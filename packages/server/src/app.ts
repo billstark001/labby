@@ -10,6 +10,7 @@ import type {
   Keyword,
   KeywordVector,
   Person,
+  PersonTag,
   PersonUnavailability,
   ScheduleConfig,
   ScheduleConstraint,
@@ -26,6 +27,7 @@ import {
   solveFull,
   solveIncremental,
   keywordVectorsToSimilarityLookup,
+  SYSTEM_SETTINGS_ID,
 } from "@labby/core";
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
@@ -303,7 +305,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       ? body.metadata as Record<string, unknown>
       : undefined;
     const settings = {
-      id: 'system' as const,
+      id: SYSTEM_SETTINGS_ID,
       timezone,
       metadata,
       modifiedAt: Date.now(),
@@ -556,6 +558,22 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   });
   app.delete("/api/v1/db/persons/:id", async (c) => {
     await store.deletePerson(c.req.param("id"));
+    return c.body(null, 204);
+  });
+
+  app.get('/api/v1/db/person-tags', async (c) => {
+    const { offset, limit } = parsePagination(c.req.query());
+    const sort = parseEntityListSort(c.req.query());
+    return ok(c, toPage(await store.listPersonTags(sort), offset, limit));
+  });
+  app.get('/api/v1/db/person-tags/:id', async (c) => ok(c, (await store.getPersonTag(c.req.param('id'))) ?? null));
+  app.put('/api/v1/db/person-tags/:id', async (c) => {
+    const tag = await c.req.json<PersonTag>();
+    await store.putPersonTag({ ...tag, id: c.req.param('id') });
+    return ok(c, await store.getPersonTag(c.req.param('id')), 201);
+  });
+  app.delete('/api/v1/db/person-tags/:id', async (c) => {
+    await store.deletePersonTag(c.req.param('id'));
     return c.body(null, 204);
   });
 

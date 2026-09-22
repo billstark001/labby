@@ -9,6 +9,8 @@ import type {
   ListQuery,
   PaginatedResult,
   Person,
+  PersonTag,
+  PersonTagStore,
   PersonStore,
   PersonUnavailability,
   PersonUnavailabilityStore,
@@ -21,6 +23,7 @@ import type {
   SystemSettings,
   SystemSettingsStore,
 } from '@labby/core';
+import { SYSTEM_SETTINGS_ID } from '@labby/core';
 
 function emptyPage<T>(query: ListQuery): PaginatedResult<T> {
   return {
@@ -47,6 +50,14 @@ export function createDummyDB(): LabbyDB {
     list: async (query: ListQuery) => emptyPage<Keyword>(query),
     put: async (value: Keyword) => void 0,
     delete: async (id: string) => void 0,
+    clear: async () => void 0,
+  };
+
+  const personTagsStore: PersonTagStore = {
+    get: async () => undefined,
+    list: async (query) => emptyPage<PersonTag>(query),
+    put: async () => void 0,
+    delete: async () => void 0,
     clear: async () => void 0,
   };
 
@@ -101,13 +112,14 @@ export function createDummyDB(): LabbyDB {
   };
 
   const systemSettingsStore: SystemSettingsStore = {
-    get: async () => ({ id: 'system' }),
+    get: async () => ({ id: SYSTEM_SETTINGS_ID }),
     put: async (value: SystemSettings) => void 0,
   };
 
   const db: LabbyDB = {
     similarity: { getHistory: async () => [], forgetJudgment: async () => { throw new Error('Database is unavailable'); }, commit: async () => { throw new Error('Database is unavailable'); } },
     persons: personsStore,
+    personTags: personTagsStore,
     keywords: keywordsStore,
     keywordVectors: keywordVectorsStore,
     configs: configsStore,
@@ -120,6 +132,7 @@ export function createDummyDB(): LabbyDB {
       readForSchedule: async (_query) => ({
         persons: [],
         keywords: [],
+        personTags: [],
         keywordVectors: [],
         configs: [],
         constraints: [],
@@ -128,6 +141,7 @@ export function createDummyDB(): LabbyDB {
       }),
       readForPerson: async (_query) => ({
         keywords: [],
+        personTags: [],
         constraints: [],
         schedules: [],
         unavailabilities: [],

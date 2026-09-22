@@ -1,8 +1,11 @@
 /** Core entity and scheduling type definitions for Labby. */
 
+/** Stable UUID used for the singleton settings row. */
+export const SYSTEM_SETTINGS_ID = '00000000-0000-4000-8000-000000000001';
+
 /** Base multilingual entity shared by all domain objects. */
 export interface BaseEntity {
-  id: string; // UUID v4 or NanoID
+  id: string; // UUID
   name: string; // default display name
   names: Record<string, string>; // multilingual name map, e.g. { zh: "小明", en: "Ming" }
   metadata: Record<string, unknown>; // arbitrary extension metadata
@@ -13,6 +16,16 @@ export interface BaseEntity {
 /** A seminar participant. */
 export interface Person extends BaseEntity {
   keywordIds: string[]; // associated keyword IDs (max 10)
+  tagIds?: string[]; // associated person-label IDs
+  modifiedAt?: number;
+}
+
+/** A user-managed colored label that can be attached to people. */
+export interface PersonTag {
+  id: string;
+  name: string;
+  color: string; // CSS hex color (#RRGGBB)
+  notes?: string;
   modifiedAt?: number;
 }
 
@@ -104,7 +117,7 @@ export interface EmailTask {
 
 /** Global system settings stored as a singleton record. */
 export interface SystemSettings {
-  id?: 'system';
+  id?: string;
   /** IANA timezone. Omit to use the environment timezone. */
   timezone?: string;
   metadata?: Record<string, unknown>;

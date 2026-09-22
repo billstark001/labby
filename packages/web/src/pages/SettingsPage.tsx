@@ -1,6 +1,6 @@
 /** Settings panel: language and config management. */
 import { useEffect, useState } from 'preact/hooks';
-import { SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
+import { SYSTEM_DEFAULT_TIMEZONE, SYSTEM_SETTINGS_ID } from '@labby/core';
 
 import { i18n } from '../i18n';
 import type { Locale } from '../i18n';
@@ -129,7 +129,7 @@ export function SettingsPage() {
   async function handleSaveSystemSettings() {
     try {
       await db.systemSettings.put({
-        id: 'system',
+        id: SYSTEM_SETTINGS_ID,
         timezone: systemTimezone === SYSTEM_DEFAULT_TIMEZONE ? undefined : systemTimezone,
         modifiedAt: Date.now(),
       });

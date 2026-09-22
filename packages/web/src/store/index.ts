@@ -1,6 +1,6 @@
 import { signal, computed } from '@preact/signals';
 import { keywordVectorsToSimilarityLookup } from '@labby/core';
-import type { Person, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask, GraphSnapshotEdge } from '@labby/core';
+import type { Person, PersonTag, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask, GraphSnapshotEdge } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -19,6 +19,7 @@ function readPersistedTheme(): 'light' | 'dark' {
 
 export const themeSignal = signal<'light' | 'dark'>(readPersistedTheme());
 export const personsSignal = signal<Person[]>([]);
+export const personTagsSignal = signal<PersonTag[]>([]);
 export const keywordsSignal = signal<Keyword[]>([]);
 export const keywordVectorsSignal = signal<KeywordVector[]>([]);
 export const graphEdgesSignal = signal<GraphSnapshotEdge[]>([]);
@@ -42,6 +43,12 @@ export const navSignal = signal<NavSection>('schedule');
 export const personMapSignal = computed(() => {
   const m = new Map<string, Person>();
   for (const p of personsSignal.value) m.set(p.id, p);
+  return m;
+});
+
+export const personTagMapSignal = computed(() => {
+  const m = new Map<string, PersonTag>();
+  for (const tag of personTagsSignal.value) m.set(tag.id, tag);
   return m;
 });
 

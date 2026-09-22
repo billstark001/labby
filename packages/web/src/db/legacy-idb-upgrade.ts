@@ -117,6 +117,7 @@ export async function readLegacyIndexedDbDump(): Promise<LegacyMigrationDump | n
         return {keywordId:value.keywordId,source:{...value,vector64:Array.from(value.vector64)}};
       }),
       persons: (records.get(legacyStores.persons) ?? []) as Person[],
+      personTags: [],
       keywords: (records.get(legacyStores.keywords) ?? []) as Keyword[],
       keywordVectors: (records.get(legacyStores.keywordVectors) ?? []).map(normalizeKeywordVector),
       configs: (records.get(legacyStores.configs) ?? []) as ScheduleConfig[],
