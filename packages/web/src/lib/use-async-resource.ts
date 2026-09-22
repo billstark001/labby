@@ -5,6 +5,8 @@ export type AsyncResource<T> = {
   error: unknown;
   status: 'idle' | 'pending' | 'success' | 'error';
   isPending: boolean;
+  isInitialLoading: boolean;
+  isRefetching: boolean;
   refetch: () => Promise<T | undefined>;
 };
 
@@ -42,5 +44,14 @@ export function useAsyncResource<T>(query: () => Promise<T>, dependencies: reado
     return () => { generation.current += 1; };
   }, [refetch]);
 
-  return { data, error, status, isPending: status === 'pending', refetch };
+  const isPending = status === 'pending';
+  return {
+    data,
+    error,
+    status,
+    isPending,
+    isInitialLoading: isPending && data === undefined,
+    isRefetching: isPending && data !== undefined,
+    refetch,
+  };
 }

@@ -9,7 +9,7 @@ import { DataPanel } from '../components/DataPanel';
 import { TimezoneSelect } from '../components/TimezoneSelect';
 import { useDatabase } from '../db';
 import { deploymentMode } from '../lib/runtime';
-import { toast } from '../components/ui';
+import { ContentSkeleton, toast } from '../components/ui';
 import {
   changePassword,
   confirmEmailChange,
@@ -20,6 +20,7 @@ import {
   type AuthAccountProfile,
 } from '../lib/auth';
 import clsx from 'clsx';
+import { useAsyncResource } from '../lib/use-async-resource';
 
 const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];
 const localeLabels: Record<Locale, string> = {
@@ -31,7 +32,10 @@ const localeLabels: Record<Locale, string> = {
 export function SettingsPage() {
   const { t, lang, setLang } = i18n.useTranslation();
   const db = useDatabase();
-  const [profile, setProfile] = useState<AuthAccountProfile | null>(null);
+  const profileQuery = useAsyncResource<AuthAccountProfile | null>(
+    () => deploymentMode === 'server' ? getAccountProfile() : Promise.resolve(null),
+  );
+  const profile = profileQuery.data;
   const [securityMessage, setSecurityMessage] = useState<string | null>(null);
   const [securityError, setSecurityError] = useState<string | null>(null);
   const [emailCode, setEmailCode] = useState('');
@@ -42,13 +46,6 @@ export function SettingsPage() {
   const [newPassword, setNewPassword] = useState('');
   const [systemTimezone, setSystemTimezone] = useState(SYSTEM_DEFAULT_TIMEZONE);
   const isRoot = profile?.role === 2;
-
-  useEffect(() => {
-    if (deploymentMode !== 'server') return;
-    void getAccountProfile()
-      .then(setProfile)
-      .catch((err) => setSecurityError(err instanceof Error ? err.message : String(err)));
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +78,7 @@ export function SettingsPage() {
       await confirmEmailVerification(emailCode);
       setSecurityMessage(t('emailVerificationConfirmed'));
       setEmailCode('');
-      setProfile(await getAccountProfile());
+      await profileQuery.refetch();
     } catch (err) {
       setSecurityError(err instanceof Error ? err.message : String(err));
     }
@@ -107,7 +104,7 @@ export function SettingsPage() {
       setEmailChangeCode('');
       setEmailChangePassword('');
       setNewEmail('');
-      setProfile(await getAccountProfile());
+      await profileQuery.refetch();
     } catch (err) {
       setSecurityError(err instanceof Error ? err.message : String(err));
     }
@@ -194,11 +191,14 @@ export function SettingsPage() {
       {deploymentMode === 'server' && (
         <div class={clsx(s.card, s.sectionStack)}>
           <h3 class={clsx(s.text15, s.fontMedium)}>{t('accountSecurityTitle')}</h3>
-          <p class={s.mutedParagraph}>
-            {profile
-              ? `${profile.username} (${profile.email ?? t('emailNotSet')})`
-              : t('serverCapabilitiesLoading')}
-          </p>
+          {profileQuery.isInitialLoading
+            ? <ContentSkeleton rows={2} />
+            : profileQuery.error
+              ? <div role="alert" class={s.formGroup}>
+                <p class={s.textDanger}>{String(profileQuery.error)}</p>
+                <button class={s.btnVariants.secondary} onClick={() => void profileQuery.refetch()}>{t('retry')}</button>
+              </div>
+              : <p class={s.mutedParagraph}>{profile ? `${profile.username} (${profile.email ?? t('emailNotSet')})` : '—'}</p>}
           <p class={s.mutedParagraph}>{t('verificationCooldownHint')}</p>
           {isRoot && <p class={s.mutedParagraph}>{t('rootSecurityReadonlyHint')}</p>}
 

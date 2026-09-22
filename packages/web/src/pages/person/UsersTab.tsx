@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { Button, ContentSkeleton } from '@/components/ui';
@@ -128,10 +128,6 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
   const usersQuery = useAsyncResource(fetchUsers);
   const users = usersQuery.data ?? [];
 
-  useEffect(() => {
-    if (usersQuery.error) toast.error(String(usersQuery.error));
-  }, [usersQuery.error]);
-
   function handleDelete(user: SafeUser) {
     confirmDialog(t('deleteUser'), t('deleteUserWarning'), async () => {
       try {
@@ -143,12 +139,20 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
     });
   }
 
-  if (usersQuery.isPending && !usersQuery.data) {
+  if (usersQuery.isInitialLoading) {
     return <ContentSkeleton rows={5} />;
   }
 
+  if (usersQuery.error && !usersQuery.data) {
+    return <div role="alert" class={s.formGroup}>
+      <p class={s.textDanger}>{String(usersQuery.error)}</p>
+      <Button variant="secondary" onClick={() => void usersQuery.refetch()}>{t('retry')}</Button>
+    </div>;
+  }
+
   return (
-    <div>
+    <div aria-busy={usersQuery.isRefetching}>
+      {usersQuery.error && <p role="alert" class={s.textDanger}>{String(usersQuery.error)}</p>}
       <div class={`${s.toolbar} ${s.mb24}`}>
         <Button variant="primary" onClick={() => setShowCreateDialog(true)}>
           + {t('createUser')}

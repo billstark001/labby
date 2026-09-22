@@ -1,9 +1,8 @@
 /** Data import/export: MsgPack backup, HTML table, CSV via PapaParse. */
 import { encode, decode } from '@msgpack/msgpack';
-import { useEffect, useState } from 'preact/hooks';
 import { dumpDatabase, loadDatabaseSignals, restoreDatabase, useDatabase } from '../db/index';
 import * as s from '../styles/components.css';
-import { Button } from './ui';
+import { Button, ContentSkeleton } from './ui';
 import { i18n } from '@/i18n';
 import { toast } from './ui';
 import {
@@ -17,6 +16,7 @@ import {
 import { deploymentMode, isFrontendOnlyDeployment, isServerDeployment } from '@/lib/runtime';
 import clsx from 'clsx';
 import { confirmDialog } from './ui/Dialog';
+import { useAsyncResource } from '@/lib/use-async-resource';
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -30,36 +30,10 @@ function triggerDownload(blob: Blob, filename: string) {
 export function DataPanel() {
   const { t } = i18n;
   const dbInstance = useDatabase();
-  const [capabilities, setCapabilities] = useState<SystemCapabilities | null>(null);
-  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
-  const [loadingCapabilities, setLoadingCapabilities] = useState(false);
-
-  useEffect(() => {
-    if (!isServerDeployment) {
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingCapabilities(true);
-    setCapabilitiesError(null);
-    void fetchSystemCapabilities()
-      .then((result) => {
-        if (cancelled) return;
-        setCapabilities(result);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setCapabilitiesError(String(error));
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoadingCapabilities(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const capabilitiesQuery = useAsyncResource<SystemCapabilities | null>(
+    () => isServerDeployment ? fetchSystemCapabilities({ force: true }) : Promise.resolve(null),
+  );
+  const capabilities = capabilitiesQuery.data;
 
   const canManageServerBackups = Boolean(capabilities?.permissions.canManageBackups);
 
@@ -152,15 +126,7 @@ export function DataPanel() {
 
   async function refreshCapabilities() {
     if (!isServerDeployment) return;
-    setLoadingCapabilities(true);
-    setCapabilitiesError(null);
-    try {
-      setCapabilities(await fetchSystemCapabilities({ force: true }));
-    } catch (error) {
-      setCapabilitiesError(String(error));
-    } finally {
-      setLoadingCapabilities(false);
-    }
+    await capabilitiesQuery.refetch();
   }
 
   async function handleRunServerBackup(target?: BackupTarget) {
@@ -241,15 +207,18 @@ export function DataPanel() {
           <p class={s.mutedParagraph}>{t('serverBackupUnavailable')}</p>
         )}
 
-        {isServerDeployment && loadingCapabilities && (
-          <p class={s.mutedParagraph}>{t('serverCapabilitiesLoading')}</p>
+        {isServerDeployment && capabilitiesQuery.isInitialLoading && (
+          <ContentSkeleton rows={4} label={t('serverCapabilitiesLoading')} />
         )}
 
-        {isServerDeployment && !loadingCapabilities && capabilitiesError && (
-          <p class={s.textDanger}>{t('serverCapabilitiesError')}: {capabilitiesError}</p>
+        {isServerDeployment && capabilitiesQuery.error && (
+          <div role="alert" class={s.formGroup}>
+            <p class={s.textDanger}>{t('serverCapabilitiesError')}: {String(capabilitiesQuery.error)}</p>
+            <Button variant="secondary" onClick={() => void capabilitiesQuery.refetch()}>{t('retry')}</Button>
+          </div>
         )}
 
-        {isServerDeployment && !loadingCapabilities && !capabilitiesError && backupCapabilities && (
+        {isServerDeployment && backupCapabilities && (
           <>
             <p class={clsx(s.mutedParagraph, s.mb12)}>{t('serverBackupHint')}</p>
 
