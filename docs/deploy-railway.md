@@ -2,31 +2,62 @@
 
 ## Architecture
 
-The web/API service uses `railway.json`, a Docker build, PostgreSQL, and Railway's serverless sleep setting. Scheduled work is deliberately a separate, one-shot Railway Cron service. It calls the authenticated internal dispatch endpoint, while the server remains the owner of job names and business logic.
+Labby uses two Railway service types built from the same Dockerfile:
 
-This avoids running `node-cron` in sleeping or horizontally scaled web instances. Use `SCHEDULER_MODE=external` on the web service so jobs are registered for dispatch but not run locally and no Google configuration is required. Set `SCHEDULER_MODE=cron` only when a continuously running single instance is intended. Each Railway Cron service dispatches one registered job by setting `LABBY_CRON_JOB`.
+- The API/web service is a request-driven service. `SCHEDULER_MODE=external` registers scheduled handlers without starting `node-cron` or a Cloud Scheduler mirror.
+- Each Railway Cron service is a one-shot trigger. Its compiled entry point calls the authenticated server dispatch endpoint for one `LABBY_CRON_JOB`; the server remains the owner of the handler and its stable job name.
 
-## Server service
+Railway's Cron schedule is service configuration, so create one Cron service for each independently scheduled job. Do not run the same job through local cron, Cloud Scheduler, and Railway Cron at the same time.
+
+## API/web service
 
 1. Create a Railway project, PostgreSQL service, and application service from this repository.
-2. Configure `DATABASE_URL`, `DB_DRIVER=postgres`, authentication secrets, `WEB_DIST_DIR=/app/packages/web/dist`, `PUBLIC_BASE_URL`, and `SCHEDULER_DISPATCH_API_KEY`.
-3. Deploy with `pnpm deploy:railway`. Use `pnpm deploy:railway:incremental` to skip deployment when the merge-base diff contains no runtime files. `DEPLOY_DIFF_BASE`, `RAILWAY_SERVICE`, `RAILWAY_ENVIRONMENT`, and `RAILWAY_CLI` are optional.
-4. Keep at least one API replica available when Cron executes. If serverless sleeping is enabled, the HTTP call wakes it.
+2. Set the service config-file path to `/railway.json`.
+3. Configure `DATABASE_URL`, `DB_DRIVER=postgres`, authentication secrets, `WEB_DIST_DIR=/app/packages/web/dist`, `PUBLIC_BASE_URL`, `SCHEDULER_MODE=external`, and a strong `SCHEDULER_DISPATCH_API_KEY`.
+4. `railway.json` sets `deploy.sleepApplication=true`. Redeploy after changing this setting because Railway applies Serverless when it creates the container. The PostgreSQL pool releases idle connections so the service can become inactive.
+5. Give the service a public domain. A sleeping service is woken by the Cron request.
+
+Run a full deployment with:
+
+```sh
+pnpm deploy:railway
+```
+
+Use `pnpm deploy:railway:incremental` for a conditional deployment. It still uploads a complete build, but skips the upload when the merge-base diff contains no API/web runtime files. If a safe diff base cannot be resolved, it deploys rather than silently skipping.
 
 ## Cron service
 
-Create a service from the same repository and point its config file at `railway.cron.json`. Set:
+Create another service from the same repository and set its config-file path to `/railway.cron.json`. Configure:
 
-- `LABBY_SERVER_URL`: public URL of the server service.
-- `SCHEDULER_DISPATCH_API_KEY`: the same strong secret as the server.
-- `LABBY_CRON_JOB`: an exact registered name, such as `database-backup`, `auth-cleanup`, or `email-task:<id>`.
-- `LABBY_CRON_TIMEOUT_MS` (optional): request timeout, default 120000.
+- `LABBY_SERVER_URL`: the public HTTPS URL of the API service.
+- `SCHEDULER_DISPATCH_API_KEY`: the same secret as the API service.
+- `LABBY_CRON_JOB`: an exact registered name, such as `database-backup`, `auth-maintenance-cleanup`, `schedule-notify:<config-id>`, or `email-task:<task-id>`.
+- `LABBY_CRON_TIMEOUT_MS` (optional): per-request timeout in milliseconds; default `120000`.
+- `LABBY_CRON_ATTEMPTS` (optional): total attempts for network and 502/503/504 failures; default `3`.
 
-Copy the service for each independently scheduled job and change `cronSchedule`. Railway Cron uses UTC and five-field cron expressions. The process exits after one request; `restartPolicyType=NEVER` prevents duplicate retries. A non-2xx response makes the execution fail visibly.
+Set the Cron Schedule in each service's Railway settings; it is intentionally absent from the shared `railway.cron.json` so copied services can have different schedules. Railway Cron uses UTC five-field expressions and has a five-minute minimum interval. Copy the service for each independently scheduled job. The process exits after the dispatch finishes; a non-2xx application response fails the execution, while transient cold-start gateway failures are retried with bounded backoff.
+
+Deploy the Cron service with `RAILWAY_SERVICE` targeting that service:
+
+```sh
+pnpm deploy:railway:cron
+# or, for a conditional upload
+pnpm deploy:railway:cron:incremental
+```
+
+## Deployment variables
+
+- `RAILWAY_SERVICE`: service name or ID. Strongly recommended when the project has both API and Cron services.
+- `RAILWAY_ENVIRONMENT`: environment name or ID.
+- `RAILWAY_PROJECT_ID`: project ID; when supplied, also supply an environment.
+- `RAILWAY_CLI`: alternate Railway executable path.
+- `DEPLOY_DIFF_BASE`: explicit Git ref for incremental comparison. Otherwise `origin/main`, `main`, then `HEAD^` are tried.
+- `RAILWAY_DETACH=true`: queue the build and return immediately. By default the script stays attached and returns failure when the deployment fails.
 
 ## Operations
 
-- Rotate the dispatch key in the web service and every Cron service together.
-- Never expose the key in the repository or command line.
-- Inspect Railway deployment logs for `[railway-cron] Dispatched ...` and server logs for job failures.
-- Do not schedule the same job both locally and through Railway Cron.
+- Rotate the dispatch key in the API service and every Cron service together.
+- Never expose the key in the repository, URL, or command line.
+- Use HTTPS for `LABBY_SERVER_URL`; plain HTTP is accepted only for localhost testing.
+- Railway may skip a Cron occurrence while its previous execution is still active. Keep handlers idempotent and bounded.
+- Inspect Cron logs for `[railway-cron] Dispatched ...` and API logs for handler failures.

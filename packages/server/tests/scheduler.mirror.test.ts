@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { CronScheduler } from '../src/cron/scheduler.js';
+import { CronScheduler, resolveSchedulerMode } from '../src/cron/scheduler.js';
 
 class FakeMirror {
   readonly upserts: string[] = [];
@@ -49,4 +49,16 @@ test('CronScheduler cloud mode keeps definitions and can dispatch manually', asy
   assert.deepEqual(scheduler.registeredJobs, []);
   assert.ok(mirror.upserts.includes('job-a'));
   assert.ok(mirror.removals.includes('job-a'));
+});
+
+test('external scheduler aliases register jobs without local timers', () => {
+  assert.equal(resolveSchedulerMode('external'), 'external');
+  assert.equal(resolveSchedulerMode('railway'), 'external');
+  assert.throws(() => resolveSchedulerMode('typo'), /Unsupported SCHEDULER_MODE/);
+
+  const scheduler = new CronScheduler();
+  scheduler.setMode('external');
+  scheduler.register({ name: 'job-a', expression: '*/5 * * * *', handler: () => {} });
+  assert.deepEqual(scheduler.registeredJobs, ['job-a']);
+  scheduler.shutdown();
 });

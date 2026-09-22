@@ -168,10 +168,11 @@ export class CronScheduler {
 
 export function resolveSchedulerMode(value: string | undefined): SchedulerMode {
   const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized === 'cron') return 'cron';
   if (normalized === 'cloud') return 'cloud';
   if (normalized === 'external' || normalized === 'railway') return 'external';
   if (normalized === 'hybrid' || normalized === 'both') return 'hybrid';
-  return 'cron';
+  throw new Error(`Unsupported SCHEDULER_MODE: ${value}`);
 }
 
 /** Singleton scheduler instance for the application. */

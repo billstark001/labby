@@ -18,7 +18,10 @@ const enablePublicEmailTaskIcs = /^(1|true|yes)$/i.test(process.env.ENABLE_PUBLI
 const publicBaseUrl = resolvePublicBaseUrl(process.env, port);
 
 const requestedSchedulerMode = resolveSchedulerMode(process.env.SCHEDULER_MODE);
-let schedulerMode: SchedulerMode = requestedSchedulerMode;
+const schedulerMode: SchedulerMode = requestedSchedulerMode;
+if (requestedSchedulerMode === 'external' && !process.env.SCHEDULER_DISPATCH_API_KEY?.trim()) {
+  throw new Error('SCHEDULER_MODE=external requires SCHEDULER_DISPATCH_API_KEY');
+}
 if (requestedSchedulerMode === 'cloud' || requestedSchedulerMode === 'hybrid') {
   const mirror = createCloudSchedulerMirrorFromEnv();
   if (mirror) {
