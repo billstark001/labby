@@ -21,7 +21,10 @@ export async function listBrowserGraphPage(
   const result =
     plan.mode === 'snapshot'
       ? await client.query<GraphRow>(
-          'SELECT k.id,k.payload AS keyword,v.payload AS vector FROM entities k LEFT JOIN entities v ON v.kind=$1 AND v.id=k.id WHERE k.kind=$2 AND k.id COLLATE "C" > $3 COLLATE "C" ORDER BY k.id COLLATE "C" LIMIT $4',
+          `SELECT k.id,k.payload AS keyword,v.payload AS vector
+           FROM entities k LEFT JOIN entities v ON v.kind=$1 AND v.id=k.id
+           WHERE k.kind=$2 AND ((CASE WHEN COALESCE((k.payload->>'disabled')::boolean,false) THEN '1:' ELSE '0:' END) || k.id::text) COLLATE "C" > $3 COLLATE "C"
+           ORDER BY COALESCE((k.payload->>'disabled')::boolean,false),k.id LIMIT $4`,
           ['keyword-vector', 'keyword', plan.after, plan.limit + 1],
         )
       : await client.query<GraphRow>(

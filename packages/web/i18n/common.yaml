@@ -43,6 +43,11 @@ highlightPersonTag:
   zh-CN: 高亮标签
   ja-JP: タグを強調
 
+rankingIncludeDisabled:
+  en: Include disabled keywords in suggestions
+  zh-CN: 在新排序建议中包含禁用关键词
+  ja-JP: 新しい順位候補に無効なキーワードを含める
+
 setAutoPresenter:
   en: Change to Auto presenter
   zh-CN: 改为自动发表人

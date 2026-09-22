@@ -22,7 +22,11 @@ export async function listGraphPage(
   const result =
     plan.mode === 'snapshot'
       ? await client.query(
-          'SELECT k.id, k.payload AS keyword, v.payload AS vector FROM keywords k LEFT JOIN keyword_vectors v ON v.keyword_id=k.id WHERE k.id COLLATE "C" > $1 COLLATE "C" ORDER BY k.id COLLATE "C" LIMIT $2',
+          `SELECT k.id, k.payload AS keyword, v.payload AS vector
+           FROM keywords k LEFT JOIN keyword_vectors v ON v.keyword_id=k.id
+           WHERE ((CASE WHEN COALESCE((k.payload->>'disabled')::boolean,false) THEN '1:' ELSE '0:' END) || k.id::text) COLLATE "C" > $1 COLLATE "C"
+           ORDER BY COALESCE((k.payload->>'disabled')::boolean,false), k.id
+           LIMIT $2`,
           [plan.after, plan.limit + 1],
         )
       : await client.query(

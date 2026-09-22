@@ -102,7 +102,9 @@ export function finishGraphPage(plan: GraphPagePlan | null, rows: GraphRow[]): G
           epoch: plan.epoch,
           revision: plan.revision,
           mode: plan.mode,
-          after: plan.mode === 'snapshot' ? last!.id : last!.revision,
+          after: plan.mode === 'snapshot'
+            ? `${last!.keyword?.disabled ? '1' : '0'}:${last!.id}`
+            : last!.revision,
         })
       : null,
     checkpoint: more ? null : JSON.stringify({ epoch: plan.epoch, revision: plan.revision }),

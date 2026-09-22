@@ -8,6 +8,12 @@ import { listGraphPage } from '../src/store/graph.js';
 import { createTestStore } from './support/database.js';
 
 const keyword = (id: string) => ({ id, name: id, modifiedAt: 1 });
+const ids = {
+  zero: '00000000-0000-4000-8000-000000000010',
+  a: '10000000-0000-4000-8000-000000000001',
+  b: '20000000-0000-4000-8000-000000000002',
+  c: '30000000-0000-4000-8000-000000000003',
+};
 test('schema checks and migrate never initialize an empty database', async () => {
   const db = new PGlite();
   try {
@@ -31,25 +37,25 @@ test('schema checks and migrate never initialize an empty database', async () =>
 test('cursor bootstrap catches edits, inserts behind cursor and deletions during paging', async () => {
   const store = await createTestStore({ dialect: 'pglite', dataDir: 'memory://' });
   try {
-    for (const id of ['a', 'b', 'c']) await store.putKeyword(keyword(id));
+    for (const id of [ids.a, ids.b, ids.c]) await store.putKeyword(keyword(id));
     const first = await store.listGraph({ limit: 1 });
     assert.deepEqual(
       first.items.map((row) => row.id),
-      ['a'],
+      [ids.a],
     );
-    await store.putKeyword({ ...keyword('a'), name: 'changed', modifiedAt: 1 });
-    await store.putKeyword(keyword('0'));
-    await store.deleteKeyword('b');
+    await store.putKeyword({ ...keyword(ids.a), name: 'changed', modifiedAt: 1 });
+    await store.putKeyword(keyword(ids.zero));
+    await store.deleteKeyword(ids.b);
     const second = await store.listGraph({ cursor: first.nextCursor!, limit: 1 });
     assert.deepEqual(
       second.items.map((row) => row.id),
-      ['c'],
+      [ids.c],
     );
     assert.ok(second.checkpoint);
     const changes = await store.listGraph({ since: second.checkpoint! });
-    assert.deepEqual(changes.items.map((row) => row.id).sort(), ['0', 'a', 'b']);
-    assert.equal(changes.items.find((row) => row.id === 'b')!.keyword, null);
-    assert.equal(changes.items.find((row) => row.id === 'a')!.keyword!.name, 'changed');
+    assert.deepEqual(changes.items.map((row) => row.id).sort(), [ids.zero, ids.a, ids.b].sort());
+    assert.equal(changes.items.find((row) => row.id === ids.b)!.keyword, null);
+    assert.equal(changes.items.find((row) => row.id === ids.a)!.keyword!.name, 'changed');
     assert.equal((await store.listGraph({ since: changes.checkpoint! })).items.length, 0);
   } finally {
     await store.close();
@@ -60,16 +66,16 @@ test('delta pages are bounded and changes beyond their high-water mark are read 
   const store = await createTestStore({ dialect: 'pglite', dataDir: 'memory://' });
   try {
     const initial = await store.listGraph();
-    for (const id of ['a', 'b', 'c']) await store.putKeyword(keyword(id));
+    for (const id of [ids.a, ids.b, ids.c]) await store.putKeyword(keyword(id));
     const first = await store.listGraph({ since: initial.checkpoint!, limit: 1 });
-    assert.equal(first.items[0]!.id, 'a');
-    await store.putKeyword({ ...keyword('b'), name: 'late' });
+    assert.equal(first.items[0]!.id, ids.a);
+    await store.putKeyword({ ...keyword(ids.b), name: 'late' });
     const second = await store.listGraph({ cursor: first.nextCursor!, limit: 1 });
-    assert.equal(second.items[0]!.id, 'c');
+    assert.equal(second.items[0]!.id, ids.c);
     const nextBatch = await store.listGraph({ since: second.checkpoint! });
     assert.deepEqual(
       nextBatch.items.map((row) => row.id),
-      ['b'],
+      [ids.b],
     );
     assert.equal(nextBatch.items[0]!.keyword!.name, 'late');
     await assert.rejects(store.listGraph({ cursor: 'broken' }), /Invalid graph/);
@@ -89,8 +95,8 @@ test('rolled-back updates do not advance the graph clock or publish changes', as
     await assert.rejects(
       db.transaction(async (tx) => {
         await tx.query('INSERT INTO keywords(id,payload) VALUES($1,$2)', [
-          'a',
-          JSON.stringify(keyword('a')),
+          ids.a,
+          JSON.stringify(keyword(ids.a)),
         ]);
         throw new Error('rollback');
       }),
@@ -101,6 +107,19 @@ test('rolled-back updates do not advance the graph clock or publish changes', as
   } finally {
     await db.close();
   }
+});
+
+test('snapshot pages load enabled keywords before disabled keywords', async () => {
+  const store = await createTestStore({ dialect: 'pglite', dataDir: 'memory://' });
+  try {
+    await store.putKeyword({ ...keyword(ids.a), disabled: true });
+    await store.putKeyword(keyword(ids.b));
+    const first = await store.listGraph({ limit: 1 });
+    assert.equal(first.items[0]?.id, ids.b);
+    const second = await store.listGraph({ cursor: first.nextCursor!, limit: 1 });
+    assert.equal(second.items[0]?.id, ids.a);
+    assert.equal(second.items[0]?.keyword?.disabled, true);
+  } finally { await store.close(); }
 });
 
 test('current-schema init and historical migration produce the same table columns', async () => {

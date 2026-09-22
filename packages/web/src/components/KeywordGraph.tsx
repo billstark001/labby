@@ -26,12 +26,14 @@ type GraphNode = {
   label: string;
   x: number;
   y: number;
+  disabled: boolean;
 };
 
 type GraphLine = { source: GraphNode; target: GraphNode; weight: number };
 
 const COLOR_NODE: [number, number, number, number] = [44, 102, 245, 220];
 const COLOR_NODE_SELECTED: [number, number, number, number] = [16, 185, 129, 240];
+const COLOR_NODE_DISABLED: [number, number, number, number] = [148, 163, 184, 180];
 const COLOR_NODE_HALO: [number, number, number, number] = [16, 185, 129, 96];
 const POSITION_SCALE = 140;
 const POINT_TRANSITION_MS = 280;
@@ -171,6 +173,7 @@ export function KeywordGraph() {
           label: displayName(keyword),
           x,
           y,
+          disabled: Boolean(keyword.disabled),
         };
       }
 
@@ -180,6 +183,7 @@ export function KeywordGraph() {
         label: displayName(keyword),
         x: Math.cos(angle) * POSITION_SCALE * 0.2,
         y: Math.sin(angle) * POSITION_SCALE * 0.2,
+        disabled: Boolean(keyword.disabled),
       };
     });
 
@@ -356,7 +360,7 @@ export function KeywordGraph() {
           getLineColor: (d) => (selectedSet.has(d.id) ? [16, 185, 129, 255] : [255, 255, 255, 210]),
           getPosition: (d) => [d.x, d.y, 0],
           getRadius: (d) => (selectedSet.has(d.id) ? 13 : 7),
-          getFillColor: (d) => (selectedSet.has(d.id) ? COLOR_NODE_SELECTED : COLOR_NODE),
+          getFillColor: (d) => (d.disabled ? COLOR_NODE_DISABLED : selectedSet.has(d.id) ? COLOR_NODE_SELECTED : COLOR_NODE),
           updateTriggers: {
             getLineColor: selectionVersion,
             getRadius: selectionVersion,
@@ -379,7 +383,7 @@ export function KeywordGraph() {
           getText: (d) => d.label,
           getPosition: (d) => [d.x, d.y, 0],
           getSize: (d) => (selectedSet.has(d.id) ? 15 : 13),
-          getColor: (d) => (selectedSet.has(d.id) ? [16, 185, 129, 255] : textColor),
+          getColor: (d) => (d.disabled ? [148, 163, 184, 210] : selectedSet.has(d.id) ? [16, 185, 129, 255] : textColor),
           updateTriggers: {
             getColor: `${theme}|${selectionVersion}`,
             getSize: selectionVersion,

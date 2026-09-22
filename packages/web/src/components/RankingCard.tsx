@@ -19,7 +19,7 @@ export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved
   const [saved, setSaved] = useState(false);
   const [requestId] = useState(() => crypto.randomUUID());
   const [createdAt] = useState(() => Date.now());
-  const names = new Map(graphData.value.keywords.map(k => [k.id, displayName(k)]));
+  const names = new Map(graphData.value.keywords.map(k => [k.id, `${displayName(k)}${k.disabled ? ` (${t('disabled')})` : ''}`]));
   const groups = rankingGroups(query.candidateIds, ranks);
   const valid = groups.flat().length >= 2;
 
@@ -60,16 +60,17 @@ export function RankingCard() {
   const [answered, setAnswered] = useState(0);
   const [history, setHistory] = useState<RankingJudgment[]>([]);
   const [revision, setRevision] = useState(0);
+  const [includeDisabled, setIncludeDisabled] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError('');
-    void Promise.all([recommendRanking(db, excludedKeys), db.similarity.getHistory()]).then(([next, judgments]) => {
+    void Promise.all([recommendRanking(db, excludedKeys, includeDisabled), db.similarity.getHistory()]).then(([next, judgments]) => {
       if (!cancelled) { setQuery(next); setHistory(judgments); }
     })
       .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : t('rankingFailed')); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [db, keywordKey, excludedKeys, revision]);
+  }, [db, keywordKey, excludedKeys, revision, includeDisabled]);
   async function forget(id: string) {
     setLoading(true);
     try { await db.similarity.forgetJudgment(id); setExcluded([]); setRevision(n => n + 1); }
@@ -81,6 +82,10 @@ export function RankingCard() {
     setExcluded(previous => [...previous, query.key].slice(-200));
   }
   return <div class={`${s.card} ${s.mb24}`}>
+    <label class={s.label}>
+      <input type="checkbox" checked={includeDisabled} onChange={event => setIncludeDisabled(event.currentTarget.checked)} />
+      {' '}{t('rankingIncludeDisabled')}
+    </label>
     {loading ? <p role="status">{t('rankingLoading')}</p> : error ? <p role="alert">{error}</p>
       : query ? <><RankingEditor key={query.key} query={query} onSaved={() => next(true)} />
         <Button variant="ghost" onClick={() => next(false)}>{t('rankingSkip')}</Button></>
