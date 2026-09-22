@@ -25,6 +25,6 @@
   },
   "dependencies": {
     "marked": "^18.0.13",
-    "pure-expr": "^0.2.0"
+    "pure-expr": "^0.4.0"
   }
 }

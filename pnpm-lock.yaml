@@ -126,8 +126,8 @@ importers:
         specifier: ^18.0.13
         version: 18.0.13
       pure-expr:
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.4.0
+        version: 0.4.0
     devDependencies:
       tsx:
         specifier: ^4.23.13
@@ -137,7 +137,7 @@ importers:
         version: 7.0.2
       vitest:
         specifier: ^5.0.0
-        version: 5.0.0(@types/node@26.1.0)(vite@8.3.0(@types/node@26.1.0)(esbuild@0.28.1)(tsx@4.23.13))
+        version: 5.0.0(@types/node@26.1.0)(happy-dom@20.14.5)(vite@8.3.0(@types/node@26.1.0)(esbuild@0.28.1)(tsx@4.23.13))
 
   packages/server:
     dependencies:
@@ -1507,6 +1507,9 @@ packages:
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
+  '@types/estree@1.0.9':
+    resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+
   '@types/geojson@7946.0.16':
     resolution: {integrity: sha512-6C8nqWur3j98U6+lXDfTUWIfgvZU+EumvpHKcYjujKH7woYyLj2sUmff0tRhrqM7BohUw7Pz3ZB1jj2gW9Fvmg==}
 
@@ -2669,9 +2672,9 @@ packages:
       preact-render-to-string:
         optional: true
 
-  pure-expr@0.2.0:
-    resolution: {integrity: sha512-AJjB5EwGeuPvMw/JuwGRm4v4ymTjsDnBHP0dThttVEMS6AAwUXrF2ZuiUg3aFbIfghO5wznm7ONVnBVCpPiFCw==}
-    engines: {node: '>=18'}
+  pure-expr@0.4.0:
+    resolution: {integrity: sha512-sfgca5gATCDPQhDLOJxrWARzEQrne0frHH/S/zDHw8gfZB3I0DPu8IXPe+LR1Loru81ljs/O4zd5PkaZBngj4Q==}
+    engines: {node: '>=18', pnpm: '>=12'}
 
   require-like@0.1.2:
     resolution: {integrity: sha512-oyrU88skkMtDdauHDuKVrgR+zuItqr6/c//FXzvmxRGMexSDc6hNvJInGW3LL46n+8b50RykrvwSUIIQH2LQ5A==}
@@ -4076,6 +4079,8 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
+  '@types/estree@1.0.9': {}
+
   '@types/geojson@7946.0.16': {}
 
   '@types/js-yaml@4.0.9': {}
@@ -5152,7 +5157,9 @@ snapshots:
 
   preact@10.29.8: {}
 
-  pure-expr@0.2.0: {}
+  pure-expr@0.4.0:
+    dependencies:
+      '@types/estree': 1.0.9
 
   require-like@0.1.2: {}
 
@@ -5373,7 +5380,7 @@ snapshots:
       fsevents: 2.3.3
       tsx: 4.23.13
 
-  vitest@5.0.0(@types/node@26.1.0)(vite@8.3.0(@types/node@26.1.0)(esbuild@0.28.1)(tsx@4.23.13)):
+  vitest@5.0.0(@types/node@26.1.0)(happy-dom@20.14.5)(vite@8.3.0(@types/node@26.1.0)(esbuild@0.28.1)(tsx@4.23.13)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.0.0(vite@8.3.0(@types/node@26.1.0)(esbuild@0.28.1)(tsx@4.23.13))
@@ -5391,6 +5398,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.1.0
+      happy-dom: 20.14.5
     transitivePeerDependencies:
       - msw
 
