@@ -18,6 +18,7 @@ export const presenterCell = style({ display: 'flex', alignItems: 'center', gap:
 export const questionerCell = style({ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: vars.space.xs, minWidth: 0 });
 export const rowGrip = style({ display: 'inline-flex', flexShrink: 0, color: vars.color.textMuted, cursor: 'grab', touchAction: 'none' });
 export const personLabel = style({ fontSize: vars.font.size.sm, color: vars.color.text });
+export const highlightedPerson = style({ outline: `2px solid ${vars.color.accent}`, outlineOffset: 2, borderRadius: vars.radius.sm, background: `${vars.color.accent}20`, fontWeight: vars.font.weight.bold });
 export const questionerToken = style({ display: 'inline-flex', padding: `1px 6px`, borderRadius: vars.radius.full, background: `${vars.color.primary}16`, color: vars.color.text, fontSize: vars.font.size.sm, cursor: 'grab', touchAction: 'none' });
 export const autoSlot = style({ display: 'inline-flex', padding: `1px 6px`, borderRadius: vars.radius.full, border: `1px dashed ${vars.color.accent}`, color: vars.color.accent, background: `${vars.color.accent}10`, fontSize: vars.font.size.sm, cursor: 'grab', touchAction: 'none' });
 export const rowMenuButton = style({ display: 'inline-flex', border: 0, background: 'transparent', color: vars.color.textMuted, padding: 2, cursor: 'pointer' });

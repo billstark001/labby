@@ -3,6 +3,46 @@ appTitle:
   zh-CN: Labby 排班系统
   ja-JP: Labby スケジューラ
 
+personTags:
+  en: Person tags
+  zh-CN: 人物标签
+  ja-JP: 人物タグ
+
+managePersonTags:
+  en: Manage person tags
+  zh-CN: 管理人物标签
+  ja-JP: 人物タグを管理
+
+addPersonTag:
+  en: Add tag
+  zh-CN: 添加标签
+  ja-JP: タグを追加
+
+deletePersonTagWarning:
+  en: Delete this tag? It will also be removed from every person.
+  zh-CN: 删除此标签？该标签也会从所有人物上移除。
+  ja-JP: このタグを削除しますか？すべての人物からも外されます。
+
+color:
+  en: Color
+  zh-CN: 颜色
+  ja-JP: 色
+
+none:
+  en: None
+  zh-CN: 无
+  ja-JP: なし
+
+highlightPerson:
+  en: Highlight person
+  zh-CN: 高亮人物
+  ja-JP: 人物を強調
+
+highlightPersonTag:
+  en: Highlight tag
+  zh-CN: 高亮标签
+  ja-JP: タグを強調
+
 setAutoPresenter:
   en: Change to Auto presenter
   zh-CN: 改为自动发表人

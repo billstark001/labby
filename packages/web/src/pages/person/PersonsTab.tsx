@@ -1,11 +1,10 @@
 import { toast } from '@/components/ui/Toast';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { nanoid } from 'nanoid';
-import type { EntityListSortBy, Keyword, ListSortDirection, Person } from '@labby/core';
+import type { EntityListSortBy, Keyword, ListSortDirection, Person, PersonTag } from '@labby/core';
 
-import { keywordsSignal, keywordMapSignal } from '@/store';
+import { keywordsSignal, keywordMapSignal, personTagsSignal, personTagMapSignal } from '@/store';
 import { fallbackEntityId, displayName, i18n } from '@/i18n';
-import { buildPersonReferenceCount, listPersonsPage, readPersonForeignKeys, useDatabase } from '@/db';
+import { buildPersonReferenceCount, listPersonsPage, loadAllPersonTags, readPersonForeignKeys, useDatabase } from '@/db';
 import * as s from '@/styles/components.css';
 import {
   Button,
@@ -32,6 +31,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
   const [nameZh, setNameZh] = useState(initial?.names?.zh ?? '');
   const [nameJa, setNameJa] = useState(initial?.names?.ja ?? '');
   const [selectedIds, setSelectedIds] = useState<string[]>(initial?.keywordIds ?? []);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(initial?.tagIds ?? []);
   const [newKeywordName, setNewKeywordName] = useState('');
   const [newKeywords, setNewKeywords] = useState<Keyword[]>([]);
   const [notes, setNotes] = useState(initial?.notes ?? '');
@@ -54,11 +54,12 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
   function handleSave() {
     if (!nameEn.trim()) return;
     onSave({
-      id: initial?.id ?? nanoid(),
+      id: initial?.id ?? crypto.randomUUID(),
       name: nameEn.trim(),
       names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() },
       metadata: initial?.metadata ?? {},
       keywordIds: selectedIds,
+      tagIds: selectedTagIds,
       disabled: initial?.disabled,
       notes: notes.trim() || undefined,
       modifiedAt: Date.now(),
@@ -90,7 +91,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
     }
 
     const keyword: Keyword = {
-      id: nanoid(),
+      id: crypto.randomUUID(),
       name: normalized,
       names: { en: normalized, zh: '', ja: '' },
       metadata: {},
@@ -107,6 +108,22 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       <div class={s.formGroup}>
         <label class={s.label}>Name (EN)</label>
         <input class={s.input} value={nameEn} onInput={(e) => setNameEn((e.target as HTMLInputElement).value)} />
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('personTags')}</label>
+        <div class={s.tagList}>
+          {personTagsSignal.value.map((tag) => (
+            <button
+              type="button"
+              key={tag.id}
+              class={`${s.badgeSelectable} ${selectedTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+              style={{ borderColor: tag.color, boxShadow: selectedTagIds.includes(tag.id) ? `inset 0 0 0 1px ${tag.color}` : undefined }}
+              onClick={() => setSelectedTagIds(prev => prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id])}
+            >
+              <span style={{ color: tag.color }}>●</span> {tag.name}
+            </button>
+          ))}
+        </div>
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>Name (中文)</label>
@@ -154,6 +171,75 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
   );
 }
 
+function PersonTagManager({ onClose }: { onClose: () => void }) {
+  const db = useDatabase();
+  const { t } = i18n;
+  const [editing, setEditing] = useState<PersonTag | null>(null);
+  const [name, setName] = useState('');
+  const [color, setColor] = useState('#2563eb');
+  const [notes, setNotes] = useState('');
+
+  function start(tag?: PersonTag) {
+    setEditing(tag ?? { id: crypto.randomUUID(), name: '', color: '#2563eb' });
+    setName(tag?.name ?? '');
+    setColor(tag?.color ?? '#2563eb');
+    setNotes(tag?.notes ?? '');
+  }
+
+  async function save() {
+    if (!editing || !name.trim()) return;
+    await db.personTags.put({
+      ...editing,
+      name: name.trim(),
+      color,
+      notes: notes.trim() || undefined,
+      modifiedAt: Date.now(),
+    });
+    await loadAllPersonTags(db);
+    setEditing(null);
+  }
+
+  async function remove(tag: PersonTag) {
+    confirmDialog(t('confirmDelete'), t('deletePersonTagWarning'), async () => {
+      await db.personTags.delete(tag.id);
+      await loadAllPersonTags(db);
+    });
+  }
+
+  return <Dialog open onClose={onClose} title={t('managePersonTags')} closeOnOverlayClick={false}>
+    <div class={s.flexColGapMd}>
+      {personTagsSignal.value.map(tag => <div key={tag.id} class={s.metricRow}>
+        <div>
+          <span class={s.badge} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span>
+          {tag.notes && <p class={s.mutedParagraph}>{tag.notes}</p>}
+        </div>
+        <div class={s.flexGapSm}>
+          <Button variant="ghost" onClick={() => start(tag)}>{t('edit')}</Button>
+          <Button variant="danger" onClick={() => void remove(tag)}>{t('delete')}</Button>
+        </div>
+      </div>)}
+      {editing ? <div class={s.card}>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('name')}</label>
+          <input class={s.input} value={name} onInput={event => setName((event.target as HTMLInputElement).value)} />
+        </div>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('color')}</label>
+          <input type="color" value={color} onInput={event => setColor((event.target as HTMLInputElement).value)} />
+        </div>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('notes')}</label>
+          <textarea class={s.input} value={notes} onInput={event => setNotes((event.target as HTMLTextAreaElement).value)} />
+        </div>
+        <div class={s.flexGapSm}>
+          <Button onClick={() => void save()}>{t('save')}</Button>
+          <Button variant="secondary" onClick={() => setEditing(null)}>{t('cancel')}</Button>
+        </div>
+      </div> : <Button variant="secondary" onClick={() => start()}>{t('addPersonTag')}</Button>}
+    </div>
+  </Dialog>;
+}
+
 export function PersonsTab() {
   const db = useDatabase();
   const { t } = i18n;
@@ -166,6 +252,7 @@ export function PersonsTab() {
   const [sortDirection, setSortDirection] = useState<ListSortDirection>('desc');
   const [totalItems, setTotalItems] = useState(0);
   const [personReferenceCount, setPersonReferenceCount] = useState<Map<string, number>>(new Map());
+  const [managingTags, setManagingTags] = useState(false);
 
 
   async function refreshForeignKeyContext(personIds: string[], ticket: number) {
@@ -212,6 +299,7 @@ export function PersonsTab() {
   }
 
   useEffect(() => {
+    void loadAllPersonTags(db).catch(error => toast.error(String(error)));
     void refreshPersonsPage(page, pageSize).catch(error => toast.error(String(error)));
     return () => { request.current++; };
   }, [db, page, pageSize, sortBy, sortDirection]);
@@ -248,8 +336,13 @@ export function PersonsTab() {
     <>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navPersons')}</h2>
-        <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
+        <div class={s.flexGapSm}>
+          <Button variant="secondary" onClick={() => setManagingTags(true)}>{t('managePersonTags')}</Button>
+          <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
+        </div>
       </div>
+
+      {managingTags && <PersonTagManager onClose={() => setManagingTags(false)} />}
 
       {editing && (
         <Dialog
@@ -292,6 +385,12 @@ export function PersonsTab() {
                 {displayName(person)}
                 {person.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
               </div>
+              <div class={s.tagList}>
+                {(person.tagIds ?? []).map(tagId => {
+                  const tag = personTagMapSignal.value.get(tagId);
+                  return tag ? <span key={tag.id} class={s.badge} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span> : null;
+                })}
+              </div>
             </td>
             <td class={s.td}>
               <div class={s.tagList}>
@@ -316,6 +415,10 @@ export function PersonsTab() {
             <div class={dataStyles.mobileHeader}>
               <div>
                 <div class={dataStyles.mobileTitle}>{displayName(person)}</div>
+                <div class={s.tagList}>{(person.tagIds ?? []).map(tagId => {
+                  const tag = personTagMapSignal.value.get(tagId);
+                  return tag ? <span key={tag.id} class={s.badge} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span> : null;
+                })}</div>
                 {person.disabled && (
                   <div class={dataStyles.mobileSubtitle}>
                     <span class={s.badgeDisabled}>{t('disabled')}</span>

@@ -21,6 +21,7 @@ interface ScheduleViewProps {
   personMap: Map<string, Person>;
   similarities: SimilarityLookup;
   manualEditMode: boolean;
+  highlightPersonIds: ReadonlySet<string>;
   onInsertPresentation: (sessionIndex: number, presentationIndex: number) => void;
   onDeletePresentation: (presentationId: string) => void;
   onReplacePresenter: (presentationId: string, personId: string | null) => void;
@@ -49,6 +50,7 @@ export function ScheduleView({
   personMap,
   similarities,
   manualEditMode,
+  highlightPersonIds,
   onInsertPresentation,
   onDeletePresentation,
   onReplacePresenter,
@@ -164,6 +166,7 @@ export function ScheduleView({
             personMap={personMap}
             dndManager={dndManager}
             manualEditMode={manualEditMode}
+            highlightPersonIds={highlightPersonIds}
             presenterMenu={presenterMenu}
             questionerMenu={questionerMenu}
             onAddQuestioner={onAddQuestioner}
@@ -219,6 +222,7 @@ export function ScheduleView({
                 personMap={personMap}
                 dndManager={dndManager}
                 manualEditMode={manualEditMode}
+                highlightPersonIds={highlightPersonIds}
                 presenterMenu={presenterMenu}
                 questionerMenu={questionerMenu}
                 onAddQuestioner={onAddQuestioner}
@@ -303,6 +307,7 @@ interface PresentationRowProps {
   personMap: Map<string, Person>;
   dndManager: DragDropManager;
   manualEditMode: boolean;
+  highlightPersonIds: ReadonlySet<string>;
   presenterMenu: (presentation: DraftPresentation) => preact.ComponentChildren;
   questionerMenu: (presentation: DraftPresentation, slot: DraftPersonSlot) => preact.ComponentChildren;
   onAddQuestioner: (presentationId: string, personId: string | null) => void;
@@ -314,6 +319,7 @@ function PresentationRow({
   personMap,
   dndManager,
   manualEditMode,
+  highlightPersonIds,
   presenterMenu,
   questionerMenu,
   onAddQuestioner,
@@ -354,14 +360,14 @@ function PresentationRow({
         {manualEditMode ? (
           <Menu mode="context">
             <MenuTrigger>
-              <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : css.personLabel}>
+              <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''}`}>
                 {slotLabel(presentation.presenter, personMap, t('autoPresenter'))}
               </span>
             </MenuTrigger>
             <MenuContent>{presenterMenu(presentation)}</MenuContent>
           </Menu>
         ) : (
-          <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : css.personLabel}>
+          <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''}`}>
             {slotLabel(presentation.presenter, personMap, t('autoPresenter'))}
           </span>
         )}
@@ -382,6 +388,7 @@ function PresentationRow({
             index={index}
             label={slotLabel(slot, personMap, t('autoQuestioner'))}
             manualEditMode={manualEditMode}
+            highlighted={slot.kind === 'fixed' && highlightPersonIds.has(slot.personId)}
             menu={questionerMenu(presentation, slot)}
           />
         ))}
@@ -403,7 +410,7 @@ function PresentationRow({
   );
 }
 
-function QuestionerToken({ dndManager, presentation, slot, index, label, manualEditMode, menu }: { dndManager: DragDropManager; presentation: DraftPresentation; slot: DraftPersonSlot; index: number; label: string; manualEditMode: boolean; menu: preact.ComponentChildren }) {
+function QuestionerToken({ dndManager, presentation, slot, index, label, manualEditMode, highlighted, menu }: { dndManager: DragDropManager; presentation: DraftPresentation; slot: DraftPersonSlot; index: number; label: string; manualEditMode: boolean; highlighted: boolean; menu: preact.ComponentChildren }) {
   const drag = useScheduleDraggable(dndManager, {
     id: `schedule-questioner:${presentation.id}:${slot.id}`,
     type: scheduleDragType.questioner,
@@ -426,7 +433,7 @@ function QuestionerToken({ dndManager, presentation, slot, index, label, manualE
   return (
     <Menu mode="context">
       <MenuTrigger>
-        <span ref={setTokenRef} class={slot.kind === 'auto' ? css.autoSlot : css.questionerToken}>{label}</span>
+        <span ref={setTokenRef} class={slot.kind === 'auto' ? css.autoSlot : `${css.questionerToken} ${highlighted ? css.highlightedPerson : ''}`}>{label}</span>
       </MenuTrigger>
       {manualEditMode && <MenuContent>{menu}</MenuContent>}
     </Menu>

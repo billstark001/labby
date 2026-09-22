@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
-import { nanoid } from 'nanoid';
 import { Pencil, Redo2, Undo2 } from 'lucide-preact';
 import {
   personsSignal,
@@ -13,11 +12,13 @@ import {
   similarityLookupSignal,
   isComputingSignal,
   personMapSignal,
+  personTagsSignal,
   unavailabilitiesSignal,
 } from '@/store/index';
 import { displayName } from '@/i18n';
 import {
   loadAllPersons,
+  loadAllPersonTags,
   loadAllKeywords,
   loadAllSimilarities,
   loadAllConfigs,
@@ -113,6 +114,8 @@ export function SchedulePage() {
   const [insertSessionIndex, setInsertSessionIndex] = useState<number | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
+  const [highlightPersonId, setHighlightPersonId] = useState('');
+  const [highlightTagId, setHighlightTagId] = useState('');
 
   // Transient clipboard-feedback flags are component-local; signals avoid
   // a full re-render and have no child consumers, so useState is not needed.
@@ -134,6 +137,10 @@ export function SchedulePage() {
   const configUnavails = unavailabilities.filter(u => u.configId === selectedConfigId);
   const readOnlyDraft = useMemo(() => current ? createScheduleDraft(current) : null, [current]);
   const visibleDraft = manualEditMode ? draftSchedule : readOnlyDraft;
+  const highlightedPersonIds = useMemo(() => new Set([
+    ...(highlightPersonId ? [highlightPersonId] : []),
+    ...persons.filter(person => highlightTagId && person.tagIds?.includes(highlightTagId)).map(person => person.id),
+  ]), [highlightPersonId, highlightTagId, persons]);
 
   // #region Effects
 
@@ -142,6 +149,7 @@ export function SchedulePage() {
     const run = async () => {
       await Promise.all([
         loadAllPersons(db),
+        loadAllPersonTags(db),
         loadAllKeywords(db),
         loadAllSimilarities(db),
         loadAllConfigs(db),
@@ -315,7 +323,7 @@ export function SchedulePage() {
       const createdAt = Date.now();
       const sessions = solveDraft(draftSchedule, selectedConfig);
       const updated: SchedulePlan = {
-        id: nanoid(),
+        id: crypto.randomUUID(),
         createdAt,
         modifiedAt: createdAt,
         configId: draftSchedule.configId,
@@ -556,7 +564,7 @@ export function SchedulePage() {
     const timestamp = Date.now();
     const duplicate: SchedulePlan = {
       ...plan,
-      id: nanoid(),
+      id: crypto.randomUUID(),
       createdAt: timestamp,
       modifiedAt: timestamp,
     };
@@ -832,11 +840,26 @@ export function SchedulePage() {
       />
 
       {/* Direct schedule tape */}
+      <div class={s.toolbar}>
+        <label class={s.label}>{t('highlightPerson')}
+          <select class={s.input} value={highlightPersonId} onChange={event => setHighlightPersonId((event.target as HTMLSelectElement).value)}>
+            <option value="">{t('none')}</option>
+            {persons.map(person => <option key={person.id} value={person.id}>{displayName(person)}</option>)}
+          </select>
+        </label>
+        <label class={s.label}>{t('highlightPersonTag')}
+          <select class={s.input} value={highlightTagId} onChange={event => setHighlightTagId((event.target as HTMLSelectElement).value)}>
+            <option value="">{t('none')}</option>
+            {personTagsSignal.value.map(tag => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+          </select>
+        </label>
+      </div>
       <ScheduleView
         draft={visibleDraft}
         personMap={personMap}
         similarities={similarityLookupSignal.value}
         manualEditMode={manualEditMode}
+        highlightPersonIds={highlightedPersonIds}
         onInsertPresentation={(sessionIndex, presentationIndex) => {
           if (!selectedConfig) return;
           updateDraft(draft => insertPresentation(draft, sessionIndex, presentationIndex, selectedConfig.questionersPerPresenter));

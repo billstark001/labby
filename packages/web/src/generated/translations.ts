@@ -2,6 +2,14 @@
 
 export const en = {
   "appTitle": "Labby Scheduler",
+  "personTags": "Person tags",
+  "managePersonTags": "Manage person tags",
+  "addPersonTag": "Add tag",
+  "deletePersonTagWarning": "Delete this tag? It will also be removed from every person.",
+  "color": "Color",
+  "none": "None",
+  "highlightPerson": "Highlight person",
+  "highlightPersonTag": "Highlight tag",
   "setAutoPresenter": "Change to Auto presenter",
   "choosePresenter": "Choose presenter…",
   "chooseQuestioner": "Choose questioner…",
@@ -373,6 +381,14 @@ export const en = {
 
 export const zhCN = {
   "appTitle": "Labby 排班系统",
+  "personTags": "人物标签",
+  "managePersonTags": "管理人物标签",
+  "addPersonTag": "添加标签",
+  "deletePersonTagWarning": "删除此标签？该标签也会从所有人物上移除。",
+  "color": "颜色",
+  "none": "无",
+  "highlightPerson": "高亮人物",
+  "highlightPersonTag": "高亮标签",
   "setAutoPresenter": "改为自动发表人",
   "choosePresenter": "选择发表人…",
   "chooseQuestioner": "选择提问人…",
@@ -744,6 +760,14 @@ export const zhCN = {
 
 export const jaJP = {
   "appTitle": "Labby スケジューラ",
+  "personTags": "人物タグ",
+  "managePersonTags": "人物タグを管理",
+  "addPersonTag": "タグを追加",
+  "deletePersonTagWarning": "このタグを削除しますか？すべての人物からも外されます。",
+  "color": "色",
+  "none": "なし",
+  "highlightPerson": "人物を強調",
+  "highlightPersonTag": "タグを強調",
   "setAutoPresenter": "自動発表者に変更",
   "choosePresenter": "発表者を選択…",
   "chooseQuestioner": "質問者を選択…",
