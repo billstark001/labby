@@ -12,6 +12,8 @@
 8. Unknown scheduler modes and external mode without dispatch authentication fail at startup. Dispatch clients use HTTPS, retry only transient network/gateway failures, and surface application failures.
 9. Railway resources are declared in `.railway/railway.ts`; deprecated repository-wide `railway.json` files are forbidden because they can override per-service API and Cron settings. Plans are reviewed before they are applied, and secrets use `preserve()` rather than source-controlled values.
 10. Container builds pin the package-manager version to the same exact version recorded by the lockfile. Production installs use a frozen lockfile so toolchain drift fails before deployment.
+11. Application runtime code consumes `process.env` and does not load dotenv files. Local commands use Node's native env-file flags; deployment commands resolve layered provider files with env-lane and synchronize only an explicit allowlist.
+12. Environment omission means “leave remote value unchanged”, an explicit empty assignment means “set empty”, and deletion requires a named command-line argument. Synchronizers must redact values from logs and must not pass Railway secrets in command arguments.
 
 ## Dialogs
 

@@ -130,6 +130,15 @@ Optional env vars:
 - `CLOUD_RUN_DEPLOY_ARGS`
 - `CLOUD_RUN_QUIET` (`false` to disable `--quiet`)
 
+The helper resolves the repository `.env` followed by optional `.env.cloudrun.production` through env-lane. It passes only the server runtime allowlist to `gcloud --update-env-vars`, so omitted remote values are retained and an explicit empty assignment is synchronized as an empty string. Delete values only through argv:
+
+```bash
+pnpm deploy:cloudrun:incremental --delete-env SMTP_PASSWORD
+pnpm deploy:cloudrun:incremental --delete-env KEY_A,KEY_B
+```
+
+Use `--env-build <build>` to select another configured env-lane build. `--no-env-sync` disables managed synchronization. `CLOUD_RUN_ENV_VARS_FILE` remains available only with `--no-env-sync` because `gcloud --env-vars-file` replaces all remote variables; managed sync deliberately uses update/remove semantics instead. Prefer `CLOUD_RUN_UPDATE_SECRETS` and Secret Manager mappings for long-lived production secrets.
+
 ### 1) Select project and configure Docker auth
 
 ```bash

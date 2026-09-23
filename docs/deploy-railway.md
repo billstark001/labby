@@ -11,6 +11,8 @@ Railway's Cron schedule is service configuration, so create one Cron service for
 
 Railway infrastructure is managed with the current Infrastructure-as-Code format in `.railway/railway.ts`. Run `pnpm railway:plan` before `pnpm railway:apply`; secrets are represented with `preserve()` and remain stored in Railway. The deprecated `railway.json` format must not be reintroduced because a repository-wide file is also applied to Cron uploads and can override their one-shot configuration.
 
+Deployment environment resolution uses env-lane. The API deployment reads the repository `.env` and then optional `.env.railway.production`; the Cron deployment uses `.env` and optional `.env.railway.cron.production`. Shell variables select the Railway project/service but are not implicitly copied into the service environment. Only the runtime-variable allowlist is synchronized.
+
 ## API/web service
 
 1. Link the repository to the Railway project and environment, then review and apply `.railway/railway.ts`.
@@ -23,6 +25,15 @@ Run a full deployment with:
 ```sh
 pnpm deploy:railway
 ```
+
+Environment synchronization runs before upload. An assignment such as `SMTP_PASSWORD=` is an explicit empty value and is synchronized as an empty string; omission leaves the remote variable unchanged. Remote deletion is never inferred from omission and must be requested explicitly:
+
+```sh
+pnpm deploy:railway --delete-env SMTP_PASSWORD
+pnpm deploy:railway:cron --delete-env LABBY_CRON_ATTEMPTS
+```
+
+Use `--delete-env KEY_A,KEY_B` or repeat the option. `--env-build <build>` selects a different configured env-lane build. `--no-env-sync` skips synchronization, and cannot be combined with deletion. Railway values are sent through stdin so secrets are not included in CLI arguments.
 
 Use `pnpm deploy:railway:incremental` for a conditional deployment. It still uploads a complete build, but skips the upload when the merge-base diff contains no API/web runtime files. If a safe diff base cannot be resolved, it deploys rather than silently skipping.
 
@@ -54,6 +65,9 @@ pnpm deploy:railway:cron:incremental
 - `RAILWAY_CLI`: alternate Railway executable path.
 - `DEPLOY_DIFF_BASE`: explicit Git ref for incremental comparison. Otherwise `origin/main`, `main`, then `HEAD^` are tried.
 - `RAILWAY_DETACH=true`: queue the build and return immediately. By default the script uses Railway CI mode and returns failure when the build fails; verify the deployment health after the command succeeds.
+- `--env-build`: env-lane build name; defaults to `railway.production` for API and `railway.cron.production` for Cron.
+- `--no-env-sync`: deploy without reading or changing service variables.
+- `--delete-env KEY`: explicitly delete one or more managed variables; omitted variables are retained.
 
 ## Operations
 
