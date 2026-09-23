@@ -6,6 +6,7 @@ export default defineRailway(() => {
     start: "pnpm --filter @labby/server start",
     healthcheck: "/health",
     healthcheckTimeout: 120,
+    networking: { serviceDomains: { "labby-api-production.up.railway.app": { port: 8080 } } },
     replicas: { "us-east4-eqdc4a": 1 },
     deploy: { restartPolicyMaxRetries: 3, sleepApplication: true },
     env: { DATABASE_URL: preserve(), DB_DRIVER: preserve(), PASETO_SECRET: preserve(), PUBLIC_BASE_URL: preserve(), ROOT_EMAIL: preserve(), ROOT_PASSWORD: preserve(), ROOT_USERNAME: preserve(), SCHEDULER_DISPATCH_API_KEY: preserve(), SCHEDULER_MODE: preserve(), WEB_DIST_DIR: preserve() },

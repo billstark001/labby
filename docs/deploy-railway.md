@@ -16,7 +16,7 @@ Railway infrastructure is managed with the current Infrastructure-as-Code format
 1. Link the repository to the Railway project and environment, then review and apply `.railway/railway.ts`.
 2. Configure `DATABASE_URL` for the existing durable PostgreSQL database (for example Neon), `DB_DRIVER=postgres`, authentication secrets, `WEB_DIST_DIR=/app/packages/web/dist`, `PUBLIC_BASE_URL`, `SCHEDULER_MODE=external`, and a strong `SCHEDULER_DISPATCH_API_KEY`. Do not create another database when the environment already supplies one.
 3. The IaC declaration sets `sleepApplication=true`. Redeploy after changing this setting because Railway applies Serverless when it creates the container. The PostgreSQL pool releases idle connections so the service can become inactive.
-4. Give the service a public domain. A sleeping service is woken by the Cron request.
+4. Declare the public domain and its target port in IaC. The target must match Railway's injected `PORT` (currently `8080`); targeting the application's local-development default will pass the container health check but make public requests fail. A sleeping service is woken by the Cron request.
 
 Run a full deployment with:
 

@@ -6,7 +6,7 @@
 2. Production callbacks use `POST /internal/scheduler/dispatch` and `X-Api-Key`. Secrets stay in provider variables. Never put credentials in URLs or source files.
 3. Select exactly one execution owner per environment: local cron, Cloud Scheduler, or Railway Cron. Hybrid mode is for controlled migration only.
 4. Serverless deployments use durable PostgreSQL and remote object/email backup targets. Never rely on an instance filesystem.
-5. Provider configuration must use fields verified against the provider's current schema. Railway Serverless is declared with `deploy.sleepApplication` and requires a redeploy before it affects the running container.
+5. Provider configuration must use fields verified against the provider's current schema. Railway Serverless is declared with `deploy.sleepApplication` and requires a redeploy before it affects the running container. Public domains route to Railway's injected `PORT`, not a local-development default.
 6. Production one-shot jobs execute compiled artifacts from the production image. They must not depend on development-only runners such as `tsx`.
 7. Full deployment is the explicit recovery path. Incremental deployment is a conditional full upload, may skip only when no target runtime file changed, and must deploy when its diff base cannot be established safely.
 8. Unknown scheduler modes and external mode without dispatch authentication fail at startup. Dispatch clients use HTTPS, retry only transient network/gateway failures, and surface application failures.
