@@ -10,6 +10,8 @@
 6. Production one-shot jobs execute compiled artifacts from the production image. They must not depend on development-only runners such as `tsx`.
 7. Full deployment is the explicit recovery path. Incremental deployment is a conditional full upload, may skip only when no target runtime file changed, and must deploy when its diff base cannot be established safely.
 8. Unknown scheduler modes and external mode without dispatch authentication fail at startup. Dispatch clients use HTTPS, retry only transient network/gateway failures, and surface application failures.
+9. Railway resources are declared in `.railway/railway.ts`; deprecated repository-wide `railway.json` files are forbidden because they can override per-service API and Cron settings. Plans are reviewed before they are applied, and secrets use `preserve()` rather than source-controlled values.
+10. Container builds pin the package-manager version to the same exact version recorded by the lockfile. Production installs use a frozen lockfile so toolchain drift fails before deployment.
 
 ## Dialogs
 
@@ -38,3 +40,4 @@
 1. Required production configuration is validated at startup or at the one-shot entry point. Secrets are never included in logs or thrown error messages.
 2. Server mode uses PostgreSQL; local PGlite state and instance files are not production durability mechanisms.
 3. A change is complete only after relevant type checks and tests pass. Scheduling, deployment selection, authentication, retry behavior, and shared UI state require focused regression tests when changed.
+4. Deployment success includes provider-side build completion and a live health check; accepting an upload or creating a deployment record is not sufficient.

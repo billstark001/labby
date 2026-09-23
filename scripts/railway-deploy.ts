@@ -5,6 +5,7 @@ export type RailwayServiceKind = 'server' | 'cron';
 
 const SHARED_DEPLOY_PATTERNS = [
   /^Dockerfile$/,
+  /^\.railway\/railway\.ts$/,
   /^package\.json$/,
   /^pnpm-lock\.yaml$/,
   /^pnpm-workspace\.yaml$/,
@@ -13,8 +14,8 @@ const SHARED_DEPLOY_PATTERNS = [
 ];
 
 const TARGET_DEPLOY_PATTERNS: Record<RailwayServiceKind, RegExp[]> = {
-  server: [/^railway\.json$/, /^packages\/web\//],
-  cron: [/^railway\.cron\.json$/],
+  server: [/^packages\/web\//],
+  cron: [],
 };
 
 function run(command: string, args: string[], capture = false): string {

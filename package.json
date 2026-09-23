@@ -31,6 +31,8 @@
     "deploy:railway:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/railway-deploy.ts --incremental --target server",
     "deploy:railway:cron": "pnpm --filter @labby/server exec tsx ../../scripts/railway-deploy.ts --full --target cron",
     "deploy:railway:cron:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/railway-deploy.ts --incremental --target cron",
+    "railway:plan": "railway config plan",
+    "railway:apply": "railway config apply",
     "railway:cron": "node packages/server/dist/cron/railway-dispatch.js",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
@@ -38,6 +40,7 @@
   },
   "devDependencies": {
     "dotenv": "^17.4.2",
+    "railway": "^3.11.0",
     "typescript": "^7.0.2"
   }
 }
