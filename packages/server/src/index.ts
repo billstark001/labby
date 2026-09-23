@@ -8,10 +8,6 @@ import { createMailerFromEnv } from "./lib/mailer.js";
 import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-task-notifier.js";
 import { resolvePublicBaseUrl, resolveStoreConnectionConfig } from "./lib/runtime-config.js";
 
-import { config } from "dotenv";
-
-config();
-
 const port = Number(process.env.PORT ?? 4410);
 const dbConfig = resolveStoreConnectionConfig(process.env);
 const enablePublicEmailTaskIcs = /^(1|true|yes)$/i.test(process.env.ENABLE_PUBLIC_EMAIL_TASK_ICS ?? '');

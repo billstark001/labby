@@ -67,6 +67,11 @@ CRUD endpoints exist under `/api/v1/db` for:
 
 Copy `.env.example` to `.env` and fill in the required values.
 
+Local `dev` and `start:local` commands load `.env` followed by optional `.env.local` through
+Node's native env-file flags. Shell variables take precedence. `--env-file-if-exists` requires
+Node 22.9 or newer; this repository requires Node 24 or newer. The production `start` command
+does not load dotenv files and consumes only its injected process environment.
+
 For a fuller backup/Gmail example, see `.env.backup.example` in the repository root.
 
 Required or important settings:
