@@ -1,7 +1,7 @@
 # Build stage
 FROM node:24-bookworm-slim AS base
 
-RUN npm install --global pnpm@12
+RUN npm install --global pnpm@12.4.2
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
@@ -38,7 +38,7 @@ RUN pnpm --filter @labby/web build
 # ---- Production image ----
 FROM node:24-bookworm-slim AS runner
 
-RUN npm install --global pnpm@12
+RUN npm install --global pnpm@12.4.2
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*

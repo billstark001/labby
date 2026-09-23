@@ -90,8 +90,7 @@ export function main(args = process.argv.slice(2)): void {
     }
   }
 
-  const railwayArgs = ['up'];
-  if (process.env.RAILWAY_DETACH === 'true') railwayArgs.push('--detach');
+  const railwayArgs = ['up', process.env.RAILWAY_DETACH === 'true' ? '--detach' : '--ci'];
   if (process.env.RAILWAY_SERVICE?.trim()) railwayArgs.push('--service', process.env.RAILWAY_SERVICE.trim());
   if (process.env.RAILWAY_ENVIRONMENT?.trim()) railwayArgs.push('--environment', process.env.RAILWAY_ENVIRONMENT.trim());
   if (process.env.RAILWAY_PROJECT_ID?.trim()) {
