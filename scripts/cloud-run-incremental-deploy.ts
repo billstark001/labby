@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { config as loadDotenv } from 'dotenv';
+import { buildDeploymentEnvPlan, encodeGcloudDictionary, parseDeploymentEnvArguments, SERVER_RUNTIME_ENV_KEYS } from './deploy-env.js';
 
 function runText(command: string, args: string[], cwd?: string): string {
   const result = spawnSync(command, args, {
@@ -88,8 +88,8 @@ function shouldDeploy(files: string[]): { deploy: boolean; matched: string[] } {
   };
 }
 
-function requiredEnv(name: string): string {
-  const value = process.env[name]?.trim();
+function requiredEnv(name: string, fileEnv: Record<string, string>): string {
+  const value = (process.env[name] ?? fileEnv[name])?.trim();
   if (!value) {
     throw new Error(`Missing required env: ${name}`);
   }
@@ -107,9 +107,17 @@ function timestampTag(): string {
   return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const root = runText('git', ['rev-parse', '--show-toplevel']);
-  loadDotenv({ path: `${root}/.env`, override: false });
+  const parsedEnv = parseDeploymentEnvArguments(process.argv.slice(2), 'cloudrun.production');
+  if (parsedEnv.remaining.length > 0) throw new Error(`Unknown argument: ${parsedEnv.remaining[0]}`);
+  const envPlan = await buildDeploymentEnvPlan({
+    root,
+    build: parsedEnv.env.build,
+    allowedKeys: SERVER_RUNTIME_ENV_KEYS,
+    deleteKeys: parsedEnv.env.deleteKeys,
+  });
+  console.log(`[deploy] Loaded environment from ${envPlan.files.join(', ')} (${envPlan.build}).`);
   // const changedFiles = getChangedFiles(root);
 
   // if (changedFiles.length === 0) {
@@ -123,10 +131,10 @@ function main(): void {
   //   return;
   // }
 
-  const projectId = requiredEnv('CLOUD_RUN_PROJECT_ID');
-  const region = requiredEnv('CLOUD_RUN_REGION');
-  const repository = requiredEnv('CLOUD_RUN_REPOSITORY');
-  const service = requiredEnv('CLOUD_RUN_SERVICE');
+  const projectId = requiredEnv('CLOUD_RUN_PROJECT_ID', envPlan.values);
+  const region = requiredEnv('CLOUD_RUN_REGION', envPlan.values);
+  const repository = requiredEnv('CLOUD_RUN_REPOSITORY', envPlan.values);
+  const service = requiredEnv('CLOUD_RUN_SERVICE', envPlan.values);
 
   const image = `${region}-docker.pkg.dev/${projectId}/${repository}/${service}:${timestampTag()}-amd64`;
   // console.log(`[deploy] Changed files requiring deploy: ${decision.matched.join(', ')}`);
@@ -160,20 +168,28 @@ function main(): void {
     '4410',
   ];
 
-  const envVarsFile = process.env.CLOUD_RUN_ENV_VARS_FILE?.trim();
-  if (envVarsFile) {
+  const envVarsFile = (process.env.CLOUD_RUN_ENV_VARS_FILE ?? envPlan.values.CLOUD_RUN_ENV_VARS_FILE)?.trim();
+  if (parsedEnv.env.sync) {
+    if (envVarsFile) {
+      throw new Error('CLOUD_RUN_ENV_VARS_FILE replaces all remote variables and cannot be combined with managed environment sync. Use --no-env-sync for the legacy replacement behavior.');
+    }
+    const encodedUpdates = encodeGcloudDictionary(envPlan.updates);
+    if (encodedUpdates) deployArgs.push('--update-env-vars', encodedUpdates);
+    if (envPlan.deletes.length > 0) deployArgs.push('--remove-env-vars', envPlan.deletes.join(','));
+    console.log(`[deploy] Prepared ${Object.keys(envPlan.updates).length} environment update(s) and ${envPlan.deletes.length} explicit deletion(s).`);
+  } else if (envVarsFile) {
     deployArgs.push('--env-vars-file', envVarsFile);
   }
 
-  const updateSecrets = process.env.CLOUD_RUN_UPDATE_SECRETS?.trim();
+  const updateSecrets = (process.env.CLOUD_RUN_UPDATE_SECRETS ?? envPlan.values.CLOUD_RUN_UPDATE_SECRETS)?.trim();
   if (updateSecrets) {
     deployArgs.push('--update-secrets', updateSecrets);
   }
 
-  const extraArgs = parseExtraArgs(process.env.CLOUD_RUN_DEPLOY_ARGS);
+  const extraArgs = parseExtraArgs(process.env.CLOUD_RUN_DEPLOY_ARGS ?? envPlan.values.CLOUD_RUN_DEPLOY_ARGS);
   deployArgs.push(...extraArgs);
 
-  if ((process.env.CLOUD_RUN_QUIET ?? 'true').toLowerCase() !== 'false') {
+  if ((process.env.CLOUD_RUN_QUIET ?? envPlan.values.CLOUD_RUN_QUIET ?? 'true').toLowerCase() !== 'false') {
     deployArgs.push('--quiet');
   }
 
@@ -182,4 +198,4 @@ function main(): void {
   console.log('[deploy] Cloud Run incremental deploy finished.');
 }
 
-main();
+await main();

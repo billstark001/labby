@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { buildDeploymentEnvPlan, diffDeploymentEnvironment, parseDeploymentEnvArguments, RAILWAY_CRON_ENV_KEYS, SERVER_RUNTIME_ENV_KEYS } from './deploy-env.js';
 
 export type RailwayServiceKind = 'server' | 'cron';
 
@@ -18,13 +19,14 @@ const TARGET_DEPLOY_PATTERNS: Record<RailwayServiceKind, RegExp[]> = {
   cron: [],
 };
 
-function run(command: string, args: string[], capture = false): string {
+function run(command: string, args: string[], options: { capture?: boolean; input?: string } = {}): string {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
-    stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    input: options.input,
+    stdio: options.capture ? ['pipe', 'pipe', 'pipe'] : 'inherit',
   });
   if (result.status !== 0) {
-    const detail = capture ? (result.stderr ?? '').trim() : '';
+    const detail = options.capture ? (result.stderr ?? '').trim() : '';
     throw new Error(`${command} ${args.join(' ')} failed with code ${result.status ?? 1}${detail ? `: ${detail}` : ''}`);
   }
   return (result.stdout ?? '').trim();
@@ -32,7 +34,7 @@ function run(command: string, args: string[], capture = false): string {
 
 function tryRun(command: string, args: string[]): string | null {
   try {
-    return run(command, args, true);
+    return run(command, args, { capture: true });
   } catch {
     return null;
   }
@@ -79,30 +81,84 @@ export function parseRailwayDeployArguments(args: string[]): { incremental: bool
   return { incremental, target };
 }
 
-export function main(args = process.argv.slice(2)): void {
-  const { incremental, target } = parseRailwayDeployArguments(args);
+function railwayScopeArgs(): string[] {
+  const args: string[] = [];
+  if (process.env.RAILWAY_SERVICE?.trim()) args.push('--service', process.env.RAILWAY_SERVICE.trim());
+  if (process.env.RAILWAY_ENVIRONMENT?.trim()) args.push('--environment', process.env.RAILWAY_ENVIRONMENT.trim());
+  if (process.env.RAILWAY_PROJECT_ID?.trim()) {
+    if (!process.env.RAILWAY_ENVIRONMENT?.trim()) {
+      throw new Error('RAILWAY_PROJECT_ID requires RAILWAY_ENVIRONMENT');
+    }
+    args.push('--project', process.env.RAILWAY_PROJECT_ID.trim());
+  }
+  return args;
+}
+
+function syncRailwayEnvironment(
+  railway: string,
+  scopeArgs: string[],
+  updates: Record<string, string>,
+  deletes: readonly string[],
+): boolean {
+  const currentRaw = run(railway, ['variable', 'list', ...scopeArgs, '--json'], { capture: true });
+  const current = JSON.parse(currentRaw) as Record<string, string>;
+  const changed = diffDeploymentEnvironment(current, updates, deletes);
+
+  for (const key of changed.deletes) {
+    run(railway, ['variable', 'delete', key, ...scopeArgs, '--json'], { capture: true });
+  }
+  for (const [key, value] of changed.updates) {
+    run(railway, ['variable', 'set', key, '--stdin', '--skip-deploys', ...scopeArgs, '--json'], {
+      capture: true,
+      input: value,
+    });
+  }
+
+  if (changed.deletes.length > 0 || changed.updates.length > 0) {
+    console.info(`[railway] Synced ${changed.updates.length} update(s) and ${changed.deletes.length} explicit deletion(s).`);
+    return true;
+  }
+  console.info('[railway] Environment is already synchronized.');
+  return false;
+}
+
+export async function main(args = process.argv.slice(2)): Promise<void> {
+  const targetHintIndex = args.indexOf('--target');
+  const targetHint = targetHintIndex >= 0 ? args[targetHintIndex + 1] : undefined;
+  const defaultBuild = targetHint === 'cron' ? 'railway.cron.production' : 'railway.production';
+  const parsedEnv = parseDeploymentEnvArguments(args, defaultBuild);
+  const { incremental, target } = parseRailwayDeployArguments(parsedEnv.remaining);
+  const railway = process.env.RAILWAY_CLI?.trim() || 'railway';
+  const scopeArgs = railwayScopeArgs();
+  let envChanged = false;
+
+  if (parsedEnv.env.sync) {
+    const root = run('git', ['rev-parse', '--show-toplevel'], { capture: true });
+    const plan = await buildDeploymentEnvPlan({
+      root,
+      build: parsedEnv.env.build,
+      allowedKeys: target === 'cron' ? RAILWAY_CRON_ENV_KEYS : SERVER_RUNTIME_ENV_KEYS,
+      deleteKeys: parsedEnv.env.deleteKeys,
+    });
+    console.info(`[railway] Syncing environment from ${plan.files.join(', ')} (${plan.build}).`);
+    envChanged = syncRailwayEnvironment(railway, scopeArgs, plan.updates, plan.deletes);
+  }
+
   if (incremental) {
     const changes = changedFiles();
     if (!changes) {
       console.warn('[railway] Could not determine a safe diff base; deploying instead of skipping.');
-    } else if (!shouldDeployRailway(changes.files, target)) {
+    } else if (!envChanged && !shouldDeployRailway(changes.files, target)) {
       console.info(`[railway] No ${target} runtime changes since ${changes.base}; deployment skipped.`);
       return;
     }
   }
 
   const railwayArgs = ['up', process.env.RAILWAY_DETACH === 'true' ? '--detach' : '--ci'];
-  if (process.env.RAILWAY_SERVICE?.trim()) railwayArgs.push('--service', process.env.RAILWAY_SERVICE.trim());
-  if (process.env.RAILWAY_ENVIRONMENT?.trim()) railwayArgs.push('--environment', process.env.RAILWAY_ENVIRONMENT.trim());
-  if (process.env.RAILWAY_PROJECT_ID?.trim()) {
-    if (!process.env.RAILWAY_ENVIRONMENT?.trim()) {
-      throw new Error('RAILWAY_PROJECT_ID requires RAILWAY_ENVIRONMENT');
-    }
-    railwayArgs.push('--project', process.env.RAILWAY_PROJECT_ID.trim());
-  }
+  railwayArgs.push(...scopeArgs);
   console.info(`[railway] Starting ${incremental ? 'incremental' : 'full'} ${target} deployment.`);
-  run(process.env.RAILWAY_CLI?.trim() || 'railway', railwayArgs);
+  run(railway, railwayArgs);
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
-if (import.meta.url === invokedPath) main();
+if (import.meta.url === invokedPath) await main();

@@ -2,6 +2,7 @@
   "name": "labby",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "engines": {
     "node": ">=24",
     "pnpm": ">=12 <13"
@@ -39,7 +40,7 @@
     "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {
-    "dotenv": "^17.4.2",
+    "env-lane": "^0.4.2",
     "railway": "^3.11.0",
     "typescript": "^7.0.2"
   }

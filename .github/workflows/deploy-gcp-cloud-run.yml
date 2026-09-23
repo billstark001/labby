@@ -80,7 +80,7 @@ jobs:
             --platform managed \
             --port 4410 \
             --allow-unauthenticated \
-            --set-env-vars "NODE_ENV=production,PORT=4410,DB_DRIVER=${DB_DRIVER},WEB_DIST_DIR=/app/packages/web/dist"
+            --set-env-vars "NODE_ENV=production,DB_DRIVER=${DB_DRIVER},WEB_DIST_DIR=/app/packages/web/dist"
 
       - name: Show service URL
         run: |
