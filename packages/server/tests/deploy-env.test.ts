@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { buildDeploymentEnvPlan, diffDeploymentEnvironment, encodeGcloudDictionary, parseDeploymentEnvArguments } from '../../../scripts/deploy-env.js';
+import { buildDeploymentEnvPlan, diffDeploymentEnvironment, encodeGcloudDictionary, parseDeploymentEnvArguments, SERVER_RUNTIME_ENV_KEYS } from '../../../scripts/deploy-env.js';
+
+test('server example documents every runtime environment variable', async () => {
+  const example = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
+  const documented = new Set(
+    [...example.matchAll(/^\s*#?\s*([A-Z][A-Z0-9_]*)=/gm)].map((match) => match[1]),
+  );
+  assert.deepEqual(
+    SERVER_RUNTIME_ENV_KEYS.filter((key) => !documented.has(key)),
+    [],
+  );
+});
 
 test('deployment env arguments keep empty-value sync separate from explicit deletion', () => {
   const parsed = parseDeploymentEnvArguments(

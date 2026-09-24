@@ -69,7 +69,6 @@ web_modules/
 .env
 .env.*
 !/packages/server/.env.example
-!/packages/server/.env.backup.example
 !/packages/server/.env.railway.production.example
 !/packages/server/.env.railway.cron.production.example
 !/packages/server/.env.cloudrun.production.example

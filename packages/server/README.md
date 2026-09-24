@@ -78,8 +78,6 @@ default `local` build loads `.env`, optional `.env.local`, and then the shell; s
 `packages/server/.env`. See
 [`docs/environment-files.md`](../../docs/environment-files.md) for the complete command matrix.
 
-For a fuller backup/Gmail example, see `.env.backup.example` in this package.
-
 Required or important settings:
 
 - `PORT`

@@ -95,7 +95,6 @@ each command. Server, database, Docker, and deployment commands use env files un
 
 Extra examples:
 
-- `packages/server/.env.backup.example` shows Gmail, email backup, Google Drive, and OneDrive configuration examples.
 - `packages/web/.env.frontend-only.example` documents the browser-only values.
 - `packages/web/.env.server.example` documents the server-connected values.
 
