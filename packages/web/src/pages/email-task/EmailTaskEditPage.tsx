@@ -219,6 +219,8 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
     }
     return normalizeTimeZone(taskTimezone) ?? normalizeTimeZone(selectedConfig?.timezone) ?? systemOrEnv;
   }, [taskTimezone, selectedConfig, systemTimezone]);
+  const resolvedPreviewScheduleTimezone = normalizeTimeZone(selectedConfig?.timezone)
+    ?? normalizeTimeZone(systemTimezone) ?? getEnvironmentTimeZone();
 
   const injectedScheduleVariables = useMemo(
     () => buildEmailTemplateScheduleVariables({
@@ -228,14 +230,14 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
       locale: injectionLanguage,
       granularity: dateGranularity,
       anchorDate: new Intl.DateTimeFormat('en-CA', {
-        timeZone: resolvedPreviewTimezone,
+        timeZone: resolvedPreviewScheduleTimezone,
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
       }).format(new Date()),
-      timeZone: resolvedPreviewTimezone,
+      timeZone: resolvedPreviewScheduleTimezone,
     }),
-    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity, resolvedPreviewTimezone],
+    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity, resolvedPreviewScheduleTimezone],
   );
 
   const previewContext = useMemo(() => ({

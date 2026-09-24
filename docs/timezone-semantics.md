@@ -1,0 +1,7 @@
+# Schedule and email time zones
+
+The schedule configuration's `timeRange` and `timezone` form one meeting time. For example, 09:00–11:00 in `Asia/Tokyo` is 00:00–02:00 UTC on that date. When the schedule timezone is set to Default, the system timezone applies; if that is missing, the runtime's valid timezone applies. Schedule exports and public ICS events convert these meeting instants to UTC. The ICS endpoint is available for an email task only when that task enables `serveScheduleIcs`; it does not depend on an extra deployment flag.
+
+An email task's timezone controls **when the email is sent**. For example, a send time of 12:00 in `Asia/Shanghai` is 04:00 UTC. This setting does not reinterpret the meeting time: the email subject, body, and attachments still describe a Tokyo 09:00–11:00 meeting in the example above. Schedule template variables and their date window use the resolved schedule timezone. `now`, `nowLocal`, and `runTimezone` use the email task's resolved sending timezone; `nowIsoUtc` is UTC. The task's Default choice resolves through the configured schedule or system fallback according to its selected mode, but the meeting time remains governed by the schedule timezone.
+
+These rules also apply when either timezone is left at Default. A manually postponed final meeting can extend past the configuration's original end date; an email task remains eligible through the latest scheduled meeting date.

@@ -13,14 +13,13 @@ import {
 import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
 import type { LabbyStore } from '../store/index.js';
-import { resolveEmailTaskTimezone } from '../lib/email-task-timezone.js';
+import { resolveEmailTaskTimezone, resolveScheduleTimezone } from '../lib/email-task-timezone.js';
 
 export interface EmailTaskNotifierOptions {
   scheduler: CronScheduler;
   mailer: Mailer;
   store: LabbyStore;
   defaultHour?: number;
-  enablePublicEmailTaskIcs?: boolean;
   publicBaseUrl?: string;
 }
 
@@ -164,9 +163,10 @@ function buildScheduleAttachments(input: {
   return attachments;
 }
 
-function hasPeriodEnded(config: ScheduleConfig, runAt: number, timezone: string): boolean {
+function hasPeriodEnded(config: ScheduleConfig, runAt: number, timezone: string, latest?: SchedulePlan): boolean {
   const today = formatZonedDate(runAt, timezone);
-  return today > config.endDate;
+  const lastMeeting = latest?.sessions.reduce((last, session) => session.date > last ? session.date : last, config.endDate) ?? config.endDate;
+  return today > lastMeeting;
 }
 
 function latestScheduleSummary(sessions: number, createdAt: number | null, locale: string, timezone: string): string {
@@ -181,6 +181,7 @@ type TaskExecutionContext = {
   sentCounts: Record<string, number>;
   runAt: number;
   timezone: string;
+  scheduleTimezone: string;
 };
 
 type TaskExecutionDecision =
@@ -204,7 +205,6 @@ export class EmailTaskNotifier {
   constructor(private readonly options: EmailTaskNotifierOptions) {}
 
   private buildTaskIcsUrl(task: EmailTask): string | undefined {
-    if (!this.options.enablePublicEmailTaskIcs) return undefined;
     const shouldServeIcs = Boolean(task.metadata && (task.metadata as Record<string, unknown>).serveScheduleIcs === true);
     if (!shouldServeIcs) return undefined;
     const base = this.options.publicBaseUrl?.trim();
@@ -230,6 +230,7 @@ export class EmailTaskNotifier {
       sentCounts: { ...(task.sentCounts ?? {}) },
       runAt: Date.now(),
       timezone: resolveEmailTaskTimezone(task, config, systemSettings),
+      scheduleTimezone: resolveScheduleTimezone(config, systemSettings),
     };
   }
 
@@ -242,7 +243,7 @@ export class EmailTaskNotifier {
       return { kind: 'skip-disabled' };
     }
 
-    if (!options.manual && hasPeriodEnded(context.config, context.runAt, context.timezone)) {
+    if (!options.manual && hasPeriodEnded(context.config, context.runAt, context.scheduleTimezone, context.latest)) {
       return { kind: 'skip-ended' };
     }
 
@@ -278,8 +279,21 @@ export class EmailTaskNotifier {
     const tasks = await store.listEmailTasks();
     const configs = new Map((await store.listConfigs()).map((config) => [config.id, config]));
     const systemSettings = await store.getSystemSettings();
-    const active = new Set<string>();
     const runAt = Date.now();
+    const endedConfigs = new Set(tasks.filter(task => !task.disabled && task.emails.length > 0 && task.daysOfWeek.length > 0)
+      .map(task => configs.get(task.configId))
+      .filter((config): config is ScheduleConfig => config !== undefined
+        && formatZonedDate(runAt, resolveScheduleTimezone(config, systemSettings)) > config.endDate)
+      .map(config => config.id));
+    const latestSchedules = new Map<string, SchedulePlan>();
+    if (endedConfigs.size > 0) {
+      for (const plan of await store.listSchedules()) {
+        if (!endedConfigs.has(plan.configId)) continue;
+        const previous = latestSchedules.get(plan.configId);
+        if (!previous || plan.createdAt > previous.createdAt) latestSchedules.set(plan.configId, plan);
+      }
+    }
+    const active = new Set<string>();
 
     for (const task of tasks) {
       if (task.disabled) continue;
@@ -291,7 +305,7 @@ export class EmailTaskNotifier {
       if (!config) continue;
 
       const timezone = resolveEmailTaskTimezone(task, config, systemSettings);
-      if (hasPeriodEnded(config, runAt, timezone)) continue;
+      if (hasPeriodEnded(config, runAt, resolveScheduleTimezone(config, systemSettings), latestSchedules.get(config.id))) continue;
 
       const jobName = `email-task:${task.id}`;
       active.add(jobName);
@@ -338,7 +352,7 @@ export class EmailTaskNotifier {
       return { sent: 0, failed: 0 };
     }
 
-    const { config, persons, latest, sentCounts, runAt, timezone } = context;
+    const { config, persons, latest, sentCounts, runAt, timezone, scheduleTimezone } = context;
 
     if (decision.kind === 'skip-disabled') {
       await this.persistScheduledSkip(task, runAt);
@@ -379,7 +393,7 @@ export class EmailTaskNotifier {
       plan: latest,
       locale,
       persons,
-      timezone,
+      timezone: scheduleTimezone,
     });
 
     const failures: TaskDeliveryFailure[] = [];
@@ -402,6 +416,7 @@ export class EmailTaskNotifier {
         persons,
         latest,
         timezone,
+        scheduleTimezone,
       );
       const rendered = renderTemplateToHtml(task.templateText, context, {
         format: (task.metadata?.format as 'markdown' | 'html' | undefined) ?? 'markdown',
@@ -477,12 +492,13 @@ export class EmailTaskNotifier {
     persons: Awaited<ReturnType<LabbyStore['listPersons']>>,
     latestPlan: Awaited<ReturnType<LabbyStore['listSchedules']>>[number] | undefined,
     timeZone: string,
+    scheduleTimeZone: string,
   ): Record<string, unknown> {
     const locale = (task.metadata?.dateLocale as string | undefined)
       ?? (task.metadata?.injectionLanguage as string | undefined)
       ?? 'en';
     const granularity = (task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date';
-    const anchorDate = formatZonedDate(runAt, timeZone);
+    const anchorDate = formatZonedDate(runAt, scheduleTimeZone);
 
     const scheduleVariables = buildEmailTemplateScheduleVariables({
       plan: latestPlan,
@@ -491,7 +507,7 @@ export class EmailTaskNotifier {
       locale,
       granularity,
       anchorDate,
-      timeZone,
+      timeZone: scheduleTimeZone,
     });
     const scheduleIcsUrl = this.buildTaskIcsUrl(task);
     const nowIsoUtc = new Date(runAt).toISOString();

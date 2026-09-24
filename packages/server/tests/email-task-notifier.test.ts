@@ -18,10 +18,10 @@ function createTempDbPath(prefix: string): string {
 }
 
 class FakeScheduler {
-  private readonly defs = new Map<string, { handler: () => Promise<void> | void }>();
+  private readonly defs = new Map<string, { handler: () => Promise<void> | void; expression?: string; timezone?: string }>();
 
-  register(def: { name: string; handler: () => Promise<void> | void }): { name: string; stop: () => void } {
-    this.defs.set(def.name, { handler: def.handler });
+  register(def: { name: string; handler: () => Promise<void> | void; expression?: string; timezone?: string }): { name: string; stop: () => void } {
+    this.defs.set(def.name, { handler: def.handler, expression: def.expression, timezone: def.timezone });
     return { name: def.name, stop: () => this.unregister(def.name) };
   }
 
@@ -32,6 +32,8 @@ class FakeScheduler {
   get registeredJobs(): string[] {
     return [...this.defs.keys()];
   }
+
+  getJob(name: string) { return this.defs.get(name); }
 }
 
 test('EmailTaskNotifier syncs jobs and sends per-recipient with independent counters', async () => {
@@ -234,14 +236,13 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
   }
 });
 
-test('EmailTaskNotifier invalidates jobs when config period already ended', async () => {
+test('EmailTaskNotifier respects a postponed final meeting after the configured period', async () => {
   const dbPath = createTempDbPath('labby-email-task-ended');
   const store = await createTestStore({ dialect: 'pglite', dataDir: dbPath });
   const scheduler = new FakeScheduler();
 
-  const mailer = {
-    send: async () => {},
-  } as unknown as Mailer;
+  let deliveries = 0;
+  const mailer = { send: async () => { deliveries++; } } as unknown as Mailer;
 
   try {
     await store.putConfig({
@@ -275,6 +276,14 @@ test('EmailTaskNotifier invalidates jobs when config period already ended', asyn
 
     await notifier.syncJobs();
     assert.deepEqual(scheduler.registeredJobs, []);
+    await store.putPerson({ id: id('ended-presenter'), name: 'Presenter', names: { en: 'Presenter' }, metadata: {}, keywordIds: [] });
+    await store.putPerson({ id: id('ended-questioner'), name: 'Questioner', names: { en: 'Questioner' }, metadata: {}, keywordIds: [] });
+    await store.putSchedule({ id: id('extended-plan'), configId: id('cfg-ended'), createdAt: Date.now(),
+      sessions: [{ date: '2099-01-05', presentations: [{ presenterId: id('ended-presenter'), questionerIds: [id('ended-questioner')] }] }] });
+    await notifier.syncJobs();
+    assert.deepEqual(scheduler.registeredJobs, [`email-task:${id('task-ended')}`]);
+    await notifier.runTask(id('task-ended'));
+    assert.equal(deliveries, 1);
   } finally {
     await store.close();
   }
@@ -485,21 +494,18 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
       mailer,
       store,
       defaultHour: 9,
-      enablePublicEmailTaskIcs: false,
-      publicBaseUrl: 'https://example.test',
     });
 
     await notifierWithoutPublicIcs.runTaskNow(id('task-tz'), ['tz@example.com']);
     assert.equal(sent[0]?.text, 'Asia/Tokyo|missing');
     const firstIcs = sent[0]?.attachments?.find((item) => item.filename.endsWith('.ics'));
-    assert.match(firstIcs?.content.toString('utf-8') ?? '', /DTSTART;TZID=Asia\/Tokyo:/);
+    assert.match(firstIcs?.content.toString('utf-8') ?? '', /DTSTART:20260105T000000Z/);
 
     const notifierWithPublicIcs = new EmailTaskNotifier({
       scheduler: scheduler as unknown as any,
       mailer,
       store,
       defaultHour: 9,
-      enablePublicEmailTaskIcs: true,
       publicBaseUrl: 'https://example.test/',
     });
 
@@ -508,4 +514,35 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
   } finally {
     await store.close();
   }
+});
+
+test('email send timezone does not change schedule times in templates or ICS', async () => {
+  const store = await createTestStore({ dialect: 'pglite', dataDir: createTempDbPath('labby-mail-meeting-timezones') });
+  const scheduler = new FakeScheduler();
+  const sent: Array<{ text?: string; attachments?: Array<{ filename: string; content: Buffer }> }> = [];
+  const mailer = { send: async (input: { text?: string; attachments?: Array<{ filename: string; content: Buffer }> }) => { sent.push(input); } } as unknown as Mailer;
+  try {
+    const configId = id('cfg-two-timezones');
+    const taskId = id('task-two-timezones');
+    await store.putSystemSettings({ id: SYSTEM_SETTINGS_ID, timezone: 'UTC' });
+    await store.putConfig({ id: configId, daysOfWeek: [1], timeRange: ['09:00', '11:00'], timezone: 'Asia/Tokyo',
+      presentersPerSession: 1, questionersPerPresenter: 0, targetSimilarityRadius: 0.5,
+      startDate: '2026-01-01', endDate: '2099-01-31', metadata: {} });
+    await store.putPerson({ id: id('timezone-presenter'), name: 'Presenter', names: { en: 'Presenter' }, metadata: {}, keywordIds: [] });
+    await store.putSchedule({ id: id('timezone-plan'), configId, createdAt: Date.UTC(2026, 0, 1),
+      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: id('timezone-presenter'), questionerIds: [] }] }] });
+    await store.putEmailTask({ id: taskId, configId, daysOfWeek: [1], sendTime: '12:00', timezone: 'Asia/Shanghai',
+      emails: ['test@example.com'], recentTimes: 0,
+      templateText: '{{ runTimezone }}|{{ nextSessionTimeText() }}',
+      metadata: { timezoneSource: 'task', attachmentTypes: ['schedule-semester-ics'] } });
+    const notifier = new EmailTaskNotifier({ scheduler: scheduler as unknown as any, mailer, store });
+    await notifier.syncJobs();
+    assert.equal(scheduler.getJob(`email-task:${taskId}`)?.expression, '0 12 * * 1');
+    assert.equal(scheduler.getJob(`email-task:${taskId}`)?.timezone, 'Asia/Shanghai');
+    await notifier.runTaskNow(taskId, ['test@example.com']);
+    assert.match(sent[0]?.text ?? '', /^Asia\/Shanghai\|.*09:00.*11:00/);
+    const ics = sent[0]?.attachments?.find(item => item.filename.endsWith('.ics'))?.content.toString('utf8') ?? '';
+    assert.match(ics, /DTSTART:20260105T000000Z/);
+    assert.match(ics, /DTEND:20260105T020000Z/);
+  } finally { await store.close(); }
 });

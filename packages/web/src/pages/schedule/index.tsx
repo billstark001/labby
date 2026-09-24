@@ -556,13 +556,14 @@ export function SchedulePage() {
     window.setTimeout(() => { copiedCsv.value = false; }, 1500);
   }
 
-  function handleExportIcs() {
+  async function handleExportIcs() {
     if (!current) return;
     const config = configs.find(c => c.id === current.configId);
+    const settings = await db.systemSettings.get();
     downloadScheduleIcs(current, personMap, displayName, config, {
       presenter: t('presenter'),
       questioners: t('questioners'),
-    });
+    }, settings?.timezone);
   }
 
   // #endregion
@@ -865,7 +866,7 @@ export function SchedulePage() {
           <Button variant="secondary" busy={action.pendingKey === 'copyCsv'} onClick={() => void action.run('copyCsv', handleCopyCsv)}>{copiedCsv.value ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>{t('exportHtml')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>{t('exportCsv')}</Button>
-          <Button variant="secondary" onClick={handleExportIcs}>{t('exportIcs')}</Button>
+          <Button variant="secondary" busy={action.pendingKey === 'exportIcs'} onClick={() => void action.run('exportIcs', handleExportIcs)}>{t('exportIcs')}</Button>
         </div>
       )}
 

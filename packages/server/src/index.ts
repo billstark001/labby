@@ -11,7 +11,6 @@ import { safeErrorInfo } from './lib/logging.js';
 
 const port = Number(process.env.PORT ?? 4410);
 const dbConfig = resolveStoreConnectionConfig(process.env);
-const enablePublicEmailTaskIcs = /^(1|true|yes)$/i.test(process.env.ENABLE_PUBLIC_EMAIL_TASK_ICS ?? '');
 const publicBaseUrl = resolvePublicBaseUrl(process.env, port);
 
 const requestedSchedulerMode = resolveSchedulerMode(process.env.SCHEDULER_MODE);
@@ -49,7 +48,6 @@ const { app, store, close } = await createApp({
   rootUsername: process.env.ROOT_USERNAME,
   rootPassword: process.env.ROOT_PASSWORD,
   rootEmail: process.env.ROOT_EMAIL,
-  enablePublicEmailTaskIcs,
   mailer,
   onEmailTasksChanged: async () => {
     await emailTaskNotifier?.syncJobs();
@@ -96,7 +94,6 @@ if (mailer) {
     scheduler,
     mailer,
     store,
-    enablePublicEmailTaskIcs,
     publicBaseUrl,
   });
   await notifier.syncJobs();

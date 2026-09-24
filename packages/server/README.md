@@ -94,7 +94,7 @@ Optional settings:
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_JSON_PATH`
 - `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_OAUTH_REFRESH_TOKEN_PATH`
 - `NOTIFY_RECIPIENTS`
-- `ENABLE_PUBLIC_EMAIL_TASK_ICS`, `PUBLIC_BASE_URL`
+- `PUBLIC_BASE_URL`
 - `SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
 - `CLOUD_SCHEDULER_PROJECT_ID`, `CLOUD_SCHEDULER_LOCATION`, `CLOUD_SCHEDULER_DISPATCH_URL`, `CLOUD_SCHEDULER_JOB_PREFIX`
 - `BACKUP_CRON`, `BACKUP_TIMEZONE`, `BACKUP_FORMAT`, `BACKUP_TARGET`, `BACKUP_FILENAME_PREFIX`
@@ -143,9 +143,11 @@ In `cloud`/`hybrid`, the server keeps Cloud Scheduler jobs synchronized with int
 
 Current limitation: mirrored scheduler dispatch assumes a single live server instance. Job definitions are held in memory, so multi-instance Cloud Run deployments can route a callback to an instance that has not synced the latest job set.
 
-When `ENABLE_PUBLIC_EMAIL_TASK_ICS=true`, each email task can opt in via metadata (`serveScheduleIcs`) to expose its latest schedule at:
+Each email task can opt in via metadata (`serveScheduleIcs`) to expose its latest schedule at:
 
 - `GET /public/email-tasks/:taskId/schedule.ics`
+
+Meeting times, email dispatch times, defaults, and ICS UTC conversion are defined in [the timezone rules](../../docs/timezone-semantics.md).
 
 ## Backup Subsystem
 

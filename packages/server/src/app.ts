@@ -53,7 +53,7 @@ import {
   parsePagination,
   toPage,
 } from "./lib/app-helpers.js";
-import { resolveEmailTaskTimezone } from "./lib/email-task-timezone.js";
+import { resolveScheduleTimezone } from "./lib/email-task-timezone.js";
 import {
   backupActionSchema,
   changePasswordSchema,
@@ -88,7 +88,6 @@ export interface CreateAppOptions {
   rootUsername?: string;
   rootPassword?: string;
   rootEmail?: string;
-  enablePublicEmailTaskIcs?: boolean;
   mailer?: Mailer | null;
   onEmailTasksChanged?: () => Promise<void> | void;
   onConfigsChanged?: () => Promise<void> | void;
@@ -243,8 +242,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     });
   }
 
-  if (options.enablePublicEmailTaskIcs) {
-    app.get('/public/email-tasks/:id/schedule.ics', async (c) => {
+  app.get('/public/email-tasks/:id/schedule.ics', async (c) => {
       const taskId = c.req.param('id');
       const task = await store.getEmailTask(taskId);
       const shouldServeIcs = Boolean(task?.metadata && (task.metadata as Record<string, unknown>).serveScheduleIcs === true);
@@ -264,15 +262,14 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       const personMap = new Map((await store.listPersons()).map((person) => [person.id, person]));
       const systemSettings = await store.getSystemSettings();
       const ics = buildScheduleIcs(latest, personMap, defaultDisplayName, config ?? undefined, undefined, {
-        timeZone: resolveEmailTaskTimezone(task, config, systemSettings),
+        timeZone: resolveScheduleTimezone(config ?? undefined, systemSettings),
       });
 
       c.header('Content-Type', 'text/calendar; charset=utf-8');
       c.header('Cache-Control', 'no-store');
       c.header('Content-Disposition', `inline; filename="labby-schedule-${taskId}.ics"`);
       return c.body(ics);
-    });
-  }
+  });
 
   app.get("/api/v1/system/capabilities", async (c) => {
     const session = getAuthSession(c);
@@ -298,7 +295,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       },
       emailTasks: {
         autoSend: Boolean(options.mailer),
-        publicScheduleIcs: Boolean(options.enablePublicEmailTaskIcs),
+        publicScheduleIcs: true,
       },
       system: {
         timezone: systemSettings.timezone ?? null,

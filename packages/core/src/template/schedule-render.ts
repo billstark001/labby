@@ -1,5 +1,5 @@
 import type { Person, ScheduleConfig, SchedulePlan } from '../types.js';
-import { getTimeZoneOffsetMinutes, normalizeTimeZone } from '../timezone.js';
+import { getEnvironmentTimeZone, getTimeZoneOffsetMinutes, normalizeTimeZone } from '../timezone.js';
 
 export interface ScheduleTableLabels {
   date: string;
@@ -65,6 +65,7 @@ export interface BuildEmailTemplateScheduleVariablesOptions {
   anchorDate?: string;
   labels?: Partial<ScheduleTableLabels>;
   displayName?: (person: Person) => string;
+  /** Resolved schedule timezone; the email dispatch timezone does not format meetings. */
   timeZone?: string;
 }
 
@@ -154,6 +155,7 @@ function formatTimeLabel(timeStr: string, locale: string): string {
   if (!parsed) return timeStr;
   const date = new Date(Date.UTC(2000, 0, 1, parsed.hour, parsed.minute));
   return new Intl.DateTimeFormat(normalizeLocale(locale), {
+    timeZone: 'UTC',
     hour: '2-digit',
     minute: '2-digit',
   }).format(date);
@@ -339,16 +341,14 @@ export function buildScheduleCsvText(rows: ScheduleRow[]): string {
   return lines.join('\n');
 }
 
-/** Pad a number to at least 2 digits. */
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
 /** Format a date + time as iCalendar DATE-TIME. */
-function icsDateTime(dateStr: string, timeStr: string): string {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const [hour, minute] = timeStr.split(':').map(Number);
-  return `${year}${pad2(month)}${pad2(day)}T${pad2(hour)}${pad2(minute)}00`;
+function icsDateTime(dateStr: string, timeStr: string, timeZone: string): string {
+  const localAsUtc = Date.parse(`${dateStr}T${timeStr}:00Z`);
+  let offset = getTimeZoneOffsetMinutes(timeZone, new Date(localAsUtc)) ?? 0;
+  let instant = localAsUtc - offset * 60_000;
+  offset = getTimeZoneOffsetMinutes(timeZone, new Date(instant)) ?? offset;
+  instant = localAsUtc - offset * 60_000;
+  return `${new Date(instant).toISOString().slice(0, 19).replaceAll('-', '').replaceAll(':', '')}Z`;
 }
 
 function escapeIcsText(text: string): string {
@@ -369,9 +369,8 @@ export function buildScheduleIcs(
 ): string {
   const startTime = config?.timeRange[0] ?? '09:00';
   const endTime = config?.timeRange[1] ?? '10:00';
-  const timeZone = normalizeTimeZone(options.timeZone ?? config?.timezone);
-  const dtStartPrefix = timeZone ? `DTSTART;TZID=${timeZone}:` : 'DTSTART:';
-  const dtEndPrefix = timeZone ? `DTEND;TZID=${timeZone}:` : 'DTEND:';
+  const timeZone = normalizeTimeZone(config?.timezone) ?? normalizeTimeZone(options.timeZone) ?? getEnvironmentTimeZone();
+  const dtStamp = new Date(plan.createdAt).toISOString().slice(0, 19).replaceAll('-', '').replaceAll(':', '') + 'Z';
 
   const events: string[] = [];
   for (const session of plan.sessions) {
@@ -383,8 +382,11 @@ export function buildScheduleIcs(
         return q ? displayName(q) : fallbackEntityId(qid);
       });
 
-      const dtStart = icsDateTime(session.date, startTime);
-      const dtEnd = icsDateTime(session.date, endTime);
+      const dtStart = icsDateTime(session.date, startTime, timeZone);
+      const endDate = endTime <= startTime
+        ? new Date(Date.parse(`${session.date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
+        : session.date;
+      const dtEnd = icsDateTime(endDate, endTime, timeZone);
       const uid = `labby-${plan.id}-${pres.presenterId}-${session.date}@labby`;
       const summary = `${labels.presenter}: ${presenterName}`;
       const description = questionerNames.length > 0 ? `${labels.questioners}: ${questionerNames.join(', ')}` : '';
@@ -392,8 +394,9 @@ export function buildScheduleIcs(
       events.push([
         'BEGIN:VEVENT',
         `UID:${escapeIcsText(uid)}`,
-        `${dtStartPrefix}${dtStart}`,
-        `${dtEndPrefix}${dtEnd}`,
+        `DTSTAMP:${dtStamp}`,
+        `DTSTART:${dtStart}`,
+        `DTEND:${dtEnd}`,
         `SUMMARY:${escapeIcsText(summary)}`,
         description ? `DESCRIPTION:${escapeIcsText(description)}` : '',
         'END:VEVENT',
@@ -407,10 +410,10 @@ export function buildScheduleIcs(
     'PRODID:-//Labby//Labby Scheduler//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    timeZone ? `X-WR-TIMEZONE:${timeZone}` : '',
+    `X-WR-TIMEZONE:${timeZone}`,
     ...events,
     'END:VCALENDAR',
-  ].filter(Boolean).join('\r\n');
+  ].filter(Boolean).join('\r\n') + '\r\n';
 }
 
 export function buildScheduleTemplateBlocks(
@@ -479,7 +482,7 @@ export function buildEmailTemplateScheduleVariables(
       locale,
       granularity: options.granularity,
       includeWeekday: options.includeWeekday,
-      timeZone: options.timeZone ?? options.config?.timezone,
+      timeZone: options.config?.timezone ?? options.timeZone,
     } satisfies ScheduleDateDisplayOptions,
   };
 

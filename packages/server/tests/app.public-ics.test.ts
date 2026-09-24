@@ -32,14 +32,13 @@ async function login(app: Awaited<ReturnType<typeof createApp>>['app']): Promise
   return payload.access_token;
 }
 
-test('public email task ICS endpoint is available only when enabled and task opts in', async () => {
+test('public email task ICS endpoint is available when a task opts in', async () => {
   const [configId, personAId, personBId, scheduleId, taskId] =
     ['cfg-ics', 'p1', 'p2', 'plan-ics', 'task-ics'].map(testUuid);
   const runtime = await createTestApp({
     db: { dialect: 'pglite', dataDir: createTempDbPath('labby-public-ics') },
     rootUsername: 'root',
     rootPassword: 'root-pass',
-    enablePublicEmailTaskIcs: true,
   });
 
   try {
@@ -120,7 +119,8 @@ test('public email task ICS endpoint is available only when enabled and task opt
     const icsBody = await icsRes.text();
     assert.match(icsBody, /BEGIN:VCALENDAR/);
     assert.match(icsBody, /BEGIN:VEVENT/);
-    assert.match(icsBody, /DTSTART;TZID=Asia\/Tokyo:/);
+    assert.match(icsBody, /DTSTART:20260105T000000Z/);
+    assert.match(icsBody, /DTEND:20260105T010000Z/);
     assert.match(icsBody, /SUMMARY:Presenter: Alice/);
 
     await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {

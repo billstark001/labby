@@ -69,8 +69,9 @@ export function downloadScheduleIcs(
   displayName: (person: Person) => string,
   config: ScheduleConfig | undefined,
   labels?: { presenter: string; questioners: string },
+  timeZone?: string,
 ) {
-  const ics = buildScheduleIcsCore(plan, personMap, displayName, config, labels);
+  const ics = buildScheduleIcsCore(plan, personMap, displayName, config, labels, { timeZone });
   triggerDownload(new Blob([ics], { type: 'text/calendar' }), 'schedule.ics');
 }
 
