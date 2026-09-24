@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Person, ScheduleConfig, ScheduleConstraint } from '@labby/core';
+import type { Person, PersonTag, ScheduleConfig, ScheduleConstraint } from '@labby/core';
 
 import { displayName, i18n } from '@/i18n';
 import { listConstraintsPage, readAllPaginated, useDatabase } from '@/db';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { usePendingAction } from '@/lib/use-pending-action';
 import * as s from '@/styles/components.css';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import {
@@ -16,16 +17,16 @@ import {
 } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 
-const MAX_KEYWORDS = 10;
-
 type ConstraintType = 'no-overlap' | 'affinity-boost' | 'frequency-multiplier';
 
 interface ConstraintFormProps {
   initial?: ScheduleConstraint;
   persons: Person[];
+  tags: PersonTag[];
   configs: ScheduleConfig[];
   onSave: (constraint: ScheduleConstraint) => void;
   onCancel: () => void;
+  pending: boolean;
 }
 
 function constraintTypeLabel(type: ConstraintType, t: (key: string) => string): string {
@@ -34,13 +35,17 @@ function constraintTypeLabel(type: ConstraintType, t: (key: string) => string): 
   return t('constraintTypeFrequencyMultiplier');
 }
 
-function ConstraintForm({ initial, persons, configs, onSave, onCancel }: ConstraintFormProps) {
+function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pending }: ConstraintFormProps) {
   const { t } = i18n;
 
   const [configId, setConfigId] = useState(initial?.configId ?? '');
   const [constraintType, setConstraintType] = useState<ConstraintType>(initial?.type ?? 'no-overlap');
   const [selectedPersonIds, setSelectedPersonIds] = useState<string[]>(initial?.personIds ?? []);
-  const initialWeight = initial?.type === 'affinity-boost' ? 1 : (initial?.weight ?? 1);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(initial?.tagIds ?? []);
+  const [otherPersonIds, setOtherPersonIds] = useState<string[]>(initial?.type === 'frequency-multiplier' ? [] : initial?.otherPersonIds ?? []);
+  const [otherTagIds, setOtherTagIds] = useState<string[]>(initial?.type === 'frequency-multiplier' ? [] : initial?.otherTagIds ?? []);
+  const [useOtherGroup, setUseOtherGroup] = useState(initial?.type !== 'frequency-multiplier' && Boolean(initial?.otherPersonIds?.length || initial?.otherTagIds?.length));
+  const initialWeight = initial?.type === 'frequency-multiplier' ? initial.weight ?? 1 : 1;
   const [weight, setWeight] = useState(String(initialWeight));
   const [boost, setBoost] = useState(String(initial?.type === 'affinity-boost' ? initial.boost ?? 2 : 2));
   const [baseline, setBaseline] = useState(String(initial?.type === 'frequency-multiplier' ? initial.baseline : 1));
@@ -48,22 +53,15 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
   const [roleScope, setRoleScope] = useState<'presenter' | 'questioner' | 'both'>(
     initial?.type === 'frequency-multiplier' ? (initial.roleScope ?? 'presenter') : 'presenter',
   );
-  const [personLimitHit, setPersonLimitHit] = useState(false);
-
-  function toggleConstraintPerson(personId: string): void {
-    setPersonLimitHit(false);
-    setSelectedPersonIds((prev) => {
-      if (prev.includes(personId)) return prev.filter((id) => id !== personId);
-      if (prev.length >= MAX_KEYWORDS) {
-        setPersonLimitHit(true);
-        return prev;
-      }
-      return [...prev, personId];
-    });
+  function toggle(id: string, values: string[], setValues: (values: string[]) => void): void {
+    setValues(values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
   }
 
   function handleSave(): void {
-    if (selectedPersonIds.length === 0) return;
+    if (selectedPersonIds.length + selectedTagIds.length === 0) return;
+    if (useOtherGroup && constraintType !== 'frequency-multiplier' && otherPersonIds.length + otherTagIds.length === 0) return;
+    const cross = useOtherGroup && constraintType !== 'frequency-multiplier'
+      ? { otherPersonIds, otherTagIds } : {};
 
     if (constraintType === 'no-overlap') {
       onSave({
@@ -71,7 +69,8 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
         configId,
         type: 'no-overlap',
         personIds: selectedPersonIds,
-        weight: Number.parseFloat(weight) || 1,
+        tagIds: selectedTagIds,
+        ...cross,
         modifiedAt: Date.now(),
       });
       return;
@@ -83,7 +82,9 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
         configId,
         type: 'affinity-boost',
         personIds: selectedPersonIds,
-        boost: Number.parseFloat(boost) || 2,
+        tagIds: selectedTagIds,
+        ...cross,
+        boost: Number.isFinite(Number(boost)) && Number(boost) > 0 ? Number(boost) : 2,
         modifiedAt: Date.now(),
       });
       return;
@@ -94,10 +95,11 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
       configId,
       type: 'frequency-multiplier',
       personIds: selectedPersonIds,
-      baseline: Math.max(0, Number.parseFloat(baseline) || 0),
-      multiplier: Number.parseFloat(multiplier) || 1,
+      tagIds: selectedTagIds,
+      baseline: Math.max(0, Number(baseline) || 0),
+      multiplier: Math.max(0, Number(multiplier) || 0),
       roleScope,
-      weight: Number.parseFloat(weight) || 1,
+      weight: Math.max(0, Number(weight) || 0),
       modifiedAt: Date.now(),
     });
   }
@@ -126,23 +128,42 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
         </select>
       </div>
       <div class={s.formGroup}>
-        <label class={s.label}>
-          {t('constraintPersons')} ({selectedPersonIds.length}/{MAX_KEYWORDS})
-        </label>
-        {personLimitHit && <p class={`${s.text12} ${s.textDanger}`}>{t('keywordLimitReached')}</p>}
+        <label class={s.label}>{t('constraintTargets')}</label>
         <div class={s.tagList}>
           {persons.map((person) => (
             <button
+              type="button"
               key={person.id}
               class={`${s.badgeSelectable} ${selectedPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
-              onClick={() => toggleConstraintPerson(person.id)}
+              onClick={() => toggle(person.id, selectedPersonIds, setSelectedPersonIds)}
             >
               {displayName(person)}
             </button>
           ))}
+          {tags.map(tag => <button type="button" key={tag.id}
+            class={`${s.badgeSelectable} ${selectedTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+            onClick={() => toggle(tag.id, selectedTagIds, setSelectedTagIds)}>
+            <span style={{ color: tag.color }}>●</span> {tag.name}
+          </button>)}
         </div>
       </div>
-      {(constraintType === 'no-overlap' || constraintType === 'frequency-multiplier') && (
+      {constraintType !== 'frequency-multiplier' && <div class={s.formGroup}>
+        <label class={s.label}><input type="checkbox" checked={useOtherGroup}
+          onChange={event => setUseOtherGroup((event.target as HTMLInputElement).checked)} /> {t('constraintUseOtherGroup')}</label>
+        {useOtherGroup && <>
+          <p class={s.textMuted}>{t('constraintOtherTargets')}</p>
+          <div class={s.tagList}>
+            {persons.map(person => <button type="button" key={person.id}
+              class={`${s.badgeSelectable} ${otherPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
+              onClick={() => toggle(person.id, otherPersonIds, setOtherPersonIds)}>{displayName(person)}</button>)}
+            {tags.map(tag => <button type="button" key={tag.id}
+              class={`${s.badgeSelectable} ${otherTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+              onClick={() => toggle(tag.id, otherTagIds, setOtherTagIds)}>
+              <span style={{ color: tag.color }}>●</span> {tag.name}</button>)}
+          </div>
+        </>}
+      </div>}
+      {constraintType === 'frequency-multiplier' && (
         <div class={s.formGroup}>
           <label class={s.label}>{t('constraintWeight')}</label>
           <input class={s.input} value={weight} onInput={(e) => setWeight((e.target as HTMLInputElement).value)} />
@@ -179,8 +200,8 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
         </>
       )}
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={handleSave}>{t('save')}</Button>
-        <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
+        <Button variant="primary" busy={pending} onClick={handleSave}>{t('save')}</Button>
+        <Button variant="secondary" disabled={pending} onClick={onCancel}>{t('cancel')}</Button>
       </div>
     </div>
   );
@@ -189,19 +210,22 @@ function ConstraintForm({ initial, persons, configs, onSave, onCancel }: Constra
 export function ConstraintsTab() {
   const db = useDatabase();
   const { t } = i18n;
+  const action = usePendingAction();
   const [editing, setEditing] = useState<ScheduleConstraint | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const query = useAsyncResource(async () => {
-    const [result, persons, configs] = await Promise.all([
+    const [result, persons, tags, configs] = await Promise.all([
       listConstraintsPage(db, (page - 1) * pageSize, pageSize),
       readAllPaginated(db.persons),
+      readAllPaginated(db.personTags),
       readAllPaginated(db.configs),
     ]);
-    return { ...result, persons, configs };
+    return { ...result, persons, tags, configs };
   }, [db, page, pageSize]);
   const constraints = query.data?.items ?? [];
   const persons = query.data?.persons ?? [];
+  const tags = query.data?.tags ?? [];
   const configs = query.data?.configs ?? [];
   useEffect(() => {
     if (query.status !== 'success' || !query.data) return;
@@ -215,17 +239,21 @@ export function ConstraintsTab() {
     return config ? getScheduleConfigLabel(config) : configId;
   }
 
-  function summarizePersons(personIds: string[]): string {
-    if (personIds.length === 0) return '—';
+  function summarizeTargets(constraint: ScheduleConstraint): string {
     const map = new Map(persons.map((person) => [person.id, displayName(person)]));
-    const labels = personIds.slice(0, 3).map((id) => map.get(id) ?? id);
-    const suffix = personIds.length > 3 ? ` +${personIds.length - 3}` : '';
-    return `${labels.join(', ')}${suffix}`;
+    const tagMap = new Map(tags.map(tag => [tag.id, tag.name]));
+    const labels = [...constraint.personIds.map(id => map.get(id) ?? id),
+      ...constraint.tagIds.map(id => `#${tagMap.get(id) ?? id}`)];
+    const other = constraint.type === 'frequency-multiplier' ? [] : [
+      ...(constraint.otherPersonIds ?? []).map(id => map.get(id) ?? id),
+      ...(constraint.otherTagIds ?? []).map(id => `#${tagMap.get(id) ?? id}`),
+    ];
+    return `${labels.join(', ') || '—'}${other.length ? ` ↔ ${other.join(', ')}` : ''}`;
   }
 
   function summarizeParameters(constraint: ScheduleConstraint): string {
     if (constraint.type === 'no-overlap') {
-      return `${t('constraintWeight')}: ${constraint.weight ?? 1}`;
+      return t('constraintHardRule');
     }
     if (constraint.type === 'affinity-boost') {
       return `${t('constraintBoost')}: ${constraint.boost ?? 2}`;
@@ -239,15 +267,19 @@ export function ConstraintsTab() {
   }
 
   async function handleSaveConstraint(next: ScheduleConstraint): Promise<void> {
-    await db.constraints.put({ ...next, modifiedAt: Date.now() });
-    await query.refetch();
-    setEditing(null);
+    await action.run(`save:${next.id}`, async () => {
+      await db.constraints.put({ ...next, modifiedAt: Date.now() });
+      await query.refetch();
+      setEditing(null);
+    });
   }
 
   async function handleDeleteConstraint(constraint: ScheduleConstraint): Promise<void> {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
-      await db.constraints.delete(constraint.id);
-      await query.refetch();
+      await action.run(`delete:${constraint.id}`, async () => {
+        await db.constraints.delete(constraint.id);
+        await query.refetch();
+      });
     });
   }
 
@@ -268,9 +300,11 @@ export function ConstraintsTab() {
           <ConstraintForm
             initial={editing === 'new' ? undefined : editing}
             persons={persons}
+            tags={tags}
             configs={configs}
             onSave={handleSaveConstraint}
             onCancel={() => setEditing(null)}
+            pending={action.pendingKey?.startsWith('save:') ?? false}
           />
         </Dialog>
       )}
@@ -296,7 +330,7 @@ export function ConstraintsTab() {
             <td class={s.td}>{constraintTypeLabel(constraint.type, t)}</td>
             <td class={s.td}>{findConfigLabel(constraint.configId)}</td>
             <td class={s.td}>
-              <span class={s.textMuted}>{summarizePersons(constraint.personIds)}</span>
+              <span class={s.textMuted}>{summarizeTargets(constraint)}</span>
             </td>
             <td class={s.td}>
               <span class={s.textMuted}>{summarizeParameters(constraint)}</span>
@@ -311,7 +345,7 @@ export function ConstraintsTab() {
             </div>
             <div class={dataStyles.mobileFields}>
               <ResponsiveDataField label={t('constraintPersons')}>
-                <span class={s.textMuted}>{summarizePersons(constraint.personIds)}</span>
+                <span class={s.textMuted}>{summarizeTargets(constraint)}</span>
               </ResponsiveDataField>
               <ResponsiveDataField label={t('constraintParams')}>
                 <span class={s.textMuted}>{summarizeParameters(constraint)}</span>
@@ -322,7 +356,7 @@ export function ConstraintsTab() {
         renderActions={(constraint) => (
           <>
             <Button variant="ghost" onClick={() => setEditing(constraint)}>{t('edit')}</Button>
-            <Button variant="danger" onClick={() => void handleDeleteConstraint(constraint)}>{t('delete')}</Button>
+            <Button variant="danger" busy={action.pendingKey === `delete:${constraint.id}`} disabled={action.pendingKey !== null} onClick={() => void handleDeleteConstraint(constraint)}>{t('delete')}</Button>
           </>
         )}
       />

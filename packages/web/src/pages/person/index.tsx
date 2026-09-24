@@ -8,12 +8,13 @@ import { fetchSystemCapabilities } from '@/api-server/backup';
 import { useAsyncResource } from '@/lib/use-async-resource';
 
 import { PersonsTab } from './PersonsTab';
+import { TagsTab } from './TagsTab';
 import { ConstraintsTab } from './ConstraintsTab';
 import { UsersTab } from './UsersTab';
 
 export function PersonsPage() {
   const { t } = i18n;
-  const [activeTab, setActiveTab] = useState<'persons' | 'constraints' | 'users'>('persons');
+  const [activeTab, setActiveTab] = useState<'persons' | 'tags' | 'constraints' | 'users'>('persons');
   const capabilities = useAsyncResource(() => isServerDeployment ? fetchSystemCapabilities() : Promise.resolve(null));
   const canManageUsers = capabilities.data?.permissions.canManageUsers ?? false;
   const showUsersTab = isServerDeployment && canManageUsers;
@@ -31,6 +32,9 @@ export function PersonsPage() {
           <Button variant={activeTab === 'persons' ? 'primary' : 'ghost'} onClick={() => setActiveTab('persons')}>
             {t('navPersons')}
           </Button>
+          <Button variant={activeTab === 'tags' ? 'primary' : 'ghost'} onClick={() => setActiveTab('tags')}>
+            {t('personTags')}
+          </Button>
           <Button variant={activeTab === 'constraints' ? 'primary' : 'ghost'} onClick={() => setActiveTab('constraints')}>
             {t('constraintsTab')}
           </Button>
@@ -43,6 +47,7 @@ export function PersonsPage() {
       </div>
 
       {activeTab === 'persons' && <PersonsTab />}
+      {activeTab === 'tags' && <TagsTab />}
       {activeTab === 'constraints' && <ConstraintsTab />}
       {activeTab === 'users' && showUsersTab && <UsersTab canManageUsers={canManageUsers} />}
     </div>
