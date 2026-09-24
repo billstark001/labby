@@ -4,7 +4,7 @@ import { KeywordList } from '@/components/KeywordList';
 import { RankingCard } from '@/components/RankingCard';
 import { Button } from '@/components/ui';
 import { useDatabase } from '@/db/index';
-import { graphStream } from '@/lib/graph-sync';
+import { graphReady, graphStream, graphStreamStatus } from '@/lib/graph-sync';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 
@@ -15,7 +15,7 @@ function GraphTab() {
     <>
       <KeywordGraph />
       <div class={s.sectionStack}>
-        <RankingCard />
+        {graphReady.value && !graphStreamStatus.value.error && <RankingCard />}
       </div>
     </>
   );

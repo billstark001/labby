@@ -10,6 +10,7 @@ export const graphData = signal<{
   edges: GraphSnapshotEdge[];
 }>({ keywords: [], vectors: [], edges: [] });
 let publishedStream: GraphStream | undefined;
+let graphGeneration = 0;
 
 export const graphStreamStatus = signal<GraphStreamStatus>({
   loading: true,
@@ -17,15 +18,24 @@ export const graphStreamStatus = signal<GraphStreamStatus>({
   count: 0,
   error: null,
 });
-const streams = new WeakMap<LabbyDB, GraphStream>();
+let streams = new WeakMap<LabbyDB, GraphStream>();
+export function resetGraphStreamState(): void {
+  graphGeneration++;
+  streams = new WeakMap<LabbyDB, GraphStream>();
+  publishedStream = undefined;
+  graphData.value = { keywords: [], vectors: [], edges: [] };
+  graphStreamStatus.value = { loading: true, syncing: false, count: 0, error: null };
+}
 export const graphReady = computed(() => !graphStreamStatus.value.loading);
 export function graphStream(db: LabbyDB): GraphStream {
   let stream = streams.get(db);
   if (!stream) {
+    const generation = graphGeneration;
     let publishedVersion = -1;
     stream = new GraphStream(
       db.graph,
-      (model, status) =>
+      (model, status) => {
+        if (generation !== graphGeneration) return;
         batch(() => {
           if (publishedVersion !== model.version || publishedStream !== stream) {
             publishedVersion = model.version;
@@ -49,7 +59,8 @@ export function graphStream(db: LabbyDB): GraphStream {
             previous.error !== status.error
           )
             graphStreamStatus.value = status;
-        }),
+        });
+      },
       () => new Promise((resolve) => setTimeout(resolve, 16)),
     );
     streams.set(db, stream);

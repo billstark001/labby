@@ -44,21 +44,15 @@ export function SettingsPage() {
   const [emailChangeCode, setEmailChangeCode] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [systemTimezone, setSystemTimezone] = useState(SYSTEM_DEFAULT_TIMEZONE);
+  const [systemTimezone, setSystemTimezone] = useState<string>();
+  const systemSettingsQuery = useAsyncResource(() => db.systemSettings.get(), [db]);
   const isRoot = profile?.role === 2;
 
   useEffect(() => {
-    let cancelled = false;
-    void db.systemSettings.get()
-      .then((settings) => {
-        if (cancelled) return;
-        setSystemTimezone(settings.timezone || SYSTEM_DEFAULT_TIMEZONE);
-      })
-      .catch((err) => toast.error(`${t('systemSettingsLoadFailed')}: ${String(err)}`));
-    return () => {
-      cancelled = true;
-    };
-  }, [db, t]);
+    if (systemSettingsQuery.status === 'success' && systemTimezone === undefined) {
+      setSystemTimezone(systemSettingsQuery.data?.timezone || SYSTEM_DEFAULT_TIMEZONE);
+    }
+  }, [systemSettingsQuery.status, systemSettingsQuery.data, systemTimezone]);
 
   async function handleRequestVerifyEmail() {
     setSecurityError(null);
@@ -124,6 +118,7 @@ export function SettingsPage() {
   }
 
   async function handleSaveSystemSettings() {
+    if (systemTimezone === undefined) return;
     try {
       await db.systemSettings.put({
         id: SYSTEM_SETTINGS_ID,
@@ -163,7 +158,14 @@ export function SettingsPage() {
 
       <div class={clsx(s.card, s.sectionStack)}>
         <h3 class={clsx(s.text15, s.fontMedium)}>{t('systemTimezoneTitle')}</h3>
-        <div class={s.formGroup}>
+        {systemSettingsQuery.isInitialLoading || systemSettingsQuery.status === 'success' && systemTimezone === undefined
+          ? <ContentSkeleton rows={2} />
+          : systemSettingsQuery.error && systemTimezone === undefined
+            ? <div role="alert" class={s.formGroup}>
+              <p class={s.textDanger}>{t('systemSettingsLoadFailed')}: {String(systemSettingsQuery.error)}</p>
+              <button class={s.btnVariants.secondary} onClick={() => void systemSettingsQuery.refetch()}>{t('retry')}</button>
+            </div>
+            : <><div class={s.formGroup}>
           <label class={s.label}>{t('systemTimezone')}</label>
           <TimezoneSelect
             value={systemTimezone}
@@ -173,7 +175,7 @@ export function SettingsPage() {
         </div>
         <div class={s.flexGapSm}>
           <button class={s.btnVariants.primary} onClick={() => void handleSaveSystemSettings()}>{t('save')}</button>
-        </div>
+        </div></>}
       </div>
 
       <div class={clsx(s.card, s.sectionStack)}>

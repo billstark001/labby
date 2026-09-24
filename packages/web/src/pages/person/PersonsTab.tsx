@@ -1,13 +1,13 @@
-import { toast } from '@/components/ui/Toast';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { EntityListSortBy, Keyword, ListSortDirection, Person, PersonTag } from '@labby/core';
 
-import { keywordsSignal, keywordMapSignal, personTagsSignal, personTagMapSignal } from '@/store';
 import { fallbackEntityId, displayName, i18n } from '@/i18n';
-import { buildPersonReferenceCount, listPersonsPage, loadAllPersonTags, readPersonForeignKeys, useDatabase } from '@/db';
+import { buildPersonReferenceCount, listPersonsPage, readAllPaginated, readPersonForeignKeys, useDatabase } from '@/db';
+import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
 import {
   Button,
+  ContentSkeleton,
   Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
@@ -19,13 +19,14 @@ const MAX_KEYWORDS = 10;
 
 interface PersonFormProps {
   initial?: Partial<Person>;
+  keywords: Keyword[];
+  tags: PersonTag[];
   onSave: (p: Person, newKeywords: Keyword[]) => void;
   onCancel: () => void;
 }
 
-function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
+function PersonForm({ initial, keywords, tags, onSave, onCancel }: PersonFormProps) {
   const { t } = i18n;
-  const keywords = keywordsSignal.value;
 
   const [nameEn, setNameEn] = useState(initial?.names?.en ?? initial?.name ?? '');
   const [nameZh, setNameZh] = useState(initial?.names?.zh ?? '');
@@ -112,7 +113,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
       <div class={s.formGroup}>
         <label class={s.label}>{t('personTags')}</label>
         <div class={s.tagList}>
-          {personTagsSignal.value.map((tag) => (
+          {tags.map((tag) => (
             <button
               type="button"
               key={tag.id}
@@ -171,7 +172,7 @@ function PersonForm({ initial, onSave, onCancel }: PersonFormProps) {
   );
 }
 
-function PersonTagManager({ onClose }: { onClose: () => void }) {
+function PersonTagManager({ onClose, tags, onChange }: { onClose: () => void; tags: PersonTag[]; onChange: () => Promise<unknown> }) {
   const db = useDatabase();
   const { t } = i18n;
   const [editing, setEditing] = useState<PersonTag | null>(null);
@@ -195,20 +196,20 @@ function PersonTagManager({ onClose }: { onClose: () => void }) {
       notes: notes.trim() || undefined,
       modifiedAt: Date.now(),
     });
-    await loadAllPersonTags(db);
+    await onChange();
     setEditing(null);
   }
 
   async function remove(tag: PersonTag) {
     confirmDialog(t('confirmDelete'), t('deletePersonTagWarning'), async () => {
       await db.personTags.delete(tag.id);
-      await loadAllPersonTags(db);
+      await onChange();
     });
   }
 
   return <Dialog open onClose={onClose} title={t('managePersonTags')} closeOnOverlayClick={false}>
     <div class={s.flexColGapMd}>
-      {personTagsSignal.value.map(tag => <div key={tag.id} class={s.metricRow}>
+      {tags.map(tag => <div key={tag.id} class={s.metricRow}>
         <div>
           <span class={s.badge} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span>
           {tag.notes && <p class={s.mutedParagraph}>{tag.notes}</p>}
@@ -243,66 +244,35 @@ function PersonTagManager({ onClose }: { onClose: () => void }) {
 export function PersonsTab() {
   const db = useDatabase();
   const { t } = i18n;
-  const [persons, setPersons] = useState<Person[]>([]);
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
-  const request = useRef(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
   const [sortDirection, setSortDirection] = useState<ListSortDirection>('desc');
-  const [totalItems, setTotalItems] = useState(0);
-  const [personReferenceCount, setPersonReferenceCount] = useState<Map<string, number>>(new Map());
   const [managingTags, setManagingTags] = useState(false);
-
-
-  async function refreshForeignKeyContext(personIds: string[], ticket: number) {
-    if (personIds.length === 0) {
-      keywordsSignal.value = [];
-      setPersonReferenceCount(new Map());
-      return;
-    }
-    const bundle = await readPersonForeignKeys(db, personIds);
-    if (ticket !== request.current) return;
-    keywordsSignal.value = bundle.keywords;
-    setPersonReferenceCount(buildPersonReferenceCount(bundle));
-  }
-
-  async function refreshPersonsPage(
-    targetPage = page,
-    targetPageSize = pageSize,
-    targetSortBy = sortBy,
-    targetSortDirection = sortDirection,
-  ) {
-    const ticket = ++request.current;
-    const safePage = Math.max(1, targetPage);
-    const offset = (safePage - 1) * targetPageSize;
+  const query = useAsyncResource(async () => {
     const result = await listPersonsPage(db, {
-      offset,
-      limit: targetPageSize,
-      sortBy: targetSortBy,
-      sortDirection: targetSortDirection,
+      offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection,
     });
-    if (ticket !== request.current) return;
-    setPersons(result.items);
-    await refreshForeignKeyContext(result.items.map((item) => item.id), ticket);
-    if (ticket !== request.current) return;
-    setTotalItems(result.total);
-
-    const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
-    if (safePage > totalPages) {
-      await refreshPersonsPage(totalPages, targetPageSize);
-      return;
-    }
-    if (page !== safePage) {
-      setPage(safePage);
-    }
-  }
+    const [bundle, tags, keywords] = await Promise.all([
+      readPersonForeignKeys(db, result.items.map(item => item.id)),
+      readAllPaginated(db.personTags),
+      readAllPaginated(db.keywords),
+    ]);
+    return { ...result, bundle, tags, keywords, references: buildPersonReferenceCount(bundle) };
+  }, [db, page, pageSize, sortBy, sortDirection]);
+  const persons = query.data?.items ?? [];
+  const tags = query.data?.tags ?? [];
+  const keywords = query.data?.keywords ?? [];
+  const keywordMap = new Map(keywords.map(keyword => [keyword.id, keyword]));
+  const tagMap = new Map(tags.map(tag => [tag.id, tag]));
+  const personReferenceCount = query.data?.references ?? new Map<string, number>();
 
   useEffect(() => {
-    void loadAllPersonTags(db).catch(error => toast.error(String(error)));
-    void refreshPersonsPage(page, pageSize).catch(error => toast.error(String(error)));
-    return () => { request.current++; };
-  }, [db, page, pageSize, sortBy, sortDirection]);
+    if (query.status !== 'success' || !query.data) return;
+    const lastPage = Math.max(1, Math.ceil(query.data.total / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [query.status, query.data, page, pageSize]);
 
   function isPersonReferenced(id: string): boolean {
     return (personReferenceCount.get(id) ?? 0) > 0;
@@ -311,14 +281,14 @@ export function PersonsTab() {
   async function handleSave(p: Person, newKeywords: Keyword[]) {
     await Promise.all(newKeywords.map((keyword) => db.keywords.put(keyword)));
     await db.persons.put(p);
-    await refreshPersonsPage();
+    await query.refetch();
     setEditing(null);
   }
 
   async function handleDisableToggle(p: Person) {
     const updated: Person = { ...p, disabled: !p.disabled, modifiedAt: Date.now() };
     await db.persons.put(updated);
-    await refreshPersonsPage();
+    await query.refetch();
   }
 
   async function handleDelete(p: Person) {
@@ -328,7 +298,7 @@ export function PersonsTab() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.persons.delete(p.id);
-      await refreshPersonsPage();
+      await query.refetch();
     });
   }
 
@@ -337,12 +307,12 @@ export function PersonsTab() {
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navPersons')}</h2>
         <div class={s.flexGapSm}>
-          <Button variant="secondary" onClick={() => setManagingTags(true)}>{t('managePersonTags')}</Button>
-          <Button onClick={() => setEditing('new')}>{t('addPerson')}</Button>
+          <Button variant="secondary" disabled={!query.data} onClick={() => setManagingTags(true)}>{t('managePersonTags')}</Button>
+          <Button disabled={!query.data} onClick={() => setEditing('new')}>{t('addPerson')}</Button>
         </div>
       </div>
 
-      {managingTags && <PersonTagManager onClose={() => setManagingTags(false)} />}
+      {managingTags && <PersonTagManager tags={tags} onChange={query.refetch} onClose={() => setManagingTags(false)} />}
 
       {editing && (
         <Dialog
@@ -353,12 +323,21 @@ export function PersonsTab() {
         >
           <PersonForm
             initial={editing === 'new' ? undefined : editing}
+            keywords={keywords}
+            tags={tags}
             onSave={handleSave}
             onCancel={() => setEditing(null)}
           />
         </Dialog>
       )}
 
+      {query.isInitialLoading ? <ContentSkeleton rows={5} /> : query.error && !query.data ? (
+        <div role="alert" class={s.card}>
+          <p class={s.textDanger}>{String(query.error)}</p>
+          <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button>
+        </div>
+      ) : <div aria-busy={query.isRefetching}>
+      {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
       <ResponsiveDataView
         sorting={{
           key: sortBy, direction: sortDirection,
@@ -387,7 +366,7 @@ export function PersonsTab() {
               </div>
               <div class={s.tagList}>
                 {(person.tagIds ?? []).map(tagId => {
-                  const tag = personTagMapSignal.value.get(tagId);
+                  const tag = tagMap.get(tagId);
                   return tag ? <span key={tag.id} class={s.badge} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span> : null;
                 })}
               </div>
@@ -395,7 +374,7 @@ export function PersonsTab() {
             <td class={s.td}>
               <div class={s.tagList}>
                 {person.keywordIds.map((kid) => {
-                  const kw = keywordMapSignal.value.get(kid);
+                  const kw = keywordMap.get(kid);
                   return (
                     <span key={kid} class={s.badge}>
                       {kw ? displayName(kw) : fallbackEntityId(kid)}
@@ -416,7 +395,7 @@ export function PersonsTab() {
               <div>
                 <div class={dataStyles.mobileTitle}>{displayName(person)}</div>
                 <div class={s.tagList}>{(person.tagIds ?? []).map(tagId => {
-                  const tag = personTagMapSignal.value.get(tagId);
+                  const tag = tagMap.get(tagId);
                   return tag ? <span key={tag.id} class={s.badge} style={{ borderColor: tag.color, color: tag.color }}>{tag.name}</span> : null;
                 })}</div>
                 {person.disabled && (
@@ -431,7 +410,7 @@ export function PersonsTab() {
                 <div class={s.tagList}>
                   {person.keywordIds.length > 0
                     ? person.keywordIds.map((kid) => {
-                      const kw = keywordMapSignal.value.get(kid);
+                      const kw = keywordMap.get(kid);
                       return (
                         <span key={kid} class={s.badge}>
                           {kw ? displayName(kw) : fallbackEntityId(kid)}
@@ -461,13 +440,14 @@ export function PersonsTab() {
       <Pagination
         page={page}
         pageSize={pageSize}
-        totalItems={totalItems}
+        totalItems={query.data?.total ?? 0}
         onPageChange={setPage}
         onPageSizeChange={(nextPageSize) => {
           setPageSize(nextPageSize);
           setPage(1);
         }}
       />
+      </div>}
     </>
   );
 }

@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import type { EmailTask } from '@labby/core';
 
-import { Button, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles, toast } from '@/components/ui';
-import { loadAllConfigs, loadAllEmailTasks, useDatabase } from '@/db';
+import { Button, ContentSkeleton, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles, toast } from '@/components/ui';
+import { readAllPaginated, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
 import { setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
-import { configsSignal, emailTasksSignal } from '@/store';
+import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
 
 const DAY_OPTIONS = [
@@ -43,13 +43,16 @@ export function EmailTasksListPage() {
   const { t } = i18n;
   const db = useDatabase();
   const capability = getEmailTaskCapability();
-  const tasks = emailTasksSignal.value;
   const [sort, setSort] = useState<{key:string;direction:'asc'|'desc'}>({key:'modifiedAt',direction:'desc'});
-  const configs = configsSignal.value;
-
-  useEffect(() => {
-    void Promise.all([loadAllConfigs(db), loadAllEmailTasks(db)]);
+  const query = useAsyncResource(async () => {
+    const [tasks, configs] = await Promise.all([
+      readAllPaginated(db.emailTasks),
+      readAllPaginated(db.configs),
+    ]);
+    return { tasks, configs };
   }, [db]);
+  const tasks = query.data?.tasks ?? [];
+  const configs = query.data?.configs ?? [];
 
   function findConfigLabel(configId: string): string {
     const config = configs.find((item) => item.id === configId);
@@ -62,7 +65,7 @@ export function EmailTasksListPage() {
       disabled: !task.disabled,
       modifiedAt: Date.now(),
     });
-    await loadAllEmailTasks(db);
+    await query.refetch();
   }
 
   async function toggleSkipNext(task: EmailTask): Promise<void> {
@@ -70,7 +73,7 @@ export function EmailTasksListPage() {
     const nextSkip = !(task.skipNextRun ?? false);
     try {
       await setEmailTaskSkipNext(task.id, nextSkip);
-      await loadAllEmailTasks(db);
+      await query.refetch();
       toast.success(nextSkip ? t('emailTaskSkipNextEnabled') : t('emailTaskSkipNextDisabled'));
     } catch (err) {
       toast.error(`${t('emailTaskSkipNextFailed')}: ${String(err)}`);
@@ -92,7 +95,13 @@ export function EmailTasksListPage() {
         </Button>
       </div>
 
-      <div class={s.card}>
+      {query.isInitialLoading ? <ContentSkeleton rows={5} /> : query.error && !query.data ? (
+        <div role="alert" class={s.card}>
+          <p class={s.textDanger}>{String(query.error)}</p>
+          <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button>
+        </div>
+      ) : <div class={s.card} aria-busy={query.isRefetching}>
+        {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
         <strong>{t('emailTaskList')}</strong>
         <div class={s.mt8}>
           <ResponsiveDataView
@@ -166,7 +175,7 @@ export function EmailTasksListPage() {
             )}
           />
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 
-import { Button } from '@/components/ui';
+import { Button, ContentSkeleton } from '@/components/ui';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { isServerDeployment } from '@/lib/runtime';
 import { fetchSystemCapabilities } from '@/api-server/backup';
+import { useAsyncResource } from '@/lib/use-async-resource';
 
 import { PersonsTab } from './PersonsTab';
 import { ConstraintsTab } from './ConstraintsTab';
@@ -13,18 +14,15 @@ import { UsersTab } from './UsersTab';
 export function PersonsPage() {
   const { t } = i18n;
   const [activeTab, setActiveTab] = useState<'persons' | 'constraints' | 'users'>('persons');
-  const [canManageUsers, setCanManageUsers] = useState(false);
-
-  useEffect(() => {
-    if (!isServerDeployment) return;
-    fetchSystemCapabilities().then((caps) => {
-      setCanManageUsers(caps.permissions.canManageUsers);
-    }).catch(() => {
-      setCanManageUsers(false);
-    });
-  }, []);
-
+  const capabilities = useAsyncResource(() => isServerDeployment ? fetchSystemCapabilities() : Promise.resolve(null));
+  const canManageUsers = capabilities.data?.permissions.canManageUsers ?? false;
   const showUsersTab = isServerDeployment && canManageUsers;
+
+  if (isServerDeployment && capabilities.isInitialLoading) return <ContentSkeleton rows={5} />;
+  if (isServerDeployment && capabilities.error && !capabilities.data) return <div role="alert" class={s.card}>
+    <p class={s.textDanger}>{String(capabilities.error)}</p>
+    <Button variant="secondary" onClick={() => void capabilities.refetch()}>{t('retry')}</Button>
+  </div>;
 
   return (
     <div>

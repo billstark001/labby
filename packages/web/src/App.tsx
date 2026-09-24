@@ -2,13 +2,14 @@
 import { useEffect, useState } from 'preact/hooks';
 import { effect, useComputed } from '@preact/signals';
 import { Calendar, Info, LogOut, Mail, Menu, Moon, Settings, Sun, Tags, Users, X } from 'lucide-preact';
-import { themeSignal } from './store/index';
+import { resetDataSignals, themeSignal } from './store/index';
 import { AUTH_INVALIDATE_EVENT, isAuthenticated, logout } from './lib/auth';
 import { i18n } from './i18n';
 import type { UIStrings } from './i18n';
 import * as s from './styles/components.css';
 import { navigate, useRoute, useSyncRoute, type AppRoute } from './lib/router';
 import { renderRoute } from './route';
+import { resetGraphStreamState } from './lib/graph-sync';
 import { ConfirmDialogComponent } from './components/ui/Dialog';
 import { Toaster } from './components/ui/Toast';
 import { isServerDeployment } from './lib/runtime';
@@ -47,7 +48,11 @@ export function App() {
 
   useEffect(() => {
     if (!isServerDeployment) return;
-    const onInvalidate = () => navigate('/login');
+    const onInvalidate = () => {
+      resetDataSignals();
+      resetGraphStreamState();
+      navigate('/login');
+    };
     window.addEventListener(AUTH_INVALIDATE_EVENT, onInvalidate);
     return () => window.removeEventListener(AUTH_INVALIDATE_EVENT, onInvalidate);
   }, []);

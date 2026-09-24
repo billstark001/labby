@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'preact/hooks';
-import { useSignal } from '@preact/signals';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { batch, useSignal } from '@preact/signals';
 import { Pencil, Redo2, Undo2 } from 'lucide-preact';
 import {
   personsSignal,
@@ -17,12 +17,7 @@ import {
 } from '@/store/index';
 import { displayName } from '@/i18n';
 import {
-  loadAllPersons,
-  loadAllPersonTags,
-  loadAllKeywords,
-  loadAllSimilarities,
-  loadAllConfigs,
-  loadAllEmailTasks,
+  readAllPaginated,
   readScheduleForeignKeys,
   useDatabase,
 } from '@/db/index';
@@ -36,7 +31,7 @@ import type {
   SchedulePlan,
 } from '@labby/core';
 import * as s from '@/styles/components.css';
-import { Button } from '@/components/ui/index';
+import { Button, ContentSkeleton } from '@/components/ui/index';
 import {
   copyScheduleTable,
   copyScheduleHtml,
@@ -101,6 +96,8 @@ export function SchedulePage() {
   const [showConfigForm, setShowConfigForm] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ScheduleConfig | null>(null);
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
+  const selectedConfigIdRef = useRef(selectedConfigId);
+  selectedConfigIdRef.current = selectedConfigId;
   const [changeDate, setChangeDate] = useState('');
   const [incrementalMode, setIncrementalMode] = useState<IncrementalSolveMode>('full');
   const [showUnavailForm, setShowUnavailForm] = useState(false);
@@ -116,6 +113,16 @@ export function SchedulePage() {
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
   const [highlightPersonId, setHighlightPersonId] = useState('');
   const [highlightTagId, setHighlightTagId] = useState('');
+  const [baseStatus, setBaseStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  const [baseError, setBaseError] = useState<unknown>();
+  const [baseRevision, setBaseRevision] = useState(0);
+  const [scopedState, setScopedState] = useState<{
+    key: string;
+    status: 'idle' | 'pending' | 'success' | 'error';
+    error?: unknown;
+  }>({ key: '', status: 'idle' });
+  const scopedStatus = scopedState.key === selectedConfigId ? scopedState.status : 'idle';
+  const [scopeRevision, setScopeRevision] = useState(0);
 
   // Transient clipboard-feedback flags are component-local; signals avoid
   // a full re-render and have no child consumers, so useState is not needed.
@@ -147,23 +154,37 @@ export function SchedulePage() {
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      await Promise.all([
-        loadAllPersons(db),
-        loadAllPersonTags(db),
-        loadAllKeywords(db),
-        loadAllSimilarities(db),
-        loadAllConfigs(db),
-        loadAllEmailTasks(db),
+      setBaseStatus('pending');
+      setBaseError(undefined);
+      const [loadedPersons, loadedTags, loadedKeywords, loadedVectors, loadedConfigs] = await Promise.all([
+        readAllPaginated(db.persons),
+        readAllPaginated(db.personTags),
+        readAllPaginated(db.keywords),
+        readAllPaginated(db.keywordVectors),
+        readAllPaginated(db.configs),
       ]);
       if (cancelled) return;
+      batch(() => {
+        personsSignal.value = loadedPersons;
+        personTagsSignal.value = loadedTags;
+        keywordsSignal.value = loadedKeywords;
+        keywordVectorsSignal.value = loadedVectors;
+        configsSignal.value = loadedConfigs;
+      });
       const remembered = localStorage.getItem(LAST_SELECTED_CONFIG_STORAGE_KEY) ?? '';
-      if (remembered && configsSignal.value.some(item => item.id === remembered)) {
+      if (remembered && loadedConfigs.some(item => item.id === remembered)) {
         setSelectedConfigId(remembered);
       }
+      setBaseStatus('success');
     };
-    void run().catch(error => toast.error(String(error)));
+    void run().catch(error => {
+      if (!cancelled) {
+        setBaseError(error);
+        setBaseStatus('error');
+      }
+    });
     return () => { cancelled = true; };
-  }, [db]);
+  }, [db, baseRevision]);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,24 +192,33 @@ export function SchedulePage() {
       constraintsSignal.value = [];
       schedulesSignal.value = [];
       unavailabilitiesSignal.value = [];
+      setScopedState({ key: '', status: 'success' });
       return;
     }
+    setScopedState({ key: selectedConfigId, status: 'pending' });
     void (async () => {
       const foreignKeys = await readScheduleForeignKeys(db, [selectedConfigId]);
-      if (cancelled) return;
-      constraintsSignal.value = foreignKeys.constraints;
-      schedulesSignal.value = foreignKeys.schedules;
-      unavailabilitiesSignal.value = foreignKeys.unavailabilities;
-    })().catch(error => { if (!cancelled) toast.error(String(error)); });
+      if (cancelled || selectedConfigIdRef.current !== selectedConfigId) return;
+      const latest = foreignKeys.schedules.reduce<SchedulePlan | null>(
+        (acc, item) => !acc || item.createdAt > acc.createdAt ? item : acc, null,
+      );
+      batch(() => {
+        constraintsSignal.value = foreignKeys.constraints;
+        schedulesSignal.value = foreignKeys.schedules;
+        unavailabilitiesSignal.value = foreignKeys.unavailabilities;
+        currentScheduleSignal.value = latest;
+      });
+      setScopedState({ key: selectedConfigId, status: 'success' });
+    })().catch(error => { if (!cancelled) setScopedState({ key: selectedConfigId, status: 'error', error }); });
     return () => { cancelled = true; };
-  }, [db, selectedConfigId]);
+  }, [db, selectedConfigId, scopeRevision]);
 
   useEffect(() => {
-    if (selectedConfigId && !configs.some(item => item.id === selectedConfigId)) {
+    if (baseStatus === 'success' && selectedConfigId && !configs.some(item => item.id === selectedConfigId)) {
       setSelectedConfigId('');
       localStorage.removeItem(LAST_SELECTED_CONFIG_STORAGE_KEY);
     }
-  }, [configs, selectedConfigId]);
+  }, [baseStatus, configs, selectedConfigId]);
 
   useEffect(() => {
     if (!selectedConfigId) {
@@ -333,8 +363,7 @@ export function SchedulePage() {
         notes: `${draftSchedule.notes ?? current?.notes ?? ''}\n[batch-edit] committed=${new Date(createdAt).toISOString()}`.trim(),
       };
       await db.schedules.put(updated);
-      await refreshScheduleScopedData(updated.configId);
-      currentScheduleSignal.value = updated;
+      if (await refreshScheduleScopedData(updated.configId)) currentScheduleSignal.value = updated;
       setDraftSchedule(null);
       setManualEditMode(false);
       setUndoStack([]);
@@ -372,14 +401,15 @@ export function SchedulePage() {
     if (local) openMetricsDialog(title, local.metrics, local.explanations);
   }
 
-  async function refreshScheduleScopedData(configId: string) {
+  async function refreshScheduleScopedData(configId: string): Promise<boolean> {
     const foreignKeys = await readScheduleForeignKeys(db, [configId]);
-    personsSignal.value = foreignKeys.persons;
-    keywordsSignal.value = foreignKeys.keywords;
-    keywordVectorsSignal.value = foreignKeys.keywordVectors;
-    constraintsSignal.value = foreignKeys.constraints;
-    schedulesSignal.value = foreignKeys.schedules;
-    unavailabilitiesSignal.value = foreignKeys.unavailabilities;
+    if (selectedConfigIdRef.current !== configId) return false;
+    batch(() => {
+      constraintsSignal.value = foreignKeys.constraints;
+      schedulesSignal.value = foreignKeys.schedules;
+      unavailabilitiesSignal.value = foreignKeys.unavailabilities;
+    });
+    return true;
   }
 
   async function handleSolveResult(result: unknown) {
@@ -393,8 +423,9 @@ export function SchedulePage() {
       ),
     };
     await db.schedules.put({ ...planWithMeta, modifiedAt: Date.now() });
-    await refreshScheduleScopedData(planWithMeta.configId);
-    currentScheduleSignal.value = { ...planWithMeta, modifiedAt: Date.now() };
+    if (await refreshScheduleScopedData(planWithMeta.configId)) {
+      currentScheduleSignal.value = { ...planWithMeta, modifiedAt: Date.now() };
+    }
     if (normalized.metrics && normalized.explanations) {
       openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
     } else {
@@ -429,7 +460,7 @@ export function SchedulePage() {
 
   async function handleSaveConfig(c: ScheduleConfig) {
     await db.configs.put({ ...c, modifiedAt: Date.now() });
-    await loadAllConfigs(db);
+    configsSignal.value = await readAllPaginated(db.configs);
     setShowConfigForm(false);
     setEditingConfig(null);
     if (!selectedConfigId) setSelectedConfigId(c.id);
@@ -521,7 +552,7 @@ export function SchedulePage() {
   async function handleDeleteHistory(plan: SchedulePlan) {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       await db.schedules.delete(plan.id);
-      await refreshScheduleScopedData(plan.configId);
+      if (!await refreshScheduleScopedData(plan.configId)) return;
       const next = schedulesSignal.value;
       if (currentScheduleSignal.value?.id === plan.id) {
         currentScheduleSignal.value = next.length > 0 ? next.reduce((a, b) => (a.createdAt > b.createdAt ? a : b)) : null;
@@ -534,7 +565,7 @@ export function SchedulePage() {
     const ids = [...selectedHistoryIds];
     confirmDialog(t('confirmDelete'), t('deleteSelectedHistories', String(ids.length)), async () => {
       await Promise.all(ids.map(id => db.schedules.delete(id)));
-      await refreshScheduleScopedData(selectedConfigId);
+      if (!await refreshScheduleScopedData(selectedConfigId)) return;
       const nextCurrent = currentScheduleSignal.value;
       if (nextCurrent && !schedulesSignal.value.some(item => item.id === nextCurrent.id)) {
         currentScheduleSignal.value = schedulesSignal.value
@@ -556,8 +587,9 @@ export function SchedulePage() {
   async function handleSaveHistoryNotes(plan: SchedulePlan, notes: string) {
     const updated = { ...plan, notes, modifiedAt: Date.now() };
     await db.schedules.put(updated);
-    await refreshScheduleScopedData(plan.configId);
-    if (currentScheduleSignal.value?.id === plan.id) currentScheduleSignal.value = updated;
+    if (await refreshScheduleScopedData(plan.configId) && currentScheduleSignal.value?.id === plan.id) {
+      currentScheduleSignal.value = updated;
+    }
   }
 
   async function handleDuplicateHistory(plan: SchedulePlan) {
@@ -570,8 +602,7 @@ export function SchedulePage() {
     };
 
     await db.schedules.put(duplicate);
-    await refreshScheduleScopedData(duplicate.configId);
-    currentScheduleSignal.value = duplicate;
+    if (await refreshScheduleScopedData(duplicate.configId)) currentScheduleSignal.value = duplicate;
   }
 
   function handleMoveQuestioner(sourcePresentationId: string, slotId: string, targetPresentationId: string, targetIndex: number): void {
@@ -682,6 +713,18 @@ export function SchedulePage() {
 
   // #region Render
 
+  if (baseStatus === 'idle' || baseStatus === 'pending') return <ContentSkeleton rows={8} />;
+  if (baseStatus === 'error') return <div role="alert" class={s.card}>
+    <p class={s.textDanger}>{String(baseError)}</p>
+    <Button variant="secondary" onClick={() => setBaseRevision(value => value + 1)}>{t('retry')}</Button>
+  </div>;
+  if (selectedConfigId && scopedStatus !== 'success') {
+    return scopedStatus === 'error' ? <div role="alert" class={s.card}>
+      <p class={s.textDanger}>{String(scopedState.error)}</p>
+      <Button variant="secondary" onClick={() => setScopeRevision(value => value + 1)}>{t('retry')}</Button>
+    </div> : <ContentSkeleton rows={8} />;
+  }
+
   return (
     <div>
       <div class={s.toolbar}>
@@ -728,7 +771,7 @@ export function SchedulePage() {
         onDeleteConfig={config => {
           confirmDialog(t('confirmDelete'), t('deleteConfigWarning'), async () => {
             await db.configs.delete(config.id);
-            await loadAllConfigs(db);
+            configsSignal.value = await readAllPaginated(db.configs);
             setSelectedConfigId('');
           });
         }}

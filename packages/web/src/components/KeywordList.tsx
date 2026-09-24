@@ -1,13 +1,14 @@
-import { toast } from './ui/Toast';
 import { syncGraph } from '@/lib/graph-sync';
 /** Keyword management panel. */
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { KeywordForm } from './KeywordForm';
 import { displayName } from '@/i18n';
 import { buildKeywordReferenceCount, listKeywordsPage, readKeywordForeignKeys, useDatabase } from '../db/index';
+import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '../styles/components.css';
 import {
   Button,
+  ContentSkeleton,
   Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
@@ -20,63 +21,25 @@ import { i18n } from '@/i18n';
 export function KeywordList() {
   const db = useDatabase();
   const { t } = i18n;
-  const [pagedKeywords, setPagedKeywords] = useState<Keyword[]>([]);
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
-  const request = useRef(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
   const [sortDirection, setSortDirection] = useState<ListSortDirection>('desc');
-  const [totalItems, setTotalItems] = useState(0);
-  const [keywordReferenceCount, setKeywordReferenceCount] = useState<Map<string, number>>(new Map());
-
-
-  async function refreshForeignKeyContext(keywordIds: string[], ticket: number) {
-    if (keywordIds.length === 0) {
-      setKeywordReferenceCount(new Map());
-      return;
-    }
-    const bundle = await readKeywordForeignKeys(db, keywordIds);
-    if (ticket !== request.current) return;
-    setKeywordReferenceCount(buildKeywordReferenceCount(bundle));
-  }
-
-  async function refreshKeywordsPage(
-    targetPage = page,
-    targetPageSize = pageSize,
-    targetSortBy = sortBy,
-    targetSortDirection = sortDirection,
-  ) {
-    const ticket = ++request.current;
-    const safePage = Math.max(1, targetPage);
-    const offset = (safePage - 1) * targetPageSize;
+  const query = useAsyncResource(async () => {
     const result = await listKeywordsPage(db, {
-      offset,
-      limit: targetPageSize,
-      sortBy: targetSortBy,
-      sortDirection: targetSortDirection,
+      offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection,
     });
-    if (ticket !== request.current) return;
-    setPagedKeywords(result.items);
-    await refreshForeignKeyContext(result.items.map((item) => item.id), ticket);
-    if (ticket !== request.current) return;
-    setTotalItems(result.total);
-
-    const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
-    if (safePage > totalPages) {
-      await refreshKeywordsPage(totalPages, targetPageSize);
-      return;
-    }
-    if (page !== safePage) {
-      setPage(safePage);
-    }
-  }
-
-
-  useEffect(() => {
-    void refreshKeywordsPage(page, pageSize).catch(error => toast.error(String(error)));
-    return () => { request.current++; };
+    const bundle = await readKeywordForeignKeys(db, result.items.map(item => item.id));
+    return { ...result, references: buildKeywordReferenceCount(bundle) };
   }, [db, page, pageSize, sortBy, sortDirection]);
+  const pagedKeywords = query.data?.items ?? [];
+  const keywordReferenceCount = query.data?.references ?? new Map<string, number>();
+  useEffect(() => {
+    if (query.status !== 'success' || !query.data) return;
+    const lastPage = Math.max(1, Math.ceil(query.data.total / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [query.status, query.data, page, pageSize]);
 
   /** Check if a keyword is referenced by any person */
   function isKeywordReferenced(id: string): boolean {
@@ -85,14 +48,14 @@ export function KeywordList() {
 
   async function handleSave(k: Keyword) {
     await db.keywords.put(k);
-    await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
+    await Promise.all([query.refetch(), syncGraph(db)]);
     setEditing(null);
   }
 
   async function handleDisableToggle(k: Keyword) {
     const updated: Keyword = { ...k, disabled: !k.disabled, modifiedAt: Date.now() };
     await db.keywords.put(updated);
-    await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
+    await Promise.all([query.refetch(), syncGraph(db)]);
   }
 
   async function handleDelete(k: Keyword) {
@@ -102,7 +65,7 @@ export function KeywordList() {
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
       await db.keywords.delete(k.id);
-      await Promise.all([refreshKeywordsPage(), syncGraph(db)]);
+      await Promise.all([query.refetch(), syncGraph(db)]);
     });
   }
 
@@ -110,7 +73,7 @@ export function KeywordList() {
     <div>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('navKeywords')}</h2>
-        <Button onClick={() => setEditing('new')}>{t('addKeyword')}</Button>
+        <Button disabled={!query.data} onClick={() => setEditing('new')}>{t('addKeyword')}</Button>
       </div>
 
       {editing && (
@@ -128,6 +91,13 @@ export function KeywordList() {
         </Dialog>
       )}
 
+      {query.isInitialLoading ? <ContentSkeleton rows={5} /> : query.error && !query.data ? (
+        <div role="alert" class={s.card}>
+          <p class={s.textDanger}>{String(query.error)}</p>
+          <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button>
+        </div>
+      ) : <div aria-busy={query.isRefetching}>
+      {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
       <ResponsiveDataView
         sorting={{
           key: sortBy, direction: sortDirection,
@@ -198,13 +168,14 @@ export function KeywordList() {
       <Pagination
         page={page}
         pageSize={pageSize}
-        totalItems={totalItems}
+        totalItems={query.data?.total ?? 0}
         onPageChange={setPage}
         onPageSizeChange={nextPageSize => {
           setPageSize(nextPageSize);
           setPage(1);
         }}
       />
+      </div>}
     </div>
   );
 }

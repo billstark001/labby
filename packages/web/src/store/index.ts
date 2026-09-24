@@ -1,6 +1,6 @@
-import { signal, computed } from '@preact/signals';
+import { batch, signal, computed } from '@preact/signals';
 import { keywordVectorsToSimilarityLookup } from '@labby/core';
-import type { Person, PersonTag, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, EmailTask, GraphSnapshotEdge } from '@labby/core';
+import type { Person, PersonTag, Keyword, SchedulePlan, ScheduleConfig, ScheduleConstraint, KeywordVector, PersonUnavailability, GraphSnapshotEdge } from '@labby/core';
 
 function readPersistedTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -26,10 +26,25 @@ export const graphEdgesSignal = signal<GraphSnapshotEdge[]>([]);
 export const configsSignal = signal<ScheduleConfig[]>([]);
 export const constraintsSignal = signal<ScheduleConstraint[]>([]);
 export const schedulesSignal = signal<SchedulePlan[]>([]);
-export const emailTasksSignal = signal<EmailTask[]>([]);
 export const currentScheduleSignal = signal<SchedulePlan | null>(null);
 export const isComputingSignal = signal(false);
 export const unavailabilitiesSignal = signal<PersonUnavailability[]>([]);
+
+/** Clear data owned by the previous authenticated session. */
+export function resetDataSignals(): void {
+  batch(() => {
+    personsSignal.value = [];
+    personTagsSignal.value = [];
+    keywordsSignal.value = [];
+    keywordVectorsSignal.value = [];
+    graphEdgesSignal.value = [];
+    configsSignal.value = [];
+    constraintsSignal.value = [];
+    schedulesSignal.value = [];
+    currentScheduleSignal.value = null;
+    unavailabilitiesSignal.value = [];
+  });
+}
 
 /** Currently active nav section. */
 export type NavSection = 'persons' | 'keywords' | 'schedule' | 'graph' | 'settings';

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { ScheduleConstraint } from '@labby/core';
+import type { Person, ScheduleConfig, ScheduleConstraint } from '@labby/core';
 
-import { configsSignal, constraintsSignal, personsSignal } from '@/store';
 import { displayName, i18n } from '@/i18n';
-import { listConstraintsPage, loadAllConfigs, loadAllConstraints, loadAllPersons, useDatabase } from '@/db';
+import { listConstraintsPage, readAllPaginated, useDatabase } from '@/db';
+import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import {
   Button,
+  ContentSkeleton,
   Pagination,
   ResponsiveDataField,
   ResponsiveDataView,
@@ -21,6 +22,8 @@ type ConstraintType = 'no-overlap' | 'affinity-boost' | 'frequency-multiplier';
 
 interface ConstraintFormProps {
   initial?: ScheduleConstraint;
+  persons: Person[];
+  configs: ScheduleConfig[];
   onSave: (constraint: ScheduleConstraint) => void;
   onCancel: () => void;
 }
@@ -31,10 +34,8 @@ function constraintTypeLabel(type: ConstraintType, t: (key: string) => string): 
   return t('constraintTypeFrequencyMultiplier');
 }
 
-function ConstraintForm({ initial, onSave, onCancel }: ConstraintFormProps) {
+function ConstraintForm({ initial, persons, configs, onSave, onCancel }: ConstraintFormProps) {
   const { t } = i18n;
-  const persons = personsSignal.value;
-  const configs = configsSignal.value;
 
   const [configId, setConfigId] = useState(initial?.configId ?? '');
   const [constraintType, setConstraintType] = useState<ConstraintType>(initial?.type ?? 'no-overlap');
@@ -188,39 +189,25 @@ function ConstraintForm({ initial, onSave, onCancel }: ConstraintFormProps) {
 export function ConstraintsTab() {
   const db = useDatabase();
   const { t } = i18n;
-  const constraints = constraintsSignal.value;
-  const configs = configsSignal.value;
-  const persons = personsSignal.value;
-
   const [editing, setEditing] = useState<ScheduleConstraint | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [totalItems, setTotalItems] = useState(0);
-
-  async function refreshConstraintsPage(targetPage = page, targetPageSize = pageSize) {
-    const safePage = Math.max(1, targetPage);
-    const offset = (safePage - 1) * targetPageSize;
-    const result = await listConstraintsPage(db, offset, targetPageSize);
-    constraintsSignal.value = result.items;
-    setTotalItems(result.total);
-
-    const totalPages = Math.max(1, Math.ceil(result.total / targetPageSize));
-    if (safePage > totalPages) {
-      await refreshConstraintsPage(totalPages, targetPageSize);
-      return;
-    }
-    if (page !== safePage) {
-      setPage(safePage);
-    }
-  }
-
-  useEffect(() => {
-    void Promise.all([loadAllPersons(db), loadAllConfigs(db)]);
-  }, [db]);
-
-  useEffect(() => {
-    void refreshConstraintsPage(page, pageSize);
+  const query = useAsyncResource(async () => {
+    const [result, persons, configs] = await Promise.all([
+      listConstraintsPage(db, (page - 1) * pageSize, pageSize),
+      readAllPaginated(db.persons),
+      readAllPaginated(db.configs),
+    ]);
+    return { ...result, persons, configs };
   }, [db, page, pageSize]);
+  const constraints = query.data?.items ?? [];
+  const persons = query.data?.persons ?? [];
+  const configs = query.data?.configs ?? [];
+  useEffect(() => {
+    if (query.status !== 'success' || !query.data) return;
+    const lastPage = Math.max(1, Math.ceil(query.data.total / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [query.status, query.data, page, pageSize]);
 
   function findConfigLabel(configId?: string): string {
     if (!configId) return t('constraintAllConfigs');
@@ -253,16 +240,14 @@ export function ConstraintsTab() {
 
   async function handleSaveConstraint(next: ScheduleConstraint): Promise<void> {
     await db.constraints.put({ ...next, modifiedAt: Date.now() });
-    await loadAllConstraints(db);
-    await refreshConstraintsPage();
+    await query.refetch();
     setEditing(null);
   }
 
   async function handleDeleteConstraint(constraint: ScheduleConstraint): Promise<void> {
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       await db.constraints.delete(constraint.id);
-      await loadAllConstraints(db);
-      await refreshConstraintsPage();
+      await query.refetch();
     });
   }
 
@@ -270,7 +255,7 @@ export function ConstraintsTab() {
     <>
       <div class={s.toolbar}>
         <h2 class={s.sectionTitle}>{t('constraintsTab')}</h2>
-        <Button onClick={() => setEditing('new')}>{t('addConstraint')}</Button>
+        <Button disabled={!query.data} onClick={() => setEditing('new')}>{t('addConstraint')}</Button>
       </div>
 
       {editing && (
@@ -282,12 +267,21 @@ export function ConstraintsTab() {
         >
           <ConstraintForm
             initial={editing === 'new' ? undefined : editing}
+            persons={persons}
+            configs={configs}
             onSave={handleSaveConstraint}
             onCancel={() => setEditing(null)}
           />
         </Dialog>
       )}
 
+      {query.isInitialLoading ? <ContentSkeleton rows={5} /> : query.error && !query.data ? (
+        <div role="alert" class={s.card}>
+          <p class={s.textDanger}>{String(query.error)}</p>
+          <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button>
+        </div>
+      ) : <div aria-busy={query.isRefetching}>
+      {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
       <ResponsiveDataView
         items={constraints}
         columns={[
@@ -336,13 +330,14 @@ export function ConstraintsTab() {
       <Pagination
         page={page}
         pageSize={pageSize}
-        totalItems={totalItems}
+        totalItems={query.data?.total ?? 0}
         onPageChange={setPage}
         onPageSizeChange={(nextPageSize) => {
           setPageSize(nextPageSize);
           setPage(1);
         }}
       />
+      </div>}
     </>
   );
 }

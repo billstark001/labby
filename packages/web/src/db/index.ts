@@ -10,12 +10,12 @@ import {
   DatabaseDump,
   LabbyDB,
 } from '@labby/core';
-import { signal } from '@preact/signals';
+import { batch, signal } from '@preact/signals';
 
 import { createPGliteDB } from './pglite';
 import { createApiDB } from './api';
 import { createDummyDB } from './dummy';
-import { personsSignal, personTagsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, constraintsSignal, schedulesSignal, unavailabilitiesSignal, emailTasksSignal } from '@/store';
+import { personsSignal, personTagsSignal, keywordsSignal, keywordVectorsSignal, configsSignal, constraintsSignal, schedulesSignal, unavailabilitiesSignal } from '@/store';
 import { databaseMode } from '@/lib/runtime';
 
 const DB_CONFIG = databaseMode;
@@ -26,7 +26,7 @@ const db = signal<LabbyDB | null>(null);
 let restorePGlite: ((dump: DatabaseDump) => Promise<void>) | null = null;
 const DEFAULT_PAGE_SIZE = 50;
 
-async function listAllPaginated<T>(
+export async function readAllPaginated<T>(
   store: { list: (query: { offset: number; limit: number }) => Promise<{ items: T[]; total: number }> },
   pageSize = DEFAULT_PAGE_SIZE,
 ): Promise<T[]> {
@@ -40,15 +40,6 @@ async function listAllPaginated<T>(
     offset += page.items.length;
   }
   return all;
-}
-
-async function setSignalFromFirstPage<T>(
-  store: { list: (query: { offset: number; limit: number }) => Promise<{ items: T[] }> },
-  setter: (items: T[]) => void,
-  pageSize = DEFAULT_PAGE_SIZE,
-) {
-  const page = await store.list({ offset: 0, limit: pageSize });
-  setter(page.items ?? []);
 }
 
 export async function initDB() {
@@ -83,15 +74,15 @@ export async function dumpDatabase(): Promise<DatabaseDump> {
   const dbInstance = db.value;
   if (!dbInstance) throw new Error('Database is not initialized');
   const [persons, personTags, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks, systemSettings, rankingHistory] = await Promise.all([
-    listAllPaginated(dbInstance.persons),
-    listAllPaginated(dbInstance.personTags),
-    listAllPaginated(dbInstance.keywords),
-    listAllPaginated(dbInstance.keywordVectors),
-    listAllPaginated(dbInstance.configs),
-    listAllPaginated(dbInstance.constraints),
-    listAllPaginated(dbInstance.schedules),
-    listAllPaginated(dbInstance.unavailabilities),
-    listAllPaginated(dbInstance.emailTasks),
+    readAllPaginated(dbInstance.persons),
+    readAllPaginated(dbInstance.personTags),
+    readAllPaginated(dbInstance.keywords),
+    readAllPaginated(dbInstance.keywordVectors),
+    readAllPaginated(dbInstance.configs),
+    readAllPaginated(dbInstance.constraints),
+    readAllPaginated(dbInstance.schedules),
+    readAllPaginated(dbInstance.unavailabilities),
+    readAllPaginated(dbInstance.emailTasks),
     dbInstance.systemSettings.get(),
     dbInstance.similarity.getHistory(),
   ]);
@@ -108,95 +99,27 @@ export async function restoreDatabase(dump: DatabaseDump): Promise<void> {
 }
 
 export async function loadDatabaseSignals(db: LabbyDB) {
-  const [persons, personTags, keywords, keywordVectors, configs, constraints, schedules, unavailabilities, emailTasks] = await Promise.all([
-    listAllPaginated(db.persons),
-    listAllPaginated(db.personTags),
-    listAllPaginated(db.keywords),
-    listAllPaginated(db.keywordVectors),
-    listAllPaginated(db.configs),
-    listAllPaginated(db.constraints),
-    listAllPaginated(db.schedules),
-    listAllPaginated(db.unavailabilities),
-    listAllPaginated(db.emailTasks),
+  const [persons, personTags, keywords, keywordVectors, configs, constraints, schedules, unavailabilities] = await Promise.all([
+    readAllPaginated(db.persons),
+    readAllPaginated(db.personTags),
+    readAllPaginated(db.keywords),
+    readAllPaginated(db.keywordVectors),
+    readAllPaginated(db.configs),
+    readAllPaginated(db.constraints),
+    readAllPaginated(db.schedules),
+    readAllPaginated(db.unavailabilities),
   ]);
 
-  personsSignal.value = persons ?? [];
-  personTagsSignal.value = personTags ?? [];
-  keywordsSignal.value = keywords ?? [];
-  keywordVectorsSignal.value = keywordVectors ?? [];
-  configsSignal.value = configs ?? [];
-  constraintsSignal.value = constraints ?? [];
-  schedulesSignal.value = schedules ?? [];
-  unavailabilitiesSignal.value = unavailabilities ?? [];
-  emailTasksSignal.value = emailTasks ?? [];
-}
-
-export async function loadPersonsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.persons, items => {
-    personsSignal.value = items;
-  }, pageSize);
-}
-
-export async function loadKeywordsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.keywords, items => {
-    keywordsSignal.value = items;
-  }, pageSize);
-}
-
-export async function loadSimilaritiesFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.keywordVectors, items => {
-    keywordVectorsSignal.value = items;
-  }, pageSize);
-}
-
-export async function loadConfigsFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.configs, items => {
-    configsSignal.value = items;
-  }, pageSize);
-}
-
-export async function loadSchedulesFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.schedules, items => {
-    schedulesSignal.value = items;
-  }, pageSize);
-}
-
-export async function loadUnavailabilitiesFirstPage(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  await setSignalFromFirstPage(db.unavailabilities, items => {
-    unavailabilitiesSignal.value = items;
-  }, pageSize);
-}
-
-export async function loadAllPersons(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  personsSignal.value = await listAllPaginated(db.persons, pageSize);
-}
-
-export async function loadAllPersonTags(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  personTagsSignal.value = await listAllPaginated(db.personTags, pageSize);
-}
-
-export async function loadAllKeywords(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  keywordsSignal.value = await listAllPaginated(db.keywords, pageSize);
-}
-
-export async function loadAllSimilarities(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  keywordVectorsSignal.value = await listAllPaginated(db.keywordVectors, pageSize);
-}
-
-export async function loadAllConfigs(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  configsSignal.value = await listAllPaginated(db.configs, pageSize);
-}
-
-export async function loadAllConstraints(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  constraintsSignal.value = await listAllPaginated(db.constraints, pageSize);
-}
-
-export async function loadAllSchedules(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  schedulesSignal.value = await listAllPaginated(db.schedules, pageSize);
-}
-
-export async function loadAllUnavailabilities(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  unavailabilitiesSignal.value = await listAllPaginated(db.unavailabilities, pageSize);
+  batch(() => {
+    personsSignal.value = persons;
+    personTagsSignal.value = personTags;
+    keywordsSignal.value = keywords;
+    keywordVectorsSignal.value = keywordVectors;
+    configsSignal.value = configs;
+    constraintsSignal.value = constraints;
+    schedulesSignal.value = schedules;
+    unavailabilitiesSignal.value = unavailabilities;
+  });
 }
 
 export async function listPersonsPage(db: LabbyDB, query: ListQuery) {
@@ -225,10 +148,6 @@ export async function listSchedulesPage(db: LabbyDB, offset: number, limit: numb
 
 export async function listUnavailabilitiesPage(db: LabbyDB, offset: number, limit: number) {
   return db.unavailabilities.list({ offset, limit });
-}
-
-export async function loadAllEmailTasks(db: LabbyDB, pageSize = DEFAULT_PAGE_SIZE) {
-  emailTasksSignal.value = await listAllPaginated(db.emailTasks, pageSize);
 }
 
 export async function listEmailTasksPage(db: LabbyDB, offset: number, limit: number) {

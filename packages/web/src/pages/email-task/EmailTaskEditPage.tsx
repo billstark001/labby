@@ -15,21 +15,24 @@ import {
   renderTemplate,
   renderTemplateToHtml,
   type EmailTask,
+  type Person,
+  type ScheduleConfig,
+  type SchedulePlan,
   type ScheduleDateGranularity,
   type TemplateFormat,
 } from '@labby/core';
 
-import { Button, Dialog, toast } from '@/components/ui';
+import { Button, ContentSkeleton, Dialog, toast } from '@/components/ui';
 import { confirmDialog } from '@/components/ui/Dialog';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
-import { loadAllConfigs, loadAllEmailTasks, loadAllPersons, loadAllSchedules, useDatabase } from '@/db';
+import { readAllPaginated, useDatabase } from '@/db';
 import { i18n } from '@/i18n';
 import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
-import { configsSignal, emailTasksSignal, personsSignal, schedulesSignal } from '@/store';
+import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
 import { AttachmentSettingsDialog, type EmailAttachmentType } from './AttachmentSettingsDialog';
 
@@ -51,6 +54,7 @@ interface CodeMirrorEditorProps {
 function CodeMirrorEditor({ value, onChange }: CodeMirrorEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const externalUpdate = useRef(false);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -75,7 +79,7 @@ function CodeMirrorEditor({ value, onChange }: CodeMirrorEditorProps) {
             },
           }),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
+            if (update.docChanged && !externalUpdate.current) {
               onChange(update.state.doc.toString());
             }
           }),
@@ -94,9 +98,12 @@ function CodeMirrorEditor({ value, onChange }: CodeMirrorEditorProps) {
     if (!view) return;
     const currentDoc = view.state.doc.toString();
     if (currentDoc === value) return;
-    view.dispatch({
-      changes: { from: 0, to: currentDoc.length, insert: value },
-    });
+    externalUpdate.current = true;
+    try {
+      view.dispatch({ changes: { from: 0, to: currentDoc.length, insert: value } });
+    } finally {
+      externalUpdate.current = false;
+    }
   }, [value]);
 
   return <div ref={hostRef} />;
@@ -114,13 +121,46 @@ interface EmailTaskEditPageProps {
 }
 
 export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
+  const db = useDatabase();
+  const { t } = i18n;
+  const query = useAsyncResource(async () => {
+    const [task, configs, persons, schedules, settings] = await Promise.all([
+      taskId ? db.emailTasks.get(taskId) : Promise.resolve(undefined),
+      readAllPaginated(db.configs),
+      readAllPaginated(db.persons),
+      readAllPaginated(db.schedules),
+      db.systemSettings.get(),
+    ]);
+    return { task, configs, persons, schedules, systemTimezone: settings.timezone };
+  }, [db, taskId]);
+
+  if (query.isInitialLoading) return <ContentSkeleton rows={8} />;
+  if (query.error || !query.data) return <div role="alert" class={s.card}>
+    <p class={s.textDanger}>{String(query.error)}</p>
+    <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button>
+  </div>;
+  if (taskId && !query.data.task) return <div class={s.card}>
+    <p class={s.textDanger}>{t('emailTaskNotFound')}</p>
+    <Button variant="secondary" onClick={() => navigate('/email-tasks')}>{t('backToList')}</Button>
+  </div>;
+
+  return <EmailTaskEditor key={taskId ?? '__new__'} taskId={taskId} {...query.data} />;
+}
+
+type EmailTaskEditorProps = EmailTaskEditPageProps & {
+  task: EmailTask | undefined;
+  configs: ScheduleConfig[];
+  persons: Person[];
+  schedules: SchedulePlan[];
+  systemTimezone: string | undefined;
+};
+
+function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTimezone: initialSystemTimezone }: EmailTaskEditorProps) {
   const { t } = i18n;
   const db = useDatabase();
   const capability = getEmailTaskCapability();
-  const configs = configsSignal.value;
-  const tasks = emailTasksSignal.value;
-  const persons = personsSignal.value;
-  const schedules = schedulesSignal.value;
+  const [currentTask, setCurrentTask] = useState(task);
+  const [ready, setReady] = useState(false);
 
   const [selectedTaskId, setSelectedTaskId] = useState<string>(taskId ?? '');
   const [configId, setConfigId] = useState('');
@@ -128,7 +168,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]);
   const [sendTime, setSendTime] = useState('09:00');
   const [taskTimezone, setTaskTimezone] = useState(SYSTEM_DEFAULT_TIMEZONE);
-  const [systemTimezone, setSystemTimezone] = useState<string | undefined>(undefined);
+  const systemTimezone = initialSystemTimezone;
   const [emailsText, setEmailsText] = useState('');
   const [recentTimes, setRecentTimes] = useState(0);
   const [senderNameTemplate, setSenderNameTemplate] = useState('');
@@ -149,15 +189,6 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     'schedule-semester-csv',
     'schedule-semester-ics',
   ]);
-
-  const initializedKeyRef = useRef('');
-
-  useEffect(() => {
-    void Promise.all([loadAllConfigs(db), loadAllEmailTasks(db), loadAllPersons(db), loadAllSchedules(db)]);
-    void db.systemSettings.get().then((settings) => {
-      setSystemTimezone(settings.timezone);
-    });
-  }, [db]);
 
   const selectedConfig = useMemo(
     () => configs.find((item) => item.id === configId),
@@ -309,23 +340,10 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   }
 
   useEffect(() => {
-    const targetKey = taskId ?? '__new__';
-    if (initializedKeyRef.current === targetKey) return;
-
-    if (taskId) {
-      const task = tasks.find((item) => item.id === taskId);
-      if (task) {
-        applyTaskToForm(task);
-        initializedKeyRef.current = targetKey;
-      }
-      return;
-    }
-
-    if (configs.length > 0) {
-      resetForm(configs[0].id);
-      initializedKeyRef.current = targetKey;
-    }
-  }, [taskId, tasks, configs]);
+    if (task) applyTaskToForm(task);
+    else resetForm(configs[0]?.id);
+    setReady(true);
+  }, []);
 
   const skipNextHashChangeRef = useRef(false);
 
@@ -364,6 +382,10 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
   async function saveTask(): Promise<void> {
     if (!configId) return;
+    if (taskId && !await db.emailTasks.get(taskId)) {
+      toast.error(t('emailTaskNotFound'));
+      return;
+    }
     const nextId = selectedTaskId || crypto.randomUUID();
     const timezoneSource = taskTimezone === EMAIL_TASK_TIMEZONE_SCHEDULE
       ? 'schedule'
@@ -400,7 +422,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
       },
     };
     await db.emailTasks.put(task);
-    await loadAllEmailTasks(db);
+    setCurrentTask(task);
     setIsDirty(false);
     setSelectedTaskId(nextId);
     navigate(`/email-tasks/edit/${nextId}`);
@@ -409,7 +431,6 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   async function removeTask(): Promise<void> {
     if (!selectedTaskId) return;
     await db.emailTasks.delete(selectedTaskId);
-    await loadAllEmailTasks(db);
     navigate('/email-tasks');
   }
 
@@ -427,7 +448,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     if (!selectedTaskId || !capability.canAutoSend) return;
     try {
       await sendEmailTaskNow(selectedTaskId);
-      await loadAllEmailTasks(db);
+      setCurrentTask(await db.emailTasks.get(selectedTaskId));
       toast.success(t('emailTaskSendNowSuccess'));
     } catch (err) {
       toast.error(`${t('emailTaskSendNowFailed')}: ${String(err)}`);
@@ -436,21 +457,16 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
   async function toggleSkipNext(): Promise<void> {
     if (!selectedTaskId || !capability.canAutoSend) return;
-    const current = tasks.find((item) => item.id === selectedTaskId);
+    const current = currentTask;
     const nextSkip = !(current?.skipNextRun ?? false);
     try {
       await setEmailTaskSkipNext(selectedTaskId, nextSkip);
-      await loadAllEmailTasks(db);
+      setCurrentTask(await db.emailTasks.get(selectedTaskId));
       toast.success(nextSkip ? t('emailTaskSkipNextEnabled') : t('emailTaskSkipNextDisabled'));
     } catch (err) {
       toast.error(`${t('emailTaskSkipNextFailed')}: ${String(err)}`);
     }
   }
-
-  const currentTask = useMemo(
-    () => tasks.find((item) => item.id === selectedTaskId),
-    [tasks, selectedTaskId],
-  );
 
   const attachmentSummary = useMemo(() => {
     if (attachmentTypes.length === 0) return t('noneSelected');
@@ -461,14 +477,14 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
   }, [attachmentTypes, t]);
 
   async function toggleDisabled(): Promise<void> {
-    const current = tasks.find((item) => item.id === selectedTaskId);
+    const current = selectedTaskId ? await db.emailTasks.get(selectedTaskId) : undefined;
     if (!current) return;
     await db.emailTasks.put({
       ...current,
       disabled: !current.disabled,
       modifiedAt: Date.now(),
     });
-    await loadAllEmailTasks(db);
+    setCurrentTask(await db.emailTasks.get(selectedTaskId));
     setIsDisabled((prev) => !prev);
   }
 
@@ -498,7 +514,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
     setTemplateText((prev) => `${prev}\n\n[${label}]({{ scheduleIcsUrl }})`.trim());
   }
 
-  const taskNotFound = Boolean(taskId) && !tasks.some((item) => item.id === taskId);
+  if (!ready) return <ContentSkeleton rows={8} />;
 
   return (
     <div>
@@ -514,12 +530,6 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
           {selectedTaskId && <Button variant="danger" onClick={() => void removeTask()}>{t('delete')}</Button>}
         </div>
       </div>
-
-      {taskNotFound && (
-        <div class={`${s.card} ${s.mb16}`}>
-          <p class={`${s.text14} ${s.textDanger}`}>{t('emailTaskNotFound')}</p>
-        </div>
-      )}
 
       {!capability.canAutoSend && (
         <div class={`${s.card} ${s.mb16}`}>
@@ -758,7 +768,7 @@ export function EmailTaskEditPage({ taskId }: EmailTaskEditPageProps) {
 
         <div class={s.flexGapSm}>
           <Button variant="primary" onClick={() => void saveTask()}>{t('save')}</Button>
-          <Button variant="secondary" onClick={() => resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
+          <Button variant="secondary" onClick={() => currentTask ? applyTaskToForm(currentTask) : resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
           {capability.canAutoSend && selectedTaskId && (
             <>
               <Button variant="secondary" onClick={() => void triggerSendNow()}>{t('emailTaskSendNow')}</Button>
