@@ -1,6 +1,6 @@
 # Scheduling Algorithm
 
-This document summarizes the current scheduling behavior in Labby.
+This document summarizes the current scheduling behavior in Labby. Known quality gaps and the proposed changes are tracked in the [2026-09-24 audit](audits/2026-09-24-project-audit.md).
 
 ## Mathematical and Informatics Principles
 
@@ -39,27 +39,15 @@ The solver generates seminar sessions in two modes:
 ## Pipeline
 
 1. Generate session dates in UTC and keep configured weekdays.
-2. Build an availability-aware initial schedule.
+2. Build an availability-aware initial schedule with deficit round robin for presenters and virtual finish time for questioners.
 3. Improve the plan with local search (simulated annealing).
 4. Return the lowest-cost schedule found.
 
 ## Initial Assignment Rules
 
-Presenter selection priority:
+Presenter selection uses recovered deficit round robin state from historical presenter assignments, frequency-multiplier weights, availability vetoes, and small random jitter. It does not explicitly prioritize time since the person's last presentation.
 
-- fewer past presenter assignments
-- fewer total role assignments
-- longer time since last presentation
-- random tie-breaker
-
-Questioner selection priority:
-
-- fewer past questioner assignments
-- fewer total role assignments
-- lower same-session questioner load
-- fewer repeated presenter-questioner pairs
-- similarity closer to target radius
-- random tie-breaker
+Questioner selection uses recovered virtual finish time state from historical questioner assignments, availability and same-presentation vetoes, and similarity/affinity weights. Repeated presenter-questioner pairs are penalized by the objective, not directly by this initial picker.
 
 Hard validity rules:
 
@@ -75,12 +63,12 @@ Availability rule:
 
 Main penalty groups:
 
-- presentation gap unevenness
+- presenter and questioner count variance and pooled gap unevenness across people
 - repeated questioner-presenter pairs (grows quickly)
 - relevance mismatch to target radius
 - fairness variance (presenter count, questioner count, total role count)
 - invalid assignments (very large penalty)
-- optional constraint penalties/rewards
+- optional constraint guidance during construction and mutation; the current `constraintPenalty` metric is always zero
 
 Implementation detail:
 
@@ -91,6 +79,9 @@ Current optional constraints:
 
 - no-overlap
 - affinity-boost
+- frequency-multiplier
+
+No-overlap is a candidate veto. Affinity and frequency change selection weights. The declared no-overlap and frequency weights and the frequency baseline are not currently scored as separate constraint penalties.
 
 ## Search Strategy
 
@@ -98,6 +89,11 @@ Neighbor operations during annealing:
 
 - swap presenters across sessions
 - rebuild one presentation's questioner list
+- replace an over-represented presenter
+- target a frequency deviation
+- rebuild a full session
+
+The current run stops after 80 iterations without improvement to the best score, even when the configured 5,000-iteration cap has not been reached. There is no separate objective for same-session reciprocal presenter/questioner pairs.
 
 Acceptance:
 

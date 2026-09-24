@@ -37,6 +37,25 @@
 8. Keep stale data only while refetching the same query key. Changing a route ID, page, sort order, selected configuration, or account session must hide the prior result until the new key succeeds. Guard late responses so they cannot publish into another key or a previous session.
 9. Page-scoped subsets and paginated results belong to their owning query. Never replace a global full collection with a foreign-key subset or a page of results. Forms for existing entities mount only after their initial values have loaded; programmatic editor updates must not mark them dirty.
 10. Every initial content query exposes an in-region error and retry action. Tests for these boundaries delay the entity and related reads independently, and cover genuine absence, read failure, key changes, and out-of-order completion.
+11. Every user-initiated asynchronous action shows a visible pending state from submission until settlement, prevents duplicate submission, and reports failure in its owning context. Background work that can affect displayed data exposes a non-disruptive progress or stale-data state. Success feedback must mean the operation actually completed.
+
+## API and production performance
+
+1. Authentication state changes only on a confirmed authentication failure. A refresh request returning 5xx or a network error preserves the session and surfaces a retryable service error; it must not be converted into a 401 or 403. A 403 is displayed as a permission error without invalidating the session.
+2. Production API latency investigations record a bounded observation window, route-level latency, failure class, service and database regions, and connection-versus-query evidence before attributing a cause. Logs and audit documents omit credentials, token values, email addresses, and raw request payloads.
+3. Paginated API reads perform bounded database work. Related-data bundles load only the fields and rows required by their caller, and avoid repeated cross-region round trips where a single set-based query can serve the request.
+
+## Scheduling and people
+
+1. Solver documentation distinguishes the current objective, hard validity rules, initialization guidance, and search behavior. A user-facing constraint is evaluated in the final objective or enforced as a hard rule; an initial-assignment preference alone is not sufficient.
+2. People and tags can both be constraint targets. Pair constraints must be able to target either one group or two different groups; frequency constraints resolve their targets against the active people at solve time. Existing person-only constraints remain readable when the schema evolves.
+3. Solver changes are evaluated with fixed seeds and representative histories. Record initial and final objective values, per-person presentation gaps, same-session reciprocal presenter/questioner pairs, hard-rule violations, and runtime. A lower aggregate objective alone does not establish acceptable schedule quality.
+4. A schedule's highlight controls support multiple people and tags. Context actions for highlighting remain available outside manual edit mode; highlight-only presentation does not mutate the schedule.
+
+## Manual email delivery
+
+1. Immediate email delivery presents the effective recipient addresses for review and allows an explicit one-off override. A one-off override does not silently change the saved task's scheduled recipients.
+2. The API validates recipient addresses and returns a delivery outcome. The UI reports success only when at least one intended delivery succeeded, and shows a pending state until the delivery result is known.
 
 ## UI text and shared components
 
