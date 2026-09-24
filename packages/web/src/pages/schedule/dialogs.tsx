@@ -207,6 +207,7 @@ export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | 
 
 interface InsertSessionDialogProps {
   open: boolean;
+  title?: string;
   insertedSessionDate: string;
   minDate?: string;
   maxDate?: string;
@@ -217,6 +218,7 @@ interface InsertSessionDialogProps {
 
 export function InsertSessionDialog({
   open,
+  title,
   insertedSessionDate,
   minDate,
   maxDate,
@@ -227,7 +229,7 @@ export function InsertSessionDialog({
   const { t } = i18n;
   if (!open) return null;
   return (
-    <Dialog open={true} onClose={onClose} title={t('insertSession')}>
+    <Dialog open={true} onClose={onClose} title={title ?? t('insertSession')}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('sessionDate')}</label>
         <input

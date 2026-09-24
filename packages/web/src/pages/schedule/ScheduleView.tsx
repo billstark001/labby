@@ -36,7 +36,10 @@ interface ScheduleViewProps {
   onMoveBoundary: (sessionIndex: number, direction: 'up' | 'down') => void;
   onMoveBoundaryTo: (sessionIndex: number, targetSessionIndex: number, targetPresentationIndex: number) => void;
   onShiftSuffix: (sessionIndex: number, direction: 'up' | 'down') => void;
-  onInsertSession: (index: number) => void;
+  onInsertSession: (index: number, preferred: 'before' | 'after') => void;
+  onRescheduleSession: (sessionId: string) => void;
+  onPostponeSession: (index: number) => void;
+  onSwapSession: (index: number, direction: -1 | 1) => void;
   onDeleteSession: (sessionId: string) => void;
   onShowMetricsForSession: (date: string) => void;
 }
@@ -68,6 +71,9 @@ export function ScheduleView({
   onMoveBoundaryTo,
   onShiftSuffix,
   onInsertSession,
+  onRescheduleSession,
+  onPostponeSession,
+  onSwapSession,
   onDeleteSession,
   onShowMetricsForSession,
 }: ScheduleViewProps) {
@@ -155,8 +161,12 @@ export function ScheduleView({
         {manualEditMode && (
           <>
             <MenuSeparator />
-            <MenuItem onSelect={() => onInsertSession(sessionIndex)}>{t('insertSessionBefore')}</MenuItem>
-            <MenuItem onSelect={() => onInsertSession(sessionIndex + 1)}>{t('insertSessionAfter')}</MenuItem>
+            <MenuItem onSelect={() => onInsertSession(sessionIndex, 'before')}>{t('insertSessionBefore')}</MenuItem>
+            <MenuItem onSelect={() => onInsertSession(sessionIndex + 1, 'after')}>{t('insertSessionAfter')}</MenuItem>
+            <MenuItem onSelect={() => onRescheduleSession(session.id)}>{t('rescheduleSession')}</MenuItem>
+            <MenuItem onSelect={() => onPostponeSession(sessionIndex)}>{t('postponeSession')}</MenuItem>
+            {sessionIndex > 0 && <MenuItem onSelect={() => onSwapSession(sessionIndex, -1)}>{t('swapPreviousSession')}</MenuItem>}
+            {sessionIndex + 1 < draft.sessions.length && <MenuItem onSelect={() => onSwapSession(sessionIndex, 1)}>{t('swapNextSession')}</MenuItem>}
             <MenuSeparator />
             <MenuItem onSelect={() => onMoveBoundary(sessionIndex, 'up')}>{t('moveBoundaryUp')}</MenuItem>
             <MenuItem onSelect={() => onMoveBoundary(sessionIndex, 'down')}>{t('moveBoundaryDown')}</MenuItem>

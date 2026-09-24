@@ -21,7 +21,7 @@ import {
   readScheduleForeignKeys,
   useDatabase,
 } from '@/db/index';
-import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, explainScheduleMetrics, noOverlapForbidden, solveConstrained } from '@labby/core';
+import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, explainScheduleMetrics, isWholeGroupClosure, noOverlapForbidden, solveConstrained } from '@labby/core';
 import type {
   IncrementalSolveMode,
   MetricExplanation,
@@ -61,10 +61,16 @@ import {
   moveBoundary,
   movePresentationTo,
   moveQuestioner,
+  nextConfiguredDateAfter,
+  postponeSessionSuffix,
+  recordSessionDateChange,
   reorderPresentations,
   replacePresenter,
   replaceQuestioner,
+  rescheduleSession,
   shiftSessionSuffix,
+  suggestedInsertDate,
+  swapAdjacentSessions,
   type ScheduleDraft,
 } from './schedule-editor';
 import {
@@ -81,6 +87,11 @@ import {
 } from './service';
 
 const LAST_SELECTED_CONFIG_STORAGE_KEY = 'schedule.lastSelectedConfigId';
+const moveIsoDay = (date: string, days: number) => {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+};
 
 // Single backend instance — isServerDeployment is a startup-time constant.
 const backend = createSolverBackend();
@@ -113,7 +124,9 @@ export function SchedulePage() {
   const [redoStack, setRedoStack] = useState<ScheduleDraft[]>([]);
   const [metricsDialog, setMetricsDialog] = useState<MetricsDialogState | null>(null);
   const [insertSessionIndex, setInsertSessionIndex] = useState<number | null>(null);
+  const [rescheduleSessionId, setRescheduleSessionId] = useState<string | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
+  const [dateBounds, setDateBounds] = useState<{ min: string; max: string } | null>(null);
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
   const [highlightPersonIds, setHighlightPersonIds] = useState<string[]>([]);
   const [highlightTagIds, setHighlightTagIds] = useState<string[]>([]);
@@ -299,6 +312,7 @@ export function SchedulePage() {
 
   function cancelManualEdit(): void {
     setInsertSessionIndex(null);
+    setRescheduleSessionId(null);
     setDraftSchedule(null);
     setUndoStack([]);
     setRedoStack([]);
@@ -328,8 +342,9 @@ export function SchedulePage() {
       if (presentation.presenter.kind === 'fixed' && presentation.presenter.personId === personId) return false;
       const unavailable = unavailabilities.some(item => {
         if (item.configId !== draft.configId || session.date < item.startDate || session.date > item.endDate) return false;
-        const ids = item.personIds?.length ? item.personIds : item.personId ? [item.personId] : [];
-        return ids.includes(personId);
+        const person = personMap.get(personId);
+        return item.allPeople || item.personIds.includes(personId)
+          || item.tagIds.some(id => person?.tagIds?.includes(id));
       });
       if (unavailable) return false;
       if (presentation.presenter.kind === 'fixed') {
@@ -656,9 +671,65 @@ export function SchedulePage() {
     });
   }
 
-  function openInsertSession(index: number): void {
+  function openInsertSession(index: number, preferred: 'before' | 'after'): void {
+    if (!draftSchedule || !selectedConfig) return;
+    const previous = draftSchedule.sessions[index - 1]?.date;
+    const following = draftSchedule.sessions[index]?.date;
+    const min = previous ? moveIsoDay(previous, 1) : selectedConfig.startDate;
+    const max = following ? moveIsoDay(following, -1) : selectedConfig.endDate;
+    if (min > max) { toast.error(t('mutationInsertedDateRequired')); return; }
     setInsertSessionIndex(index);
-    setInsertedSessionDate('');
+    setDateBounds({ min, max });
+    const suggestion = suggestedInsertDate(draftSchedule, index, preferred);
+    setInsertedSessionDate(suggestion && suggestion >= min && suggestion <= max ? suggestion : min);
+  }
+
+  function openRescheduleSession(sessionId: string): void {
+    if (!draftSchedule || !selectedConfig) return;
+    const index = draftSchedule.sessions.findIndex(session => session.id === sessionId);
+    if (index < 0) return;
+    const previous = draftSchedule.sessions[index - 1]?.date;
+    const following = draftSchedule.sessions[index + 1]?.date;
+    setDateBounds({
+      min: previous ? moveIsoDay(previous, 1) : selectedConfig.startDate,
+      max: following ? moveIsoDay(following, -1) : selectedConfig.endDate,
+    });
+    setInsertedSessionDate(draftSchedule.sessions[index]!.date);
+    setRescheduleSessionId(sessionId);
+  }
+
+  function applyRescheduleSession(): void {
+    if (!rescheduleSessionId || !draftSchedule || !dateBounds || !selectedConfig) return;
+    const date = insertedSessionDate;
+    if (date < dateBounds.min || date > dateBounds.max || isWholeGroupClosure(date, unavailabilities, selectedConfig.id)) {
+      toast.error(t('mutationDateOutOfRange', dateBounds.min, dateBounds.max));
+      return;
+    }
+    updateDraft(draft => {
+      const previous = draft.sessions.find(session => session.id === rescheduleSessionId);
+      if (!previous || previous.date === date) return draft;
+      return recordSessionDateChange(rescheduleSession(draft, rescheduleSessionId, date), previous.date, date);
+    });
+    setRescheduleSessionId(null);
+  }
+
+  function postponeSession(index: number): void {
+    if (!draftSchedule || !selectedConfig) return;
+    const finalOriginal = draftSchedule.sessions.at(-1)?.date;
+    if (!finalOriginal) return;
+    let finalDate = finalOriginal;
+    for (let attempt = 0; attempt < 52; attempt++) {
+      finalDate = nextConfiguredDateAfter(finalDate, selectedConfig.daysOfWeek);
+      if (!isWholeGroupClosure(finalDate, unavailabilities, selectedConfig.id)) break;
+    }
+    if (isWholeGroupClosure(finalDate, unavailabilities, selectedConfig.id)) {
+      toast.error(t('unavailInvalid')); return;
+    }
+    updateDraft(draft => {
+      const original = draft.sessions[index];
+      if (!original) return draft;
+      return recordSessionDateChange(postponeSessionSuffix(draft, index, finalDate), original.date, finalDate);
+    });
   }
 
   function applyInsertSession(): void {
@@ -671,6 +742,12 @@ export function SchedulePage() {
     if (date < selectedConfig.startDate || date > selectedConfig.endDate) {
       toast.error(t('mutationDateOutOfRange', selectedConfig.startDate, selectedConfig.endDate));
       return;
+    }
+    if (dateBounds && (date < dateBounds.min || date > dateBounds.max)) {
+      toast.error(t('mutationDateOutOfRange', dateBounds.min, dateBounds.max)); return;
+    }
+    if (isWholeGroupClosure(date, unavailabilities, selectedConfig.id)) {
+      toast.error(t('unavailInvalid')); return;
     }
     if (draftSchedule.sessions.some(session => session.date === date)) {
       toast.error(t('mutationInsertedDateOverlap', date));
@@ -898,11 +975,21 @@ export function SchedulePage() {
       <InsertSessionDialog
         open={insertSessionIndex !== null}
         insertedSessionDate={insertedSessionDate}
-        minDate={selectedConfig?.startDate}
-        maxDate={selectedConfig?.endDate}
+        minDate={dateBounds?.min}
+        maxDate={dateBounds?.max}
         onInsertedDateChange={setInsertedSessionDate}
         onApply={applyInsertSession}
         onClose={() => setInsertSessionIndex(null)}
+      />
+      <InsertSessionDialog
+        open={rescheduleSessionId !== null}
+        title={t('rescheduleSession')}
+        insertedSessionDate={insertedSessionDate}
+        minDate={dateBounds?.min}
+        maxDate={dateBounds?.max}
+        onInsertedDateChange={setInsertedSessionDate}
+        onApply={applyRescheduleSession}
+        onClose={() => setRescheduleSessionId(null)}
       />
 
       {/* Direct schedule tape */}
@@ -960,6 +1047,9 @@ export function SchedulePage() {
           updateDraft(draft => shiftSessionSuffix(draft, sessionIndex, direction, selectedConfig.questionersPerPresenter));
         }}
         onInsertSession={openInsertSession}
+        onRescheduleSession={openRescheduleSession}
+        onPostponeSession={postponeSession}
+        onSwapSession={(index, direction) => updateDraft(draft => swapAdjacentSessions(draft, index, direction))}
         onDeleteSession={handleDeleteSession}
         onShowMetricsForSession={date => {
           if (!manualEditMode && current) {

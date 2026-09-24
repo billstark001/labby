@@ -226,6 +226,77 @@ export function insertSession(
   return next;
 }
 
+/** Choose an editable, initially useful date between the neighbouring sessions. */
+export function suggestedInsertDate(draft: ScheduleDraft, index: number, preferred: 'before' | 'after'): string | null {
+  const previous = draft.sessions[index - 1]?.date;
+  const following = draft.sessions[index]?.date;
+  const day = 86_400_000;
+  if (!previous && !following) return null;
+  const previousTime = previous ? Date.parse(`${previous}T00:00:00Z`) : undefined;
+  const followingTime = following ? Date.parse(`${following}T00:00:00Z`) : undefined;
+  if (previousTime !== undefined && followingTime !== undefined && followingTime - previousTime <= day) return null;
+  const time = previousTime === undefined ? followingTime! - 7 * day
+    : followingTime === undefined ? previousTime + 7 * day
+    : preferred === 'before' ? followingTime - day : previousTime + day;
+  return new Date(time).toISOString().slice(0, 10);
+}
+
+/** Move one meeting to a new date without changing its presentation count. */
+export function rescheduleSession(draft: ScheduleDraft, sessionId: string, date: string): ScheduleDraft {
+  const index = draft.sessions.findIndex(session => session.id === sessionId);
+  if (index < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return draft;
+  if ((index > 0 && date <= draft.sessions[index - 1]!.date)
+    || (index + 1 < draft.sessions.length && date >= draft.sessions[index + 1]!.date)) return draft;
+  const next = cloneDraft(draft);
+  next.sessions[index]!.date = date;
+  return next;
+}
+
+/** Exchange two meetings while retaining the ordered calendar dates. */
+export function swapAdjacentSessions(draft: ScheduleDraft, index: number, direction: -1 | 1): ScheduleDraft {
+  const other = index + direction;
+  if (!draft.sessions[index] || !draft.sessions[other]) return draft;
+  const next = cloneDraft(draft);
+  const currentRows = next.sessions[index]!.presentations;
+  next.sessions[index]!.presentations = next.sessions[other]!.presentations;
+  next.sessions[other]!.presentations = currentRows;
+  return next;
+}
+
+/** Carry meeting n to the original date of meeting n+1, extending the final date. */
+export function postponeSessionSuffix(draft: ScheduleDraft, index: number, finalDate: string): ScheduleDraft {
+  if (!draft.sessions[index] || finalDate <= draft.sessions[draft.sessions.length - 1]!.date) return draft;
+  const next = cloneDraft(draft);
+  for (let i = index; i < next.sessions.length - 1; i++)
+    next.sessions[i]!.date = draft.sessions[i + 1]!.date;
+  next.sessions[next.sessions.length - 1]!.date = finalDate;
+  return next;
+}
+
+export function nextConfiguredDateAfter(date: string, daysOfWeek: number[]): string {
+  const next = new Date(`${date}T00:00:00Z`);
+  for (let offset = 1; offset <= 7; offset++) {
+    next.setUTCDate(next.getUTCDate() + 1);
+    if (daysOfWeek.includes(next.getUTCDay())) return next.toISOString().slice(0, 10);
+  }
+  throw new Error('No configured weekday is available');
+}
+
+/** Keep generation replay aligned with a manual change to the set of meeting dates. */
+export function recordSessionDateChange(draft: ScheduleDraft, removedDate: string, addedDate: string): ScheduleDraft {
+  if (removedDate === addedDate) return draft;
+  const next = cloneDraft(draft);
+  const existing = new Map((next.sessionMutations ?? []).map(item => [item.date, item]));
+  const removed = existing.get(removedDate);
+  if (removed?.action === 'insert') existing.delete(removedDate);
+  else existing.set(removedDate, { date: removedDate, action: 'delete', createdAt: Date.now() });
+  const added = existing.get(addedDate);
+  if (added?.action === 'delete') existing.delete(addedDate);
+  else existing.set(addedDate, { date: addedDate, action: 'insert', createdAt: Date.now() });
+  next.sessionMutations = [...existing.values()].sort((a, b) => a.date.localeCompare(b.date));
+  return next;
+}
+
 export function deleteSession(draft: ScheduleDraft, sessionId: string): ScheduleDraft {
   const next = cloneDraft(draft);
   const index = next.sessions.findIndex(session => session.id === sessionId);

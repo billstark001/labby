@@ -8,8 +8,14 @@ import {
   moveBoundary,
   movePresentationTo,
   moveQuestioner,
+  nextConfiguredDateAfter,
+  postponeSessionSuffix,
+  recordSessionDateChange,
   reorderPresentations,
+  rescheduleSession,
   shiftSessionSuffix,
+  suggestedInsertDate,
+  swapAdjacentSessions,
 } from '../src/pages/schedule/schedule-editor.js';
 
 function plan(): SchedulePlan {
@@ -71,6 +77,22 @@ describe('schedule tape editor', () => {
     const result = deleteSession(draft, draft.sessions[1]!.id);
     assert.deepEqual(result.sessions.map(session => session.date), ['2026-04-01', '2026-04-15']);
     assert.equal(result.discardedAfter.length, 3);
+  });
+
+  test('rescheduling, adjacent exchange and postponement preserve presentation counts', () => {
+    const draft = createScheduleDraft(plan());
+    assert.equal(suggestedInsertDate(draft, 1, 'before'), '2026-04-07');
+    const moved = recordSessionDateChange(rescheduleSession(draft, draft.sessions[1]!.id, '2026-04-09'),
+      '2026-04-08', '2026-04-09');
+    assert.deepEqual(moved.sessions.map(session => session.date), ['2026-04-01', '2026-04-09', '2026-04-15']);
+    assert.deepEqual(moved.sessionMutations?.map(item => `${item.action}:${item.date}`),
+      ['delete:2026-04-08', 'insert:2026-04-09']);
+    assert.deepEqual(presenters(swapAdjacentSessions(draft, 0, 1))[0], ['p4', 'p5', 'p6']);
+    const postponed = recordSessionDateChange(postponeSessionSuffix(draft, 1, nextConfiguredDateAfter('2026-04-15', [3])),
+      '2026-04-08', '2026-04-22');
+    assert.deepEqual(postponed.sessions.map(session => session.date), ['2026-04-01', '2026-04-15', '2026-04-22']);
+    assert.deepEqual(presenters(postponed), presenters(draft));
+    assert.deepEqual(postponed.sessions.map(session => session.presentations.length), [3, 3, 3]);
   });
 
   test('each Auto questioner is an independent movable slot', () => {
