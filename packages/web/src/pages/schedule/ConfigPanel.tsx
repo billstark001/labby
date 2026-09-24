@@ -11,6 +11,8 @@ import {
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { getScheduleConfigLabel, getScheduleConfigSummary } from '@/lib/scheduleConfigLabel';
 import { ConfigForm, UnavailForm } from './forms';
+import { personTagsSignal } from '@/store/index';
+import { PersonTagBadge } from '@/components/PersonTagBadge';
 
 interface ConfigPanelProps {
   configs: ScheduleConfig[];
@@ -59,17 +61,15 @@ export function ConfigPanel({
 }: ConfigPanelProps) {
   const { t } = i18n;
 
-  function resolveUnavailabilityNames(unavail: PersonUnavailability): string {
-    const personIds = Array.isArray(unavail.personIds) && unavail.personIds.length > 0
-      ? unavail.personIds
-      : (unavail.personId ? [unavail.personId] : []);
-    if (personIds.length === 0) return '—';
-    return personIds
-      .map((personId) => {
-        const person = personMap.get(personId);
-        return person ? displayName(person) : fallbackEntityId(personId);
-      })
-      .join(', ');
+  function renderUnavailabilityTargets(unavail: PersonUnavailability) {
+    if (unavail.allPeople) return t('unavailEveryone');
+    const tagMap = new Map(personTagsSignal.value.map(tag => [tag.id, tag]));
+    return <span class={s.flexGapSm} style={{ flexWrap: 'wrap' }}>
+      {unavail.personIds.map(id => <span key={id}>{personMap.get(id) ? displayName(personMap.get(id)!) : fallbackEntityId(id)}</span>)}
+      {unavail.tagIds.map(id => tagMap.get(id)
+        ? <PersonTagBadge key={id} tag={tagMap.get(id)!} />
+        : <span key={id}>{fallbackEntityId(id)}</span>)}
+    </span>;
   }
 
   return (
@@ -141,7 +141,7 @@ export function ConfigPanel({
               renderDesktopRow={unavail => {
                 return (
                   <>
-                    <td class={s.td}>{resolveUnavailabilityNames(unavail)}</td>
+                    <td class={s.td}>{renderUnavailabilityTargets(unavail)}</td>
                     <td class={s.td}>{unavail.startDate}</td>
                     <td class={s.td}>{unavail.endDate}</td>
                   </>
@@ -152,7 +152,7 @@ export function ConfigPanel({
                   <>
                     <div class={dataStyles.mobileHeader}>
                       <div class={dataStyles.mobileTitle}>
-                        {resolveUnavailabilityNames(unavail)}
+                        {renderUnavailabilityTargets(unavail)}
                       </div>
                     </div>
                     <div class={dataStyles.mobileFields}>
@@ -197,6 +197,7 @@ export function ConfigPanel({
           onClose={onCloseConfigForm}
           closeOnOverlayClick={false}
           title={editingConfig ? t('editConfig') : t('newConfig')}
+          width="min(860px, 90vw)"
         >
           <ConfigForm
             initial={editingConfig ?? undefined}

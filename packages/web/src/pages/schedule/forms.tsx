@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import type { GapBalancePolicy, PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
 import { DEFAULT_GAP_BALANCE, SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
 
-import { personsSignal } from '@/store/index';
+import { personsSignal, personTagsSignal } from '@/store/index';
 import { displayName } from '@/i18n';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/index';
 import { Dialog } from '@/components/ui/Dialog';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { getScheduleConfigTitle } from '@/lib/scheduleConfigLabel';
+import { tagColorStyle } from '@/components/PersonTagBadge';
+import * as layout from './forms.css';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -90,7 +92,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   }
 
   return (
-    <div>
+    <div class={layout.configForm}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configLabel')}</label>
         <input
@@ -100,6 +102,9 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           placeholder={t('configLabelPlaceholder')}
         />
       </div>
+      <section class={layout.section}>
+        <h3 class={layout.sectionTitle}>{t('configCalendarSection')}</h3>
+        <div class={layout.grid}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configDays')}</label>
         <div class={s.flexGapSm}>
@@ -133,6 +138,11 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           onChange={setTimezone}
         />
       </div>
+        </div>
+      </section>
+      <section class={layout.section}>
+        <h3 class={layout.sectionTitle}>{t('configMeetingSection')}</h3>
+        <div class={layout.grid}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configPresenters')}</label>
         <input class={s.input} type="number" min={1} value={presenters} onInput={e => setPresenters(parseInt((e.target as HTMLInputElement).value, 10))} />
@@ -141,6 +151,11 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <label class={s.label}>{t('configQuestioners')}</label>
         <input class={s.input} type="number" min={0} value={questioners} onInput={e => setQuestioners(parseInt((e.target as HTMLInputElement).value || '0', 10))} />
       </div>
+        </div>
+      </section>
+      <section class={layout.section}>
+        <h3 class={layout.sectionTitle}>{t('configSolverSection')}</h3>
+        <div class={layout.grid}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configRadius')}</label>
         <input class={s.input} type="number" step={0.05} min={0} max={1} value={radius} onInput={e => setRadius(parseFloat((e.target as HTMLInputElement).value))} />
@@ -155,10 +170,10 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           <option value="encourage">{t('reciprocalEncourage')}</option>
         </select>
       </div>
-      <details style={{ marginBottom: '1rem' }}>
+      <details class={layout.full}>
         <summary style={{ cursor: 'pointer' }}>{t('gapBalanceSettings')}</summary>
         <p class={s.mutedParagraph}>{t('gapBalanceHelp')}</p>
-        {(['presenter', 'questioner'] as const).map(role => <fieldset key={role} style={{ border: 'none', marginBottom: '1rem' }}>
+        <div class={layout.grid}>{(['presenter', 'questioner'] as const).map(role => <fieldset key={role} class={layout.gapFieldset}>
           <legend class={s.label} style={{ marginBottom: '0.5rem' }}>{t(role === 'presenter' ? 'gapBalancePresenter' : 'gapBalanceQuestioner')}</legend>
           <div class={s.formGroup}>
             <label class={s.label}>{t('gapBalanceShortRatio')}</label>
@@ -175,8 +190,10 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
             <input class={s.input} type="number" min={0} max={50} step={1} value={gapBalance[role].spreadWeight}
               onInput={event => setGapValue(role, 'spreadWeight', (event.target as HTMLInputElement).value)} />
           </div>
-        </fieldset>)}
+        </fieldset>)}</div>
       </details>
+        </div>
+      </section>
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={saving} onClick={() => void handleSave()}>{t('save')}</Button>
         <Button variant="secondary" disabled={saving} onClick={onCancel}>{t('cancel')}</Button>
@@ -221,28 +238,27 @@ interface UnavailFormProps {
 export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: UnavailFormProps) {
   const { t } = i18n;
   const persons = personsSignal.value;
-  const [personIds, setPersonIds] = useState<string[]>(() => {
-    if (Array.isArray(initial?.personIds) && initial.personIds.length > 0) {
-      return [...new Set(initial.personIds)];
-    }
-    if (initial?.personId) {
-      return [initial.personId];
-    }
-    return [];
-  });
+  const tags = personTagsSignal.value;
+  const [personIds, setPersonIds] = useState<string[]>(initial?.personIds ?? []);
+  const [tagIds, setTagIds] = useState<string[]>(initial?.tagIds ?? []);
+  const [allPeople, setAllPeople] = useState(initial?.allPeople ?? false);
   const [startDate, setStartDate] = useState(initial?.startDate ?? '');
   const [endDate, setEndDate] = useState(initial?.endDate ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
-    if (personIds.length === 0 || !startDate || !endDate) return;
+    if ((!allPeople && personIds.length + tagIds.length === 0) || !startDate || !endDate || startDate > endDate) {
+      setError(t('unavailInvalid'));
+      return;
+    }
     setSaving(true);
     setError(null);
     try { await onSave({
       id: initial?.id ?? crypto.randomUUID(),
-      personId: personIds[0],
-      personIds,
+      personIds: allPeople ? [] : personIds,
+      tagIds: allPeople ? [] : tagIds,
+      allPeople,
       configId,
       startDate,
       endDate,
@@ -261,6 +277,9 @@ export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: U
 
   return (
     <div>
+      <p class={s.mutedParagraph}>{t('unavailInclusiveHelp')}</p>
+      <label class={`${s.flexGapSm} ${s.formGroup}`}><input type="checkbox" checked={allPeople}
+        onChange={event => { setAllPeople(event.currentTarget.checked); if (event.currentTarget.checked) { setPersonIds([]); setTagIds([]); } }} /> {t('unavailEveryone')}</label>
       <div class={s.formGroup}>
         <label class={s.label}>{t('unavailPerson')}</label>
         <div class={s.tagList}>
@@ -270,6 +289,7 @@ export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: U
               <button
                 key={person.id}
                 type="button"
+                disabled={allPeople}
                 class={`${s.badgeSelectable} ${selected ? s.badgeSelectableActive : ''}`}
                 onClick={() => togglePerson(person.id)}
               >
@@ -278,6 +298,14 @@ export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: U
             );
           })}
         </div>
+      </div>
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('personTags')}</label>
+        <div class={s.tagList}>{tags.map(tag => <button type="button" key={tag.id} disabled={allPeople}
+          class={`${s.badgeSelectable} ${tagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+          style={tagColorStyle(tag)} onClick={() => setTagIds(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])}>
+          {displayName(tag)}
+        </button>)}</div>
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('unavailStart')}</label>
