@@ -32,6 +32,11 @@
 3. Data fetching must expose the common `idle | pending | success | error` state contract. New Preact screens use `useAsyncResource` unless a feature adopts a query library for the whole boundary.
 4. Keep stale successful data visible during refetch, mark the region busy, render errors with a recovery action, and prevent older requests from overwriting newer results.
 5. Query keys/dependencies must include every value read by the fetch operation. After a mutation, refetch or update the cached value rather than maintaining a second source of truth.
+6. Database initialization only makes the database usable; it does not make entity collections ready. Render an empty state or declare a requested entity missing only after a successful query for the current query key. A failed read is an error, never an empty result or a deletion.
+7. A list row and the related names, permissions, or reference counts used to render or act on it form one content boundary. Fetch them together and publish one complete result. Gate edit, delete, save, send, and computation controls until their required data is ready. An ID fallback is reserved for a confirmed dangling reference after the related lookup succeeds.
+8. Keep stale data only while refetching the same query key. Changing a route ID, page, sort order, selected configuration, or account session must hide the prior result until the new key succeeds. Guard late responses so they cannot publish into another key or a previous session.
+9. Page-scoped subsets and paginated results belong to their owning query. Never replace a global full collection with a foreign-key subset or a page of results. Forms for existing entities mount only after their initial values have loaded; programmatic editor updates must not mark them dirty.
+10. Every initial content query exposes an in-region error and retry action. Tests for these boundaries delay the entity and related reads independently, and cover genuine absence, read failure, key changes, and out-of-order completion.
 
 ## UI text and shared components
 
