@@ -66,6 +66,7 @@ export interface ScheduleConfig {
   presentersPerSession: number; // default 3
   questionersPerPresenter: number; // default 2
   targetSimilarityRadius: number; // desired similarity r ≈ 0.5
+  reciprocalPairPreference?: 'forbid' | 'discourage' | 'neutral' | 'encourage';
   startDate: string; // ISO date, first possible session
   endDate: string; // ISO date, last possible session
   /**
@@ -128,6 +129,7 @@ export type TemplateFormat = 'markdown' | 'html';
 
 export interface ScheduleMetrics {
   uniformityPenalty: number;
+  reciprocalPenalty: number;
   questionerPenalty: number;
   relevancePenalty: number;
   presenterLoadPenalty: number;
@@ -136,6 +138,35 @@ export interface ScheduleMetrics {
   invalidAssignmentPenalty: number;
   constraintPenalty: number;
   totalCost: number;
+}
+
+export interface SolverDiagnostics {
+  initialCost: number;
+  finalCost: number;
+  iterations: number;
+  accepted: number;
+  invalidNeighbors: number;
+  unchangedNeighbors: number;
+  durationMs: number;
+  restarts: number;
+}
+
+export interface PersonScheduleQuality {
+  personId: string;
+  presentations: number;
+  targetGapDays: number;
+  minGapDays: number | null;
+  maxGapDays: number | null;
+  gapCoefficientOfVariation: number | null;
+  shortGapRate: number | null;
+  firstWaitDays: number | null;
+  lastWaitDays: number | null;
+}
+
+export interface ScheduleQualityReport {
+  reciprocalPairs: number;
+  hardViolations: number;
+  persons: PersonScheduleQuality[];
 }
 
 export interface MetricExplanation {
@@ -160,6 +191,7 @@ export interface SchedulePlan {
   modifiedAt?: number;
   configId: string;
   sessions: Session[];
+  solverDiagnostics?: SolverDiagnostics;
   notes?: string; // user-written notes for this history entry
   sessionMutations?: ScheduleSessionMutationRecord[];
   /** Optional per-date marker used by UI to distinguish mutated sessions from naturally generated sessions. */
@@ -211,6 +243,8 @@ export interface SolverInput {
   unavailabilities?: PersonUnavailability[];
   /** Optional: additional scheduling constraints */
   constraints?: ScheduleConstraint[];
+  /** Filled by the solver when a caller requests search diagnostics. */
+  diagnostics?: SolverDiagnostics;
 }
 
 /** Input bundle for the incremental solver. */
@@ -295,11 +329,10 @@ export interface NoOverlapConstraint {
   type: 'no-overlap';
   /** Constraint applies to any person whose ID is in this set. */
   personIds: string[];
-  /**
-   * Penalty weight applied when the constraint is violated.
-   * Defaults to 5.0.
-   */
-  weight?: number;
+  tagIds: string[];
+  /** When supplied, only pairs crossing the two target groups are forbidden. */
+  otherPersonIds?: string[];
+  otherTagIds?: string[];
   modifiedAt?: number;
 }
 
@@ -315,6 +348,10 @@ export interface AffinityBoostConstraint {
   type: 'affinity-boost';
   /** Members of the group whose co-occurrence should be boosted. */
   personIds: string[];
+  tagIds: string[];
+  /** When supplied, boost only pairs crossing the two target groups. */
+  otherPersonIds?: string[];
+  otherTagIds?: string[];
   /**
    * Affinity multiplier applied to the similarity score between group members.
    * Values > 1 encourage pairing; values < 1 discourage it.
@@ -334,6 +371,7 @@ export interface FrequencyMultiplierConstraint {
   configId?: string;
   type: 'frequency-multiplier';
   personIds: string[];
+  tagIds: string[];
   baseline: number;
   multiplier: number;
   roleScope?: 'presenter' | 'questioner' | 'both';

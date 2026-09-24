@@ -8,6 +8,7 @@ import {
   buildCostContext,
   computeCost,
   noOverlapForbidden,
+  validateScheduleAssignments,
 } from './constraints.js';
 import { ANNEALING_CONFIG } from './annealing.js';
 import { buildUnavailMap } from './utils.js';
@@ -139,7 +140,11 @@ export function solveConstrained(input: ConstrainedSolverInput): Session[] {
       if (isAuto) mutableSlots.push({ kind: 'questioner', sessionIndex, presentationIndex, questionerIndex });
     });
   }));
-  if (!mutableSlots.length) return sessions;
+  if (!mutableSlots.length) {
+    const violations = validateScheduleAssignments(sessions, input);
+    if (violations.length) throw new Error(violations[0]);
+    return sessions;
+  }
 
   const totalCost = (candidate: Session[]) => computeCost(candidate, ctx, guidance, input.historicalSessions ?? []);
   let current = structuredClone(sessions);
@@ -188,5 +193,7 @@ export function solveConstrained(input: ConstrainedSolverInput): Session[] {
     }
     if (stagnantIterations >= ANNEALING_CONFIG.maxStagnantIter) break;
   }
+  const violations = validateScheduleAssignments(best, input);
+  if (violations.length) throw new Error(violations[0]);
   return best;
 }

@@ -1,165 +1,44 @@
-# Scheduling Algorithm
+# Scheduling algorithm
 
-This document summarizes the current scheduling behavior in Labby. Known quality gaps and the proposed changes are tracked in the [2026-09-24 audit](audits/2026-09-24-project-audit.md).
+Labby uses simulated annealing, not a genetic algorithm. The implementation is in `packages/core/src/schedule/`; the reproducible synthetic benchmark is `pnpm --filter @labby/core benchmark:scheduling`. The [project audit](audits/2026-09-24-project-audit.md) records the original production and product findings.
 
-## Mathematical and Informatics Principles
+## Inputs and rules
 
-- The scheduling problem is a constrained combinatorial optimization problem.
-- Exact global optimization is expensive for interactive use, so the solver uses heuristic search.
-- Labby uses simulated annealing: it accepts all better moves and sometimes worse moves with probability
+Full scheduling builds the configured calendar dates. Incremental scheduling preserves sessions before `changeDate` and rebuilds the rest; questioner-only mode preserves presenters too. Active people, unavailability, similarity, prior sessions, and optional constraints guide the solve.
 
-$$
-P(\text{accept}) = e^{-\Delta / T}
-$$
+Hard rules are checked on candidates and on the final result: a presenter cannot question themselves, a presentation cannot repeat a questioner, a session cannot repeat a presenter, assignments must use active and available people, `no-overlap` pairs cannot question each other, and a same-session reciprocal pair is forbidden when the config says `forbid`. If too few valid people exist, construction can leave a slot unfilled. An infeasible fixed assignment throws an error rather than being returned as a valid plan. The same validator runs when a plan is saved in server and browser storage.
 
-where $\Delta$ is cost increase and $T$ decreases over iterations.
+Each constraint resolves its person IDs and tag IDs to the union of **currently active** members at solve time. Duplicate membership is counted once. A tag rename keeps its identity; a membership change affects subsequent solves. History stores assignments rather than a tag-membership snapshot, so metrics recalculated later use the then-current membership and constraints. An empty resolved group has no effect. A referenced tag cannot be deleted until its constraint is changed or deleted. Existing person-only constraints are migrated to canonical `tagIds: []` in schema version 6. Pair constraints can use one group internally or two groups across which only crossing pairs are affected, including overlap between groups. `frequency-multiplier` can target presenter, questioner, or both roles. Its `baseline × multiplier` sets a relative desired load and `weight` controls its squared deviation cost. An `affinity-boost` above 1 rewards matching pairs; below 1 discourages them. `no-overlap` is always hard and has no weight.
 
-## Scope
+`reciprocalPairPreference` is `forbid`, `discourage`, `neutral`, or `encourage`. A reciprocal pair means that in one session A presents with B questioning and B presents with A questioning. `forbid` is a hard rule; the other values add a positive, zero, or negative cost respectively. It does not override availability, self-questioning, or other hard rules.
 
-- Solver implementation: packages/core/src/schedule/annealing.ts and packages/core/src/schedule/index.ts
-- This document covers scheduling only.
-- Similarity supervision and projection are documented in docs/algorithm-similarity.md.
+## Construction and search
 
-## What the Solver Does
+The initial presenter assignment uses deficit round robin with prior presenter history and frequency weights. The initial questioner assignment uses virtual finish time, similarity, affinity weights, and hard candidate vetoes. The objective then evaluates:
 
-The solver generates seminar sessions in two modes:
+- Each person's actual calendar-day presenter and questioner gaps, with half a nominal session interval of padding at the plan boundaries; count/load imbalance is scored separately.
+- Repeated directed presenter/questioner pairs and same-session reciprocal pairs.
+- Similarity distance from the configured radius, presenter/questioner/total role load, affinity and frequency preferences, and invalid-assignment penalties.
 
-- full scheduling: build all sessions from scratch
-- incremental scheduling: keep sessions before changeDate, rebuild the rest
+The search uses swaps, replacements, questioner and session rebuilds, frequency repair, short-gap repair, and reciprocal-pair repair. It runs two independent starts, up to 1,200 annealing steps per start, and samples up to four times when a neighbor is invalid or unchanged. Better moves are accepted; a worse move with cost increase `Δ` is accepted with probability `exp(-Δ/T)` as temperature cools. Search stops after the configured patience or iteration limit and returns the lowest-cost valid plan found. Incremental search also penalizes unnecessary presenter changes using Hamming distance.
 
-## Inputs
+`SolverDiagnostics` records initial and final objective, attempted iterations, accepted/invalid/unchanged neighbors, elapsed search milliseconds, and starts. The metrics dialog shows these alongside `ScheduleQualityReport`: each person's presentation count, target gap from weighted share, min/max actual gap, coefficient of variation, rate of gaps shorter than 75% of target, and first/last wait. For a person with zero or one presentation, internal gap statistics are `null`; first/last wait is shown when one exists. The report also counts reciprocal pairs and hard-rule violations. A lower aggregate objective is not by itself proof of acceptable business quality.
 
-- active persons (disabled persons are excluded)
-- schedule config: date range, weekdays, presenter/questioner counts, target similarity radius
-- person unavailabilities
-- keyword similarity map for presenter-questioner relevance
-- optional constraints
-- previous plan + changeDate (incremental mode)
+## Fixed-seed synthetic benchmark
 
-## Pipeline
+The benchmark uses seeds 1 and 2 for 12-person/13-week, 18-person/26-week with leave, and 24-person/40-week with leave and tag constraints. Each date has two presenters and two questioners per presentation. It compares the constructed initial plan with the final plan under the same seed. Results from 2026-09-24 on a local Mac:
 
-1. Generate session dates in UTC and keep configured weekdays.
-2. Build an availability-aware initial schedule with deficit round robin for presenters and virtual finish time for questioners.
-3. Improve the plan with local search (simulated annealing).
-4. Return the lowest-cost schedule found.
+| Scenario / seed | Min presenter gap (days) | Gaps < 14 days | Reciprocal pairs | Objective | Search time |
+| --- | --- | --- | --- | --- | --- |
+| Small / 1 | 14 → 21 | 0 → 0 | 0 → 0 | 749 → 614 | 184 ms |
+| Small / 2 | 7 → 21 | 2 → 0 | 0 → 0 | 689 → 601 | 172 ms |
+| Leave / 1 | 14 → 28 | 0 → 0 | 2 → 0 | 1156 → 1048 | 307 ms |
+| Leave / 2 | 21 → 21 | 0 → 0 | 1 → 0 | 1409 → 1098 | 297 ms |
+| Tags / 1 | 35 → 35 | 0 → 0 | 1 → 0 | 2039 → 1425 | 494 ms |
+| Tags / 2 | 21 → 42 | 0 → 0 | 0 → 0 | 1886 → 1380 | 470 ms |
 
-## Initial Assignment Rules
+All six final plans had zero hard-rule violations. A separate incremental seed 4 kept the frozen prefix byte-for-byte, reached a 35-day minimum presenter gap and zero reciprocal pairs, and took 267 ms. These are synthetic workloads and elapsed times vary by host; they do not establish production latency or a universal minimum gap. An infeasible hard-rule combination can still fail, and sparse schedules can have undefined gap statistics. Review per-person quality before publishing a plan.
 
-Presenter selection uses recovered deficit round robin state from historical presenter assignments, frequency-multiplier weights, availability vetoes, and small random jitter. It does not explicitly prioritize time since the person's last presentation.
+## History and manual editing
 
-Questioner selection uses recovered virtual finish time state from historical questioner assignments, availability and same-presentation vetoes, and similarity/affinity weights. Repeated presenter-questioner pairs are penalized by the objective, not directly by this initial picker.
-
-Hard validity rules:
-
-- presenter cannot be their own questioner
-- duplicate questioners in one presentation are not allowed
-- if candidate pool is too small, fewer questioners are allowed
-
-Availability rule:
-
-- people marked unavailable on a date are filtered out for both presenter and questioner assignment
-
-## Cost Function (Lower Is Better)
-
-Main penalty groups:
-
-- presenter and questioner count variance and pooled gap unevenness across people
-- repeated questioner-presenter pairs (grows quickly)
-- relevance mismatch to target radius
-- fairness variance (presenter count, questioner count, total role count)
-- invalid assignments (very large penalty)
-- optional constraint guidance during construction and mutation; the current `constraintPenalty` metric is always zero
-
-Implementation detail:
-
-- repeated pair penalty grows exponentially with frequency
-- invalid assignments use large hard penalties to keep search in valid regions
-
-Current optional constraints:
-
-- no-overlap
-- affinity-boost
-- frequency-multiplier
-
-No-overlap is a candidate veto. Affinity and frequency change selection weights. The declared no-overlap and frequency weights and the frequency baseline are not currently scored as separate constraint penalties.
-
-## Search Strategy
-
-Neighbor operations during annealing:
-
-- swap presenters across sessions
-- rebuild one presentation's questioner list
-- replace an over-represented presenter
-- target a frequency deviation
-- rebuild a full session
-
-The current run stops after 80 iterations without improvement to the best score, even when the configured 5,000-iteration cap has not been reached. There is no separate objective for same-session reciprocal presenter/questioner pairs.
-
-Acceptance:
-
-- always accept lower-cost neighbors
-- sometimes accept higher-cost neighbors early, less often later
-
-This helps avoid poor local minima while converging over time.
-
-## Incremental Scheduling Behavior
-
-- sessions before changeDate are frozen
-- sessions on/after changeDate are mutable
-- frozen sessions still count for fairness and pair-frequency history
-- additional Hamming penalty discourages unnecessary presenter churn
-
-Default date guidance and warning behavior:
-
-- recommended incremental changeDate is today + 7 days
-- the start date is inclusive: changeDate itself is part of the mutable set
-- if changeDate is earlier than the recommended default, UI shows a warning but does not block execution
-- full re-run can also show the same non-blocking warning when the configuration start date is earlier than the recommended default
-
-Hamming term meaning:
-
-- it penalizes changed (date, presenter) pairs between old mutable part and new mutable part
-
-## Metrics and Human-readable Explanations
-
-Each solve operation can return objective metrics and explanations:
-
-- `uniformityPenalty`
-- `questionerPenalty`
-- `relevancePenalty`
-- `presenterLoadPenalty`
-- `questionerLoadPenalty`
-- `totalRolePenalty`
-- `invalidAssignmentPenalty`
-- `constraintPenalty`
-- `totalCost`
-
-The server also exposes a metrics endpoint for:
-
-- one full history plan
-- one specific session date inside a plan
-
-Explanations are plain-language summaries for each metric item.
-
-## Temporary Session Insert/Delete (History-local)
-
-Temporary operations apply to the current history chain only (new snapshot), not to config defaults.
-
-Supported strategies:
-
-- in-place replan: only the target session date is changed; insertion generates a fresh presenter set for that date, and deletion removes the presenters assigned to that date
-- shift: presenter blocks after the insertion/deletion point keep their relative order and are moved onto the neighboring dates; insertion regenerates only the final shifted date, while deletion drops the final shifted block
-
-Session insertion and deletion are date-driven rather than reference-index-driven:
-
-- inserted dates must not overlap existing session dates
-- inserted sessions are merged back in calendar order
-- deleting a session removes the selected date itself, not the tail of the history
-
-These operations are intentionally non-destructive to previous history snapshots.
-
-## Edge Cases
-
-- if everyone is unavailable for a date, that session is empty
-- if available presenters are too few, session presentation count is reduced
-- if valid questioners are too few, questioner count is reduced instead of forcing invalid assignments
+The recommended incremental change date is today plus seven days. The boundary date belongs to the mutable suffix. The UI warns, but does not block, when the selected date is earlier. Manual editing creates a new history snapshot; previous snapshots remain. Temporary session insertion and deletion are date-driven, with in-place or suffix-shift strategies. The final assignment is validated before saving, and validation errors are shown to the editor.

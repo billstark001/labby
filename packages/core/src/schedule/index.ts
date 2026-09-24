@@ -17,12 +17,15 @@ import type {
   Session,
   SolverInput,
   IncrementalSolverInput,
+  SolverDiagnostics,
+  ScheduleQualityReport,
 } from '../types.js';
 import {
   buildConstraintGuidance,
   buildCostContext,
   computeCostBreakdown,
   toScheduleMetrics,
+  validateScheduleAssignments,
 } from './constraints.js';
 import {
   annealingSolver,
@@ -36,6 +39,7 @@ export {
 } from './mutation.js';
 
 export { COST_WEIGHTS } from './constraints.js';
+export { buildCostContext, buildConstraintGuidance, noOverlapForbidden, validateScheduleAssignments } from './constraints.js';
 export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing.js';
 export { solveConstrained } from './constrained.js';
 
@@ -51,6 +55,7 @@ function metricSummary(key: keyof ScheduleMetrics, value: number): string {
   switch (key) {
     case 'totalCost': return `Overall objective value: ${value.toFixed(3)} (lower is better).`;
     case 'uniformityPenalty': return `Presenter/questioner interval non-uniformity contributes ${value.toFixed(3)}.`;
+    case 'reciprocalPenalty': return `Same-session reciprocal pairs contribute ${value.toFixed(3)}.`;
     case 'questionerPenalty': return `Repeated questioner–presenter pairs contribute ${value.toFixed(3)}.`;
     case 'relevancePenalty': return `Similarity mismatch contributes ${value.toFixed(3)}.`;
     case 'presenterLoadPenalty': return `Presenter load imbalance variance is ${value.toFixed(3)}.`;
@@ -64,6 +69,7 @@ function metricSummary(key: keyof ScheduleMetrics, value: number): string {
 export function explainScheduleMetrics(metrics: ScheduleMetrics): MetricExplanation[] {
   const keys: Array<keyof ScheduleMetrics> = [
     'uniformityPenalty',
+    'reciprocalPenalty',
     'questionerPenalty',
     'relevancePenalty',
     'presenterLoadPenalty',
@@ -91,11 +97,61 @@ export function computeScheduleMetrics(
   return toScheduleMetrics(computeCostBreakdown(plan.sessions, ctx, guidance, historicalSessions));
 }
 
+export function computeScheduleQuality(
+  plan: SchedulePlan, input: SolverInput, historicalSessions: Session[] = [],
+): ScheduleQualityReport {
+  const all = [...historicalSessions, ...plan.sessions];
+  const days = all.map(session => Date.parse(`${session.date}T00:00:00Z`) / 86400000);
+  const ordered = [...days].sort((a, b) => a - b);
+  const spacings = ordered.slice(1).map((day, index) => day - ordered[index]!).sort((a, b) => a - b);
+  const nominal = spacings[Math.floor(spacings.length / 2)] ?? 7;
+  const first = ordered.length ? ordered[0]! - nominal / 2 : 0;
+  const last = ordered.length ? ordered[ordered.length - 1]! + nominal / 2 : 0;
+  const span = Math.max(0, last - first);
+  const ctx = buildCostContext(input);
+  const guidance = buildConstraintGuidance(ctx);
+  const weights = [...ctx.personKeywords.keys()].map(id => guidance.presenterWeights.get(id) ?? 1);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const slots = all.reduce((sum, session) => sum + session.presentations.length, 0);
+  const persons = [...ctx.personKeywords.keys()].map((personId, index) => {
+    const dates = all.flatMap((session, sessionIndex) => session.presentations
+      .filter(presentation => presentation.presenterId === personId).map(() => days[sessionIndex]!)).sort((a, b) => a - b);
+    const gaps = dates.slice(1).map((day, gapIndex) => day - dates[gapIndex]!);
+    const targetCount = totalWeight > 0 ? slots * weights[index]! / totalWeight : 0;
+    const targetGapDays = span / (targetCount + 1);
+    const mean = gaps.length ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 0;
+    const variance = gaps.length ? gaps.reduce((sum, gap) => sum + (gap - mean) ** 2, 0) / gaps.length : 0;
+    return {
+      personId, presentations: dates.length, targetGapDays,
+      minGapDays: gaps.length ? Math.min(...gaps) : null,
+      maxGapDays: gaps.length ? Math.max(...gaps) : null,
+      gapCoefficientOfVariation: gaps.length >= 2 && mean > 0 ? Math.sqrt(variance) / mean : null,
+      shortGapRate: gaps.length ? gaps.filter(gap => gap < 0.75 * targetGapDays).length / gaps.length : null,
+      firstWaitDays: dates.length ? dates[0]! - first : null,
+      lastWaitDays: dates.length ? last - dates[dates.length - 1]! : null,
+    };
+  });
+  let reciprocalPairs = 0;
+  for (const session of all) {
+    const pairs = new Set(session.presentations.flatMap(presentation => presentation.questionerIds.map(id => `${presentation.presenterId}|${id}`)));
+    for (const pair of pairs) {
+      const [a, b] = pair.split('|');
+      if (a! < b! && pairs.has(`${b}|${a}`)) reciprocalPairs++;
+    }
+  }
+  return { reciprocalPairs, hardViolations: validateScheduleAssignments(plan.sessions, input).length, persons };
+}
+
 // ---------------------------------------------------------------------------
 // Public solvers
 // ---------------------------------------------------------------------------
 
 const solver = annealingSolver;
+
+export function createSolverDiagnostics(): SolverDiagnostics {
+  return { initialCost: 0, finalCost: 0, iterations: 0, accepted: 0,
+    invalidNeighbors: 0, unchangedNeighbors: 0, durationMs: 0, restarts: 0 };
+}
 
 /** Generate a complete schedule from scratch. */
 export function solveFull(input: SolverInput): Session[] {

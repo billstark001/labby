@@ -6,7 +6,7 @@
  */
 
 import { getPersonSimilarity } from '../nlp.js';
-import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SolverInput } from '../types.js';
+import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SolverInput, SolverDiagnostics } from '../types.js';
 import {
   type CostContext,
   computeCost,
@@ -15,6 +15,8 @@ import {
   buildConstraintGuidance,
   ConstraintGuidance,
   noOverlapForbidden,
+  validateScheduleAssignments,
+  validateAssignmentsWithContext,
 } from './constraints.js';
 import { replaySessionMutations } from './mutation.js';
 import { generateSessionDates, buildUnavailMap, isISO8601 } from './utils.js';
@@ -33,28 +35,32 @@ import { drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './
  */
 export const MUTATION_WEIGHTS = {
   /** Swap presenter slots between two random sessions. */
-  swapPresenters: 0.20,
+  swapPresenters: 0.15,
   /** Reassign questioners for a random presentation. */
-  reassignQuestioners: 0.20,
+  reassignQuestioners: 0.15,
   /**
    * Replace a random presenter with the most under-represented eligible person
    * not currently scheduled in that session.
    */
-  replacePresenter: 0.20,
+  replacePresenter: 0.15,
   /**
    * Directly fix the person with the largest frequency-multiplier deviation by
    * inserting or removing them from a presentation slot.
    */
-  frequencyTargeted: 0.25,
+  frequencyTargeted: 0.15,
+  /** Replace one appearance in the shortest presenter interval. */
+  gapTargeted: 0.15,
+  /** Break a same-day reciprocal pair by changing one questioner. */
+  reciprocalTargeted: 0.10,
   /** Fully rebuild all presenter and questioner assignments for one session. */
   sessionRebuild: 0.15,
 };
 
 /** Simulated annealing hyperparameters. */
 export const ANNEALING_CONFIG = {
-  maxIter: 5000,
+  maxIter: 1200,
   /** Stop once the best score has not improved for this many iterations. */
-  maxStagnantIter: 80,
+  maxStagnantIter: 400,
   initialTemp: 1.0,
   coolingRate: 0.995,
   /** Hamming penalty weight applied during incremental solves. */
@@ -118,12 +124,14 @@ function chooseQuestioners(
   vftState: VFTState,
   guidance: ConstraintGuidance,
   isUnavailable?: (id: string) => boolean,
+  forbiddenReciprocalQuestioners?: Set<string>,
 ) {
   const isVetoed = (i: number) => {
     const id = personIds[i];
     return (
       id === presenterId
       || noOverlapForbidden(presenterId, id, guidance)
+      || forbiddenReciprocalQuestioners?.has(id)
       || isUnavailable?.(id)
       || questionerIds.includes(id)
     );
@@ -246,6 +254,9 @@ export class RandomScheduleGenerator {
         this.vftStateQuestioner,
         this.guidance,
         id => unavail.has(id),
+        this.ctx.reciprocalPreference === 'forbid'
+          ? new Set(presentations.filter(previous => previous.questionerIds.includes(presenterId)).map(previous => previous.presenterId))
+          : undefined,
       );
 
       presentations.push({ presenterId, questionerIds });
@@ -518,7 +529,64 @@ export function mutate(
       break;
     }
 
-    // ── 5. Fully rebuild one session's assignments ───────────────────────────
+    case 'gapTargeted': {
+      const dates = allSessions.map(session => Date.parse(`${session.date}T00:00:00Z`) / 86400000);
+      const span = dates.length ? Math.max(1, Math.max(...dates) - Math.min(...dates)) : 1;
+      let worst: { session: Session; index: number; ratio: number } | null = null;
+      for (const id of personIds) {
+        const appearances = allSessions.flatMap((session, sessionIndex) => session.presentations
+          .map((presentation, index) => presentation.presenterId === id ? { session, sessionIndex, index } : null)
+          .filter((item): item is { session: Session; sessionIndex: number; index: number } => item !== null));
+        const target = span / (appearances.length + 1);
+        for (let index = 1; index < appearances.length; index++) {
+          const later = appearances[index]!;
+          if (!clone.includes(later.session)) continue;
+          const ratio = (dates[later.sessionIndex]! - dates[appearances[index - 1]!.sessionIndex]!) / Math.max(1, target);
+          if (!worst || ratio < worst.ratio) worst = { session: later.session, index: later.index, ratio };
+        }
+      }
+      if (!worst || worst.ratio >= 0.9) break;
+      const { session, index } = worst;
+      const occupied = new Set(session.presentations.map(presentation => presentation.presenterId));
+      const unavailable = unavailMap.get(session.date) ?? new Set<string>();
+      const counts = rawPresenterCounts();
+      const candidates = personIds.filter(id => !occupied.has(id) && !unavailable.has(id));
+      if (!candidates.length) break;
+      candidates.sort((a, b) => (counts.get(a) ?? 0) - (counts.get(b) ?? 0));
+      const replacement = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))]!;
+      const presentation = session.presentations[index]!;
+      presentation.presenterId = replacement;
+      presentation.questionerIds = pickQuestioners(replacement, session.date,
+        presentation.questionerIds.length || config.questionersPerPresenter);
+      break;
+    }
+
+    case 'reciprocalTargeted': {
+      const reciprocal: Array<{ session: Session; presentation: Presentation; questionerIndex: number }> = [];
+      for (const session of clone) {
+        const pairs = new Set(session.presentations.flatMap(presentation => presentation.questionerIds.map(id => `${presentation.presenterId}|${id}`)));
+        for (const presentation of session.presentations)
+          presentation.questionerIds.forEach((id, questionerIndex) => {
+            if (pairs.has(`${id}|${presentation.presenterId}`)) reciprocal.push({ session, presentation, questionerIndex });
+          });
+      }
+      if (!reciprocal.length) break;
+      const selected = reciprocal[Math.floor(Math.random() * reciprocal.length)]!;
+      const { session, presentation, questionerIndex } = selected;
+      const unavailable = unavailMap.get(session.date) ?? new Set<string>();
+      const occupied = new Set(presentation.questionerIds);
+      const reversePresenters = new Set(session.presentations
+        .filter(other => other.questionerIds.includes(presentation.presenterId)).map(other => other.presenterId));
+      const candidates = personIds.filter(id => id !== presentation.presenterId && !occupied.has(id)
+        && !unavailable.has(id) && !reversePresenters.has(id)
+        && !noOverlapForbidden(presentation.presenterId, id, guidance));
+      if (!candidates.length) break;
+      candidates.sort((a, b) => affinityPairWeight(presentation.presenterId, b, guidance) - affinityPairWeight(presentation.presenterId, a, guidance));
+      presentation.questionerIds[questionerIndex] = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))]!;
+      break;
+    }
+
+    // ── Fully rebuild one session's assignments ───────────────────────────────
     // Escapes deep local optima by regenerating all presenter + questioner
     // assignments for a single session, weighted toward under-represented people.
     case 'sessionRebuild': {
@@ -600,7 +668,9 @@ export function simulatedAnnealing(
   hammingWeight: number,
   unavailMap: Map<string, Set<string>> = new Map(),
   maxIter = ANNEALING_CONFIG.maxIter,
+  diagnostics?: SolverDiagnostics,
 ): Session[] {
+  const started = performance.now();
   const guidance = buildConstraintGuidance(ctx);
 
   const personIds = [...ctx.personKeywords.keys()];
@@ -613,14 +683,29 @@ export function simulatedAnnealing(
   let best = deepCloneSessions(current);
   let bestCost = currentCost;
   let stagnantIterations = 0;
+  let iterations = 0;
+  let accepted = 0;
+  let invalidNeighbors = 0;
+  let unchangedNeighbors = 0;
 
   for (let iter = 0; iter < maxIter; iter++) {
     const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
-    const neighbor = mutate(current, personIds, ctx, guidance, historicalSessions, config, unavailMap);
+    let neighbor: Session[] | null = null;
+    const currentKey = JSON.stringify(current);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      iterations++;
+      const candidate = mutate(current, personIds, ctx, guidance, historicalSessions, config, unavailMap);
+      if (validateAssignmentsWithContext(candidate, ctx, guidance, unavailMap).length) { invalidNeighbors++; continue; }
+      if (JSON.stringify(candidate) === currentKey) { unchangedNeighbors++; continue; }
+      neighbor = candidate;
+      break;
+    }
+    if (!neighbor) { stagnantIterations++; continue; }
     const neighborCost = totalCost(neighbor);
     const delta = neighborCost - currentCost;
 
     if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
+      accepted++;
       current = neighbor;
       currentCost = neighborCost;
       if (currentCost < bestCost) {
@@ -638,6 +723,9 @@ export function simulatedAnnealing(
       break;
     }
   }
+  if (diagnostics) Object.assign(diagnostics, { initialCost: totalCost(initial), finalCost: bestCost,
+    iterations, accepted, invalidNeighbors, unchangedNeighbors,
+    durationMs: Math.round(performance.now() - started), restarts: 1 });
   return best;
 }
 
@@ -650,7 +738,9 @@ export function simulatedAnnealingQuestionersOnly(
   hammingWeight: number,
   unavailMap: Map<string, Set<string>> = new Map(),
   maxIter = ANNEALING_CONFIG.maxIter,
+  diagnostics?: SolverDiagnostics,
 ): Session[] {
+  const started = performance.now();
   const guidance = buildConstraintGuidance(ctx);
   const personIds = [...ctx.personKeywords.keys()];
   const totalCost = (sessions: Session[]) =>
@@ -662,14 +752,29 @@ export function simulatedAnnealingQuestionersOnly(
   let best = deepCloneSessions(current);
   let bestCost = currentCost;
   let stagnantIterations = 0;
+  let iterations = 0;
+  let accepted = 0;
+  let invalidNeighbors = 0;
+  let unchangedNeighbors = 0;
 
   for (let iter = 0; iter < maxIter; iter++) {
     const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
-    const neighbor = mutateQuestionersOnly(current, personIds, ctx, guidance, config, unavailMap);
+    let neighbor: Session[] | null = null;
+    const currentKey = JSON.stringify(current);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      iterations++;
+      const candidate = mutateQuestionersOnly(current, personIds, ctx, guidance, config, unavailMap);
+      if (validateAssignmentsWithContext(candidate, ctx, guidance, unavailMap).length) { invalidNeighbors++; continue; }
+      if (JSON.stringify(candidate) === currentKey) { unchangedNeighbors++; continue; }
+      neighbor = candidate;
+      break;
+    }
+    if (!neighbor) { stagnantIterations++; continue; }
     const neighborCost = totalCost(neighbor);
     const delta = neighborCost - currentCost;
 
     if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
+      accepted++;
       current = neighbor;
       currentCost = neighborCost;
       if (currentCost < bestCost) {
@@ -687,6 +792,10 @@ export function simulatedAnnealingQuestionersOnly(
       break;
     }
   }
+
+  if (diagnostics) Object.assign(diagnostics, { initialCost: totalCost(initial), finalCost: bestCost,
+    iterations, accepted, invalidNeighbors, unchangedNeighbors,
+    durationMs: Math.round(performance.now() - started), restarts: 1 });
 
   return best;
 }
@@ -703,10 +812,31 @@ export const annealingSolver: ScheduleSolver = {
 
     const unavailMap = buildUnavailMap(unavailabilities, config.id);
 
-    const initial = buildRandomSchedule(personIds, dates, config, ctx, [], unavailMap);
-    const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap);
-
-    return optimized;
+    const guidance = buildConstraintGuidance(ctx);
+    let best: Session[] | null = null;
+    let bestCost = Infinity;
+    const diagnostics: SolverDiagnostics[] = [];
+    for (let restart = 0; restart < 2; restart++) {
+      const initial = buildRandomSchedule(personIds, dates, config, ctx, [], unavailMap);
+      const run = {} as SolverDiagnostics;
+      const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap, ANNEALING_CONFIG.maxIter, run);
+      diagnostics.push(run);
+      const cost = computeCost(optimized, ctx, guidance);
+      if (cost < bestCost) { best = optimized; bestCost = cost; }
+    }
+    const result = best ?? [];
+    const violations = validateScheduleAssignments(result, input);
+    if (violations.length) throw new Error(violations[0]);
+    if (input.diagnostics) Object.assign(input.diagnostics, {
+      initialCost: diagnostics.reduce((minimum, run) => Math.min(minimum, run.initialCost), Infinity),
+      finalCost: bestCost,
+      iterations: diagnostics.reduce((total, run) => total + run.iterations, 0),
+      accepted: diagnostics.reduce((total, run) => total + run.accepted, 0),
+      invalidNeighbors: diagnostics.reduce((total, run) => total + run.invalidNeighbors, 0),
+      unchangedNeighbors: diagnostics.reduce((total, run) => total + run.unchangedNeighbors, 0),
+      durationMs: diagnostics.reduce((total, run) => total + run.durationMs, 0), restarts: diagnostics.length,
+    });
+    return result;
   },
 
   /**
@@ -740,6 +870,7 @@ export const annealingSolver: ScheduleSolver = {
     const hammingRef = useHamming ? activeSessions : null;
 
     if (mode === 'questioners-only') {
+      const run = {} as SolverDiagnostics;
       const initial = rebuildQuestionersForSessions(activeSessions, personIds, ctx, config, unavailMap);
       const optimized = simulatedAnnealingQuestionersOnly(
         initial,
@@ -749,8 +880,13 @@ export const annealingSolver: ScheduleSolver = {
         hammingRef,
         ANNEALING_CONFIG.hammingWeight,
         unavailMap,
+        ANNEALING_CONFIG.maxIter,
+        run,
       );
 
+      const violations = validateScheduleAssignments(optimized, input);
+      if (violations.length) throw new Error(violations[0]);
+      if (input.diagnostics) Object.assign(input.diagnostics, run);
       return frozenSessions.concat(optimized);
     }
 
@@ -759,13 +895,35 @@ export const annealingSolver: ScheduleSolver = {
       replaySessionMutations(mutableDates, mutations, { inPlace: true, startDate: changeDate });
     }
 
-    const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
-    const optimized = simulatedAnnealing(
-      initial, ctx, frozenSessions, config,
-      hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap,
-    );
-
-    return frozenSessions.concat(optimized);
+    const guidance = buildConstraintGuidance(ctx);
+    let best: Session[] | null = null;
+    let bestCost = Infinity;
+    const diagnostics: SolverDiagnostics[] = [];
+    for (let restart = 0; restart < 2; restart++) {
+      const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
+      const run = {} as SolverDiagnostics;
+      const optimized = simulatedAnnealing(
+        initial, ctx, frozenSessions, config,
+        hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap, ANNEALING_CONFIG.maxIter, run,
+      );
+      diagnostics.push(run);
+      const cost = computeCost(optimized, ctx, guidance, frozenSessions)
+        + (hammingRef ? ANNEALING_CONFIG.hammingWeight * hammingDistance(optimized, hammingRef) : 0);
+      if (cost < bestCost) { best = optimized; bestCost = cost; }
+    }
+    const result = best ?? [];
+    const violations = validateScheduleAssignments(result, input);
+    if (violations.length) throw new Error(violations[0]);
+    if (input.diagnostics) Object.assign(input.diagnostics, {
+      initialCost: diagnostics.reduce((minimum, run) => Math.min(minimum, run.initialCost), Infinity),
+      finalCost: bestCost,
+      iterations: diagnostics.reduce((total, run) => total + run.iterations, 0),
+      accepted: diagnostics.reduce((total, run) => total + run.accepted, 0),
+      invalidNeighbors: diagnostics.reduce((total, run) => total + run.invalidNeighbors, 0),
+      unchangedNeighbors: diagnostics.reduce((total, run) => total + run.unchangedNeighbors, 0),
+      durationMs: diagnostics.reduce((total, run) => total + run.durationMs, 0), restarts: diagnostics.length,
+    });
+    return frozenSessions.concat(result);
   },
 }
 

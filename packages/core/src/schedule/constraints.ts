@@ -12,6 +12,7 @@ import type {
   ScheduleConstraint,
   SimilarityLookup,
 } from '../types.js';
+import { buildUnavailMap } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // Configurable cost weights
@@ -22,13 +23,13 @@ import type {
  * Increase a weight to penalize that term more heavily during optimization.
  */
 export const COST_WEIGHTS = {
-  /** Unused */
-  uniformity: 1,
+  uniformity: 12,
+  reciprocal: 1,
   /** Exponential penalty for repeated (questioner → presenter) pairs. */
   questioner: 1,
   /** |sim(questioner, presenter) − r| summed over all pairs. */
   relevance: 0.8,
-  /** Uniformity penalty of per-person presenter appearance counts & gaps. */
+  /** Uniformity penalty of per-person presenter appearance counts. */
   presenterLoad: 8,
   /** Uniformity penalty of per-person questioner appearance counts & gaps. */
   questionerLoad: 8,
@@ -36,7 +37,6 @@ export const COST_WEIGHTS = {
   totalRole: 2,
   /** Hard penalty for self-questioning or duplicate questioners within one presentation. */
   invalidAssignment: 114514,
-  /** Unused */
   constraint: 1,
 };
 
@@ -46,14 +46,17 @@ export const COST_WEIGHTS = {
 
 export interface CostContext {
   personKeywords: Map<string, string[]>;
+  personTags: Map<string, string[]>;
   similarities: SimilarityLookup;
   /** Target similarity radius r. */
   r: number;
+  reciprocalPreference: 'forbid' | 'discourage' | 'neutral' | 'encourage';
   constraints?: ScheduleConstraint[];
 }
 
 export interface CostBreakdown {
   uniformityPenalty: number;
+  reciprocalPenalty: number;
   questionerPenalty: number;
   relevancePenalty: number;
   presenterLoadPenalty: number;
@@ -68,11 +71,13 @@ export interface CostBreakdown {
 
 
 export interface NoOverlapGuide {
-  group: Set<string>;
+  left: Set<string>;
+  right?: Set<string>;
 }
 
 export interface AffinityGuide {
-  group: Set<string>;
+  left: Set<string>;
+  right?: Set<string>;
   boost: number;
 }
 
@@ -104,18 +109,25 @@ export function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
   };
 
   const allPersonIds = new Set<string>();
+  const resolve = (personIds: string[], tagIds: string[]): Set<string> => new Set(
+    [...ctx.personTags].filter(([id, tags]) => personIds.includes(id) || tags.some(tag => tagIds.includes(tag))).map(([id]) => id),
+  );
 
   for (const c of ctx.constraints ?? []) {
     if (c.type === 'no-overlap') {
       guidance.noOverlap.push({
-        group: new Set(c.personIds),
+        left: resolve(c.personIds, c.tagIds),
+        right: c.otherPersonIds?.length || c.otherTagIds?.length
+          ? resolve(c.otherPersonIds ?? [], c.otherTagIds ?? []) : undefined,
       });
       continue;
     }
 
     if (c.type === 'affinity-boost') {
       guidance.affinity.push({
-        group: new Set(c.personIds),
+        left: resolve(c.personIds, c.tagIds),
+        right: c.otherPersonIds?.length || c.otherTagIds?.length
+          ? resolve(c.otherPersonIds ?? [], c.otherTagIds ?? []) : undefined,
         boost: c.boost ?? 2,
       });
       continue;
@@ -124,11 +136,12 @@ export function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
     if (c.type === 'frequency-multiplier') {
       const baseline = Number.isFinite(c.baseline) ? Math.max(0, c.baseline) : 0;
       const multiplier = Number.isFinite(c.multiplier) ? c.multiplier : 1;
-      for (const id of c.personIds) {
+      const members = resolve(c.personIds, c.tagIds);
+      for (const id of members) {
         allPersonIds.add(id);
       }
       guidance.frequency.push({
-        personIds: new Set(c.personIds),
+        personIds: members,
         baseline,
         multiplier,
         roleScope: c.roleScope ?? 'presenter',
@@ -152,7 +165,7 @@ export function noOverlapForbidden(
   guidance: ConstraintGuidance,
 ): boolean {
   for (const c of guidance.noOverlap) {
-    if (c.group.has(presenterId) && c.group.has(questionerId)) return true;
+    if (pairMatches(c, presenterId, questionerId)) return true;
   }
   return false;
 }
@@ -165,7 +178,7 @@ export function affinityPairWeight(
 ): number {
   let factor = 1;
   for (const c of guidance.affinity) {
-    if (!c.group.has(presenterId) || !c.group.has(questionerId)) continue;
+    if (!pairMatches(c, presenterId, questionerId)) continue;
     const boost = Number.isFinite(c.boost) ? c.boost : 1;
     if (boost > 0) factor *= boost;
   }
@@ -181,10 +194,15 @@ export function frequencyRoleWeight(
   for (const f of guidance.frequency) {
     if (!f.personIds.has(personId)) continue;
     if (f.roleScope !== 'both' && f.roleScope !== role) continue;
-    const m = Number.isFinite(f.multiplier) ? f.multiplier : 1;
-    if (m > 0) factor *= m;
+    const m = Number.isFinite(f.multiplier) ? Math.max(0, f.multiplier) : 1;
+    factor *= Math.max(0.01, f.baseline * m);
   }
   return factor;
+}
+
+function pairMatches(group: { left: Set<string>; right?: Set<string> }, a: string, b: string): boolean {
+  if (!group.right) return group.left.has(a) && group.left.has(b);
+  return (group.left.has(a) && group.right.has(b)) || (group.right.has(a) && group.left.has(b));
 }
 
 // #endregion
@@ -246,22 +264,39 @@ function uniformityPenalty(
   );
 }
 
-function buildAllCountsAndAllGaps(indicesByPerson: Map<string, number[]>, weights: Map<string, number>, personIds?: string[]): { allCounts: number[]; allGaps: number[] } {
+function buildAllCounts(indicesByPerson: Map<string, number[]>, weights: Map<string, number>, personIds: string[]): number[] {
   const allCounts: number[] = [];
-  const allGaps: number[] = [];
 
-  for (const personId of personIds ?? indicesByPerson.keys()) {
+  for (const personId of personIds) {
     const indices = indicesByPerson.get(personId) ?? [];
-    const factor = weights.get(personId) || 1;
+    const factor = weights.get(personId) ?? 1;
     allCounts.push(indices.length / factor);
-    if (indices.length < 2) continue;
-    const gaps = indices.slice(1).map((v, i) => v - indices[i]);
-    allGaps.push(...gaps);
   }
-  return {
-    allCounts,
-    allGaps,
+  return allCounts;
+}
+
+/** Each person's own calendar gaps, including half-session padding at both ends. */
+function perPersonGapPenalty(indicesByPerson: Map<string, number[]>, dates: number[], personIds: string[]): number {
+  if (dates.length < 2) return 0;
+  const ordered = [...dates].sort((a, b) => a - b);
+  const spacings = ordered.slice(1).map((date, i) => date - ordered[i]!);
+  spacings.sort((a, b) => a - b);
+  const nominal = spacings[Math.floor(spacings.length / 2)] ?? 7;
+  const first = ordered[0]! - nominal / 2;
+  const last = ordered[ordered.length - 1]! + nominal / 2;
+  let penalty = 0;
+  for (const id of personIds) {
+    const occurrences = (indicesByPerson.get(id) ?? []).map(index => dates[index]!).sort((a, b) => a - b);
+    if (occurrences.length === 0) continue;
+    const target = (last - first) / (occurrences.length + 1);
+    if (target <= 0) continue;
+    const gaps = [occurrences[0]! - first, ...occurrences.slice(1).map((date, i) => date - occurrences[i]!), last - occurrences[occurrences.length - 1]!];
+    for (const gap of gaps) {
+      const deviation = (gap - target) / target;
+      penalty += deviation * deviation + 8 * Math.max(0, 0.75 - gap / target) ** 2;
+    }
   }
+  return penalty;
 }
 
 
@@ -286,10 +321,17 @@ export function computeCostBreakdown(
 
   // 2. Questioner frequency
   let questionerPenalty = 0;
+  let reciprocalPenalty = 0;
+  let constraintPenalty = 0;
   const questionerFreq = new Map<string, number>();
+  const dateDays = allSessions.map(session => Date.parse(`${session.date}T00:00:00Z`) / 86400000);
 
   allSessions.forEach((sess, idx) => {
+    const directedPairs = new Set<string>();
+    const presentersThisSession = new Set<string>();
     for (const pres of sess.presentations) {
+      if (presentersThisSession.has(pres.presenterId)) invalidAssignmentPenalty += 1;
+      presentersThisSession.add(pres.presenterId);
       // Record presenter indices for uniformity penalty calculation.
       const arr = presenterIndices.get(pres.presenterId) ?? [];
       arr.push(idx);
@@ -306,34 +348,37 @@ export function computeCostBreakdown(
 
         if (q === pres.presenterId) invalidAssignmentPenalty += 1;
         if (seen.has(q)) invalidAssignmentPenalty += 0.5;
+        if (noOverlapForbidden(pres.presenterId, q, guidance)) constraintPenalty += COST_WEIGHTS.invalidAssignment;
+        for (const c of guidance.affinity) {
+          if (pairMatches(c, pres.presenterId, q)) constraintPenalty -= Math.log(Math.max(0.01, c.boost)) * 4;
+        }
         seen.add(q);
+        directedPairs.add(`${pres.presenterId}|${q}`);
         const key = `${q}→${pres.presenterId}`;
         const freq = (questionerFreq.get(key) ?? 0) + 1;
         questionerFreq.set(key, freq);
         if (freq > 1) questionerPenalty += Math.exp(freq - 1) - 1;
       }
     }
+    if (ctx.reciprocalPreference !== 'neutral') {
+      for (const pair of directedPairs) {
+        const [a, b] = pair.split('|');
+        if (a! < b! && directedPairs.has(`${b}|${a}`)) {
+          reciprocalPenalty += ctx.reciprocalPreference === 'forbid'
+            ? COST_WEIGHTS.invalidAssignment
+            : ctx.reciprocalPreference === 'discourage' ? 10 : -10;
+        }
+      }
+    }
   });
 
-  const {
-    allCounts: presenterAllCounts,
-    allGaps: presenterAllGaps,
-  } = buildAllCountsAndAllGaps(presenterIndices, guidance.presenterWeights, personIds);
-
-  const {
-    allCounts: questionerAllCounts,
-    allGaps: questionerAllGaps,
-  } = buildAllCountsAndAllGaps(questionerIndices, guidance.questionerWeights, personIds);
-
-  const gapOptions: UniformityPenaltyOptions = {
-    minGapTargetRatio: 0.9,
-    maxGapTargetRatio: 1.1,
-    variancePenaltyWeight: 5,
-  };
+  const presenterAllCounts = buildAllCounts(presenterIndices, guidance.presenterWeights, personIds);
+  const questionerAllCounts = buildAllCounts(questionerIndices, guidance.questionerWeights, personIds);
 
   // 3. Uniformity penalty
-  const presenterLoadPenalty = uniformityPenalty(presenterAllCounts) + uniformityPenalty(presenterAllGaps, gapOptions);
-  const questionerLoadPenalty = uniformityPenalty(questionerAllCounts) + uniformityPenalty(questionerAllGaps, gapOptions);
+  const uniformityPenaltyValue = perPersonGapPenalty(presenterIndices, dateDays, personIds);
+  const presenterLoadPenalty = uniformityPenalty(presenterAllCounts);
+  const questionerLoadPenalty = uniformityPenalty(questionerAllCounts) + perPersonGapPenalty(questionerIndices, dateDays, personIds);
 
   // 4. Domain relevance – |sim(q, presenter) − r|
   let relevancePenalty = 0;
@@ -352,21 +397,36 @@ export function computeCostBreakdown(
   const totalRoleAllCounts = presenterAllCounts.map((c, i) => c + questionerAllCounts[i]);
   const totalRolePenalty = uniformityPenalty(totalRoleAllCounts);
 
+  for (const rule of guidance.frequency) {
+    const roles = rule.roleScope;
+    const allCount = (roles === 'presenter' ? [...presenterIndices.values()].flat().length
+      : roles === 'questioner' ? [...questionerIndices.values()].flat().length
+        : [...presenterIndices.values(), ...questionerIndices.values()].flat().length);
+    const target = personIds.length ? allCount / personIds.length * rule.baseline * rule.multiplier : 0;
+    for (const id of rule.personIds) {
+      const actual = (roles === 'questioner' ? 0 : (presenterIndices.get(id)?.length ?? 0))
+        + (roles === 'presenter' ? 0 : (questionerIndices.get(id)?.length ?? 0));
+      constraintPenalty += rule.weight * (actual - target) ** 2 / Math.max(1, target);
+    }
+  }
+
   return {
-    uniformityPenalty: 0,
+    uniformityPenalty: uniformityPenaltyValue,
+    reciprocalPenalty,
     questionerPenalty,
     relevancePenalty,
     presenterLoadPenalty,
     questionerLoadPenalty,
     totalRolePenalty,
     invalidAssignmentPenalty,
-    constraintPenalty: 0,
+    constraintPenalty,
   };
 }
 
 export function weightedTotalCost(breakdown: CostBreakdown): number {
   return (
     breakdown.uniformityPenalty * COST_WEIGHTS.uniformity
+    + breakdown.reciprocalPenalty * COST_WEIGHTS.reciprocal
     + breakdown.questionerPenalty * COST_WEIGHTS.questioner
     + breakdown.relevancePenalty * COST_WEIGHTS.relevance
     + breakdown.presenterLoadPenalty * COST_WEIGHTS.presenterLoad
@@ -385,8 +445,10 @@ export function buildCostContext(input: SolverInput): CostContext {
   const active = input.persons.filter(p => !p.disabled);
   return {
     personKeywords: new Map(active.map(p => [p.id, p.keywordIds])),
+    personTags: new Map(active.map(p => [p.id, p.tagIds ?? []])),
     similarities: input.similarities,
     r: input.config.targetSimilarityRadius,
+    reciprocalPreference: input.config.reciprocalPairPreference ?? 'neutral',
     constraints: input.constraints ?? [],
   };
 }
@@ -398,4 +460,49 @@ export function computeCost(
   historicalSessions: Session[] = [],
 ): number {
   return weightedTotalCost(computeCostBreakdown(sessions, ctx, guidance, historicalSessions));
+}
+
+/** Validate the hard assignment rules against the people and constraints in a solve. */
+export function validateScheduleAssignments(sessions: Session[], input: SolverInput): string[] {
+  const ctx = buildCostContext(input);
+  const guidance = buildConstraintGuidance(ctx);
+  const unavailable = buildUnavailMap(input.unavailabilities ?? [], input.config.id);
+  return validateAssignmentsWithContext(sessions, ctx, guidance, unavailable);
+}
+
+export function validateAssignmentsWithContext(
+  sessions: Session[], ctx: CostContext, guidance: ConstraintGuidance,
+  unavailable: Map<string, Set<string>>,
+): string[] {
+  const errors: string[] = [];
+  for (const session of sessions) {
+    const seenPresenters = new Set<string>();
+    const pairs = new Set<string>();
+    for (const presentation of session.presentations) {
+      const presenter = presentation.presenterId;
+      if (!ctx.personKeywords.has(presenter) || unavailable.get(session.date)?.has(presenter))
+        errors.push(`Invalid presenter on ${session.date}`);
+      if (seenPresenters.has(presenter)) errors.push(`Duplicate presenter on ${session.date}`);
+      seenPresenters.add(presenter);
+      const seenQuestioners = new Set<string>();
+      for (const questioner of presentation.questionerIds) {
+        if (!ctx.personKeywords.has(questioner) || unavailable.get(session.date)?.has(questioner))
+          errors.push(`Invalid questioner on ${session.date}`);
+        if (questioner === presenter || seenQuestioners.has(questioner))
+          errors.push(`Duplicate or self-questioning assignment on ${session.date}`);
+        if (noOverlapForbidden(presenter, questioner, guidance))
+          errors.push(`No-overlap constraint violated on ${session.date}`);
+        seenQuestioners.add(questioner);
+        pairs.add(`${presenter}|${questioner}`);
+      }
+    }
+    if (ctx.reciprocalPreference === 'forbid') {
+      for (const pair of pairs) {
+        const [a, b] = pair.split('|');
+        if (a! < b! && pairs.has(`${b}|${a}`))
+          errors.push(`Reciprocal questioning is forbidden on ${session.date}`);
+      }
+    }
+  }
+  return errors;
 }
