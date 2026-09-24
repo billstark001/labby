@@ -11,7 +11,7 @@ import {
   validateScheduleAssignments,
 } from './constraints.js';
 import { ANNEALING_CONFIG } from './annealing.js';
-import { buildUnavailMap } from './utils.js';
+import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 
 interface SlotMask {
   presenterAuto: boolean;
@@ -29,7 +29,9 @@ export function solveConstrained(input: ConstrainedSolverInput): Session[] {
 
   const ctx = buildCostContext(input);
   const guidance = buildConstraintGuidance(ctx);
-  const unavailability = buildUnavailMap(input.unavailabilities ?? [], input.config.id);
+  const unavailability = buildUnavailMap(input.unavailabilities ?? [], input.config.id, input.persons, input.template.map(session => session.date));
+  const closed = input.template.find(session => isWholeGroupClosure(session.date, input.unavailabilities ?? [], input.config.id));
+  if (closed) throw new Error(`Session falls on a whole-group closure: ${closed.date}`);
   const masks: SlotMask[][] = input.template.map(session => session.presentations.map(presentation => ({
     presenterAuto: presentation.presenterId === null,
     questionerAuto: presentation.questionerIds.map(id => id === null),

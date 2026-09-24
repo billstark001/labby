@@ -93,8 +93,9 @@ const scenarios = [
 const rows: unknown[] = [];
 for (const input of scenarios) for (const seed of input.config.id === 'balance-14' ? [1, 2, 3, 4, 5] : [1, 2]) {
   const context = buildCostContext(input);
-  const initial = seeded(seed, () => buildRandomSchedule([...context.personKeywords.keys()], generateSessionDates(input.config),
-    input.config, context, [], buildUnavailMap(input.unavailabilities ?? [], input.config.id)));
+  const dates = generateSessionDates(input.config);
+  const initial = seeded(seed, () => buildRandomSchedule([...context.personKeywords.keys()], dates,
+    input.config, context, [], buildUnavailMap(input.unavailabilities ?? [], input.config.id, input.persons, dates)));
   const diagnostics = createSolverDiagnostics();
   const final = seeded(seed, () => solveFull({ ...input, diagnostics }));
   rows.push({ scenario: input.config.id, seed, initial: businessMetrics(initial, input), final: businessMetrics(final, input), search: diagnostics });

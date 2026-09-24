@@ -20,7 +20,7 @@ import {
   validateAssignmentsWithContext,
 } from './constraints.js';
 import { replaySessionMutations } from './mutation.js';
-import { generateSessionDates, buildUnavailMap, isISO8601 } from './utils.js';
+import { generateSessionDates, buildUnavailMap, isISO8601, isWholeGroupClosure } from './utils.js';
 import { drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './wps.js';
 
 // ---------------------------------------------------------------------------
@@ -239,7 +239,7 @@ export class RandomScheduleGenerator {
     const unavail = this.unavailMap.get(date) ?? new Set<string>();
     const n = Math.min(maxPresentersOverride ?? this.maxPresenters, this.personIds.length - unavail.size);
     if (n === 0) {
-      return [];
+      throw new Error(`No eligible presenters are available on ${date}`);
     }
 
     const presenters = choosePresenters(this.personIds, n, this.drrState, id => unavail.has(id));
@@ -856,15 +856,21 @@ export const annealingSolver: ScheduleSolver = {
     if (mutations?.length) {
       replaySessionMutations(dates, mutations, { inPlace: true });
     }
+    const openDates = dates.filter(date => !isWholeGroupClosure(date, unavailabilities, config.id));
+    if (openDates.length === 0) {
+      if (input.diagnostics) Object.assign(input.diagnostics, { initialCost: 0, finalCost: 0, iterations: 0,
+        accepted: 0, invalidNeighbors: 0, unchangedNeighbors: 0, durationMs: 0, restarts: 0 });
+      return [];
+    }
 
-    const unavailMap = buildUnavailMap(unavailabilities, config.id);
+    const unavailMap = buildUnavailMap(unavailabilities, config.id, input.persons, openDates);
 
     const guidance = buildConstraintGuidance(ctx);
     let best: Session[] | null = null;
     let bestCost = Infinity;
     const diagnostics: SolverDiagnostics[] = [];
     for (let restart = 0; restart < 2; restart++) {
-      const initial = buildRandomSchedule(personIds, dates, config, ctx, [], unavailMap);
+      const initial = buildRandomSchedule(personIds, openDates, config, ctx, [], unavailMap);
       const run = {} as SolverDiagnostics;
       const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap, ANNEALING_CONFIG.maxIter, run);
       diagnostics.push(run);
@@ -909,14 +915,15 @@ export const annealingSolver: ScheduleSolver = {
     }
 
     const frozenSessions = sessions.slice(0, index);
-    const activeSessions = sessions.slice(index);
+    const activeSessions = sessions.slice(index).filter(session => !isWholeGroupClosure(session.date, unavailabilities, config.id));
 
     const ctx = buildCostContext(input);
     const personIds = [...ctx.personKeywords.keys()];
-    const unavailMap = buildUnavailMap(unavailabilities, config.id);
     const hammingRef = useHamming ? activeSessions : null;
 
     if (mode === 'questioners-only') {
+      if (activeSessions.length === 0) return frozenSessions;
+      const unavailMap = buildUnavailMap(unavailabilities, config.id, input.persons, activeSessions.map(session => session.date));
       const run = {} as SolverDiagnostics;
       const initial = rebuildQuestionersForSessions(activeSessions, personIds, ctx, config, unavailMap);
       const optimized = simulatedAnnealingQuestionersOnly(
@@ -941,13 +948,20 @@ export const annealingSolver: ScheduleSolver = {
     if (mutations?.length) {
       replaySessionMutations(mutableDates, mutations, { inPlace: true, startDate: changeDate });
     }
+    const openDates = mutableDates.filter(date => !isWholeGroupClosure(date, unavailabilities, config.id));
+    if (openDates.length === 0) {
+      if (input.diagnostics) Object.assign(input.diagnostics, { initialCost: 0, finalCost: 0, iterations: 0,
+        accepted: 0, invalidNeighbors: 0, unchangedNeighbors: 0, durationMs: 0, restarts: 0 });
+      return frozenSessions;
+    }
 
     const guidance = buildConstraintGuidance(ctx);
+    const unavailMap = buildUnavailMap(unavailabilities, config.id, input.persons, openDates);
     let best: Session[] | null = null;
     let bestCost = Infinity;
     const diagnostics: SolverDiagnostics[] = [];
     for (let restart = 0; restart < 2; restart++) {
-      const initial = buildRandomSchedule(personIds, mutableDates, config, ctx, frozenSessions, unavailMap);
+      const initial = buildRandomSchedule(personIds, openDates, config, ctx, frozenSessions, unavailMap);
       const run = {} as SolverDiagnostics;
       const optimized = simulatedAnnealing(
         initial, ctx, frozenSessions, config,

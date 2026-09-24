@@ -46,7 +46,7 @@ export { solveConstrained } from './constrained.js';
 // ---------------------------------------------------------------------------
 // Date / ID utilities
 // ---------------------------------------------------------------------------
-export { generateId, generateSessionDates } from './utils.js';
+export { generateId, generateSessionDates, isWholeGroupClosure, validateUnavailability } from './utils.js';
 // ---------------------------------------------------------------------------
 // Metrics
 // ---------------------------------------------------------------------------

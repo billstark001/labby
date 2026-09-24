@@ -1,5 +1,6 @@
 import { keywordVectorsToSimilarityLookup } from '../src/nlp.js';
 import { describe, expect, test } from 'vitest';
+import { buildUnavailMap } from '../src/schedule/utils';
 import {
   generateSessionDates,
   initKeywordVectors,
@@ -8,6 +9,7 @@ import {
   SimilarityLookup,
   solveFull,
   solveIncremental,
+  validateUnavailability,
   type Person,
   type ScheduleConfig,
   type SchedulePlan,
@@ -224,21 +226,21 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     const unavailable = [
       {
         id: 'u1',
-        personId: 'p2',
+        personIds: ['p2'], tagIds: [], allPeople: false,
         configId: config.id,
         startDate: '2026-04-03',
         endDate: '2026-04-03',
       },
       {
         id: 'u2',
-        personId: 'p3',
+        personIds: ['p3'], tagIds: [], allPeople: false,
         configId: config.id,
         startDate: '2026-04-03',
         endDate: '2026-04-03',
       },
       {
         id: 'u3',
-        personId: 'p4',
+        personIds: ['p4'], tagIds: [], allPeople: false,
         configId: config.id,
         startDate: '2026-04-03',
         endDate: '2026-04-03',
@@ -267,6 +269,37 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     const target = plan.sessions.find((s: Session) => s.date === '2026-04-03');
     expect(target).toBeDefined();
     expect(target?.presentations.some((p: any) => p.presenterId === 'p2' || p.presenterId === 'p3' || p.presenterId === 'p4')).toBe(false);
+  });
+
+  test('inclusive tag unavailability and whole-group closures apply at solve time', () => {
+    const persons = makePersons().map(person => person.id === 'p1' ? { ...person, tagIds: ['travel'] } : person);
+    const config = makeConfig({ startDate: '2026-04-01', endDate: '2026-04-08', daysOfWeek: [1, 3, 5] });
+    const tagged = { id: 'tagged', configId: config.id, personIds: [], tagIds: ['travel'], allPeople: false,
+      startDate: '2026-04-01', endDate: '2026-04-03' };
+    const closed = { id: 'holiday', configId: config.id, personIds: [], tagIds: [], allPeople: true,
+      startDate: '2026-04-06', endDate: '2026-04-08' };
+    expect(validateUnavailability(tagged)).toEqual([]);
+    const input: SolverInput = { config, persons, similarities: makeSimilarities(), unavailabilities: [tagged, closed] };
+    const sessions = withSeed(8, () => solveFull(input));
+    expect(sessions.map(session => session.date)).toEqual(['2026-04-01', '2026-04-03']);
+    expect(sessions.every(session => session.presentations.every(presentation =>
+      presentation.presenterId !== 'p1' && !presentation.questionerIds.includes('p1')))).toBe(true);
+    const noDates = withSeed(8, () => solveFull({ ...input, unavailabilities: [{ ...closed,
+      startDate: config.startDate, endDate: config.endDate }] }));
+    expect(noDates).toEqual([]);
+    expect(validateUnavailability({ ...closed, personIds: ['p1'] })).not.toEqual([]);
+  });
+
+  test('everyone selector follows roster changes and only materializes requested dates', () => {
+    const closure = { id: 'all', configId: 'cfg-1', personIds: [], tagIds: [], allPeople: true,
+      startDate: '2026-01-01', endDate: '2036-12-31' };
+    const date = '2030-05-06';
+    const original = makePersons().slice(0, 1);
+    expect(buildUnavailMap([closure], 'cfg-1', original, [date]).get(date)).toEqual(new Set(['p1']));
+    const grown = [...original, { ...makePersons()[1]!, id: 'new-person' }];
+    const map = buildUnavailMap([closure], 'cfg-1', grown, [date]);
+    expect(map.get(date)).toEqual(new Set(['p1', 'new-person']));
+    expect([...map.keys()]).toEqual([date]);
   });
 
   test('incremental solver keeps sessions before changeDate unchanged', () => {

@@ -224,13 +224,13 @@ export interface ScheduleSessionMutationRecord {
   createdAt: number;
 }
 
-/** A period when a person is unavailable (cannot present or question). */
+/** Inclusive calendar-date range when selected people, tag members, or everyone is unavailable. */
 export interface PersonUnavailability {
   id: string;
-  /** @deprecated Use personIds for multi-person unavailability. */
-  personId?: string;
-  /** One or many persons covered by this unavailable range. */
-  personIds?: string[];
+  personIds: string[];
+  tagIds: string[];
+  /** A whole-group closure cancels generated sessions on these dates. */
+  allPeople: boolean;
   configId: string;
   startDate: string; // ISO date
   endDate: string;   // ISO date (inclusive)

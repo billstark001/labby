@@ -1,7 +1,7 @@
 import { Presentation, ScheduleSessionMutationRecord, Session, SimilarityLookup, SolverInput } from "../types.js";
 import { buildRandomSchedule, RandomScheduleGenerator } from "./annealing.js";
 import { buildCostContext } from "./constraints.js";
-import { buildUnavailMap } from "./utils.js";
+import { buildUnavailMap, isWholeGroupClosure } from "./utils.js";
 
 const dummySimilarityLookup: SimilarityLookup = {
   getPairSimilarity: () => 0.5,
@@ -54,12 +54,13 @@ function clonePresentations(session: Session): Presentation[] {
 
 function buildGeneratorContext(
   solverInput: Omit<SolverInput, 'similarities'> & { similarities?: SimilarityLookup },
+  sessionDates: readonly string[],
 ) {
   const ctx = buildCostContext({
     ...solverInput,
     similarities: solverInput.similarities ?? dummySimilarityLookup,
   });
-  const unavailMap = buildUnavailMap(solverInput.unavailabilities ?? [], solverInput.config.id);
+  const unavailMap = buildUnavailMap(solverInput.unavailabilities ?? [], solverInput.config.id, solverInput.persons, sessionDates);
   return {
     ctx,
     personIds: [...ctx.personKeywords.keys()],
@@ -135,8 +136,10 @@ export function mutateSessions(
   const sortedSessions = sortSessionsByDate(structuredClone(sessions));
 
   assertNonEmptyDate(options.date);
+  if (operation === 'insert' && isWholeGroupClosure(options.date, solverInput.unavailabilities ?? [], solverInput.config.id))
+    throw new Error(`Cannot insert a session on a whole-group closure: ${options.date}`);
 
-  const { ctx, personIds, unavailMap } = buildGeneratorContext(solverInput);
+  const { ctx, personIds, unavailMap } = buildGeneratorContext(solverInput, [...sortedSessions.map(session => session.date), options.date]);
 
   function generateSession(date: string, historySessions: Session[]): Session {
     return buildRandomSchedule(
@@ -215,7 +218,7 @@ function generatePresentationsForSession(
   solverInput: Omit<SolverInput, 'similarities'> & { similarities?: SimilarityLookup },
   existing: Presentation[],
 ): Presentation[] {
-  const { ctx, personIds, unavailMap } = buildGeneratorContext(solverInput);
+  const { ctx, personIds, unavailMap } = buildGeneratorContext(solverInput, [sessions[sessionIndex]!.date]);
   const target = sessions[sessionIndex];
   const blockedPresenters = new Set(existing.map(p => p.presenterId));
   const filteredPersonIds = personIds.filter(id => !blockedPresenters.has(id));

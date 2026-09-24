@@ -13,7 +13,7 @@ import type {
   SimilarityLookup,
   GapBalancePolicy,
 } from '../types.js';
-import { buildUnavailMap } from './utils.js';
+import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // Configurable cost weights
@@ -501,8 +501,10 @@ export function computeCost(
 export function validateScheduleAssignments(sessions: Session[], input: SolverInput): string[] {
   const ctx = buildCostContext(input);
   const guidance = buildConstraintGuidance(ctx);
-  const unavailable = buildUnavailMap(input.unavailabilities ?? [], input.config.id);
-  return validateAssignmentsWithContext(sessions, ctx, guidance, unavailable);
+  const unavailable = buildUnavailMap(input.unavailabilities ?? [], input.config.id, input.persons, sessions.map(session => session.date));
+  const closed = sessions.filter(session => isWholeGroupClosure(session.date, input.unavailabilities ?? [], input.config.id))
+    .map(session => `Session falls on a whole-group closure: ${session.date}`);
+  return [...closed, ...validateAssignmentsWithContext(sessions, ctx, guidance, unavailable)];
 }
 
 export function validateAssignmentsWithContext(

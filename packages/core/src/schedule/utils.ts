@@ -1,4 +1,4 @@
-import { ScheduleConfig, PersonUnavailability } from "../types.js";
+import type { Person, ScheduleConfig, PersonUnavailability } from "../types.js";
 
 /** Generate a standards-compliant cryptographically random UUID. */
 export function generateId(): string {
@@ -35,21 +35,22 @@ export function generateSessionDates(config: Pick<ScheduleConfig, 'startDate' | 
 export function buildUnavailMap(
   unavailabilities: PersonUnavailability[],
   configId: string,
+  persons: Person[],
+  sessionDates: readonly string[],
 ): Map<string, Set<string>> {
   const map = new Map<string, Set<string>>();
+  const active = persons.filter(person => !person.disabled);
+  const activeIds = new Set(active.map(person => person.id));
+  const dates = [...new Set(sessionDates)];
   for (const u of unavailabilities) {
     if (u.configId !== configId) continue;
-    const unavailablePersonIds = Array.isArray(u.personIds) && u.personIds.length > 0
-      ? u.personIds
-      : (u.personId ? [u.personId] : []);
+    const tags = new Set(u.tagIds);
+    const unavailablePersonIds = u.allPeople
+      ? active.map(person => person.id)
+      : [...u.personIds.filter(id => activeIds.has(id)), ...active.filter(person => person.tagIds?.some(tagId => tags.has(tagId))).map(person => person.id)];
     if (unavailablePersonIds.length === 0) continue;
-    const [sy, sm, sd] = u.startDate.split('-').map(Number);
-    const [ey, em, ed] = u.endDate.split('-').map(Number);
-    const start = Date.UTC(sy, sm - 1, sd);
-    const end = Date.UTC(ey, em - 1, ed);
-    for (let t = start; t <= end; t += 86_400_000) {
-      const d = new Date(t);
-      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    for (const key of dates) {
+      if (key < u.startDate || key > u.endDate) continue;
       if (!map.has(key)) map.set(key, new Set());
       for (const personId of unavailablePersonIds) {
         map.get(key)!.add(personId);
@@ -57,4 +58,22 @@ export function buildUnavailMap(
     }
   }
   return map;
+}
+
+/** Whole-group closure dates are omitted before assignment so no empty-candidate search runs. */
+export function isWholeGroupClosure(date: string, unavailabilities: PersonUnavailability[], configId: string): boolean {
+  return unavailabilities.some(item => item.configId === configId && item.allPeople
+    && item.startDate <= date && date <= item.endDate);
+}
+
+export function validateUnavailability(value: PersonUnavailability): string[] {
+  const errors: string[] = [];
+  if (!value.configId || !isISO8601(value.startDate) || !isISO8601(value.endDate) || value.startDate > value.endDate)
+    errors.push('Invalid inclusive unavailability date range');
+  if (!Array.isArray(value.personIds) || value.personIds.some(id => typeof id !== 'string')
+    || !Array.isArray(value.tagIds) || value.tagIds.some(id => typeof id !== 'string')
+    || typeof value.allPeople !== 'boolean') errors.push('Invalid unavailability selectors');
+  else if (value.allPeople ? value.personIds.length + value.tagIds.length > 0
+    : value.personIds.length + value.tagIds.length === 0) errors.push('Choose people, tags, or everyone exclusively');
+  return errors;
 }
