@@ -146,7 +146,7 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     const emailTask = sampleEmailTask();
     const user = sampleUser();
     const token = sampleRefreshToken(user.id);
-    const tag = { id: testUuid('tag-1'), name: 'Core team', color: '#336699', notes: 'test' };
+    const tag = { id: testUuid('tag-1'), name: 'Core team', names: { en: 'Core team', zh: '', ja: '' }, color: '#336699', notes: 'test' };
     person.tagIds = [tag.id];
 
     await store.putPersonTag(tag);
@@ -195,6 +195,8 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
 
   try {
     await source.putPerson(samplePerson(testUuid('p-a')));
+    const tagId = testUuid('tag-backup');
+    await source.putPersonTag({ id: tagId, name: 'Local', names: { en: 'Local', zh: '', ja: '' }, color: '#336699' });
     await source.putKeyword(sampleKeyword(testUuid('k-a')));
     await source.putKeywordVector(sampleVector(testUuid('k-a')));
     await source.putKeyword(sampleKeyword(testUuid('k-b')));
@@ -207,11 +209,15 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
 
     const snapshot = await source.exportBackupSnapshot();
     assert.equal(snapshot.version, 3);
+    const legacyTag = JSON.parse(String(snapshot.tables.personTags[0]!.payload));
+    delete legacyTag.names;
+    snapshot.tables.personTags[0]!.payload = JSON.stringify(legacyTag);
     assert.deepEqual(snapshot.tables.rankingJudgments, []);
     assert.deepEqual(snapshot.tables.embeddingMigrationArchive, []);
     await target.restoreBackupSnapshot(snapshot);
 
     assert.equal((await target.listPersons()).length, 1);
+    assert.deepEqual((await target.getPersonTag(tagId))?.names, { en: 'Local', zh: '', ja: '' });
     assert.equal((await target.listKeywords()).length, 2);
     assert.equal((await target.listKeywordVectors()).length, 2);
   } finally {
@@ -228,11 +234,13 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
     const older = samplePerson(testUuid('p-old'));
     older.name = 'Zulu';
     older.names.en = 'Zulu';
+    older.names.zh = 'Alpha-localized';
     older.notes = 'later note';
     older.modifiedAt = 10;
     const newer = samplePerson(testUuid('p-new'));
     newer.name = 'Alpha';
     newer.names.en = 'Alpha';
+    newer.names.zh = 'Zulu-localized';
     newer.notes = 'earlier note';
     newer.modifiedAt = 20;
     await store.putPerson(older);
@@ -245,13 +253,15 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
     const personsByName = await store.listPersons({ sortBy: 'name', sortDirection: 'asc' });
     assert.equal(personsByName[0]?.id, newer.id);
     assert.equal(personsByName[1]?.id, older.id);
+    const localizedPersons = await store.listPersonsPage({ offset: 0, limit: 2, sortBy: 'name', sortDirection: 'asc', locale: 'zh-CN' });
+    assert.deepEqual(localizedPersons.items.map(person => person.id), [older.id, newer.id]);
 
     const personsByNotes = await store.listPersons({ sortBy: 'notes', sortDirection: 'asc' });
     assert.equal(personsByNotes[0]?.id, newer.id);
     assert.equal(personsByNotes[1]?.id, older.id);
 
-    const alphaTag = { id: testUuid('tag-alpha'), name: 'Alpha team', color: '#336699' };
-    const zetaTag = { id: testUuid('tag-zeta'), name: 'Zeta team', color: '#663399' };
+    const alphaTag = { id: testUuid('tag-alpha'), name: 'Alpha team', names: { en: 'Alpha team', zh: '', ja: '' }, color: '#336699' };
+    const zetaTag = { id: testUuid('tag-zeta'), name: 'Zeta team', names: { en: 'Zeta team', zh: '', ja: '' }, color: '#663399' };
     await store.putPersonTag(alphaTag);
     await store.putPersonTag(zetaTag);
     newer.tagIds = [alphaTag.id]; newer.disabled = true;

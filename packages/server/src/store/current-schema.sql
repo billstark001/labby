@@ -188,7 +188,8 @@ CREATE TABLE schema_migrations (
 INSERT INTO schema_migrations(version,name) VALUES
   (1,'baseline'), (2,'product-embedding-and-ranking-history'), (3,'graph-change-feed'),
   (4,'jsonb-documents'), (5,'uuid-timestamptz-person-tags'),
-  (6,'constraint-tag-targets');
+  (6,'constraint-tag-targets'),
+  (7,'localized-person-tags-and-constraint-state');
 CREATE INDEX keywords_graph_id_idx ON keywords(id);
 
 CREATE TABLE person_tags (

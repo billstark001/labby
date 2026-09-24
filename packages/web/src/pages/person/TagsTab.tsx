@@ -1,11 +1,12 @@
 import { useState } from 'preact/hooks';
 import type { Person, PersonTag } from '@labby/core';
 
-import { Button, ContentSkeleton } from '@/components/ui';
+import { Button, ContentSkeleton, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles } from '@/components/ui';
+import { PersonTagBadge } from '@/components/PersonTagBadge';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { readAllPaginated, useDatabase } from '@/db';
-import { i18n } from '@/i18n';
+import { displayName, i18n } from '@/i18n';
 import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
 
@@ -26,17 +27,32 @@ export function randomTagColor(): string {
   return `#${[red, green, blue].map(channel => Math.round((channel + offset) * 255).toString(16).padStart(2, '0')).join('')}`;
 }
 
-function TagEditor({ initial, onSave, onClose, pending }: {
-  initial: PersonTag; onSave: (tag: PersonTag) => void; onClose: () => void; pending: boolean;
+function TagEditor({ initial, isNew, onSave, onDelete, onClose, pending }: {
+  initial: PersonTag; isNew: boolean; onSave: (tag: PersonTag) => void; onDelete?: () => void; onClose: () => void; pending: boolean;
 }) {
   const { t } = i18n;
-  const [name, setName] = useState(initial.name);
+  const [nameEn, setNameEn] = useState(initial.names.en);
+  const [nameZh, setNameZh] = useState(initial.names.zh ?? '');
+  const [nameJa, setNameJa] = useState(initial.names.ja ?? '');
   const [color, setColor] = useState(initial.color);
   const [notes, setNotes] = useState(initial.notes ?? '');
-  return <Dialog open onClose={onClose} title={initial.modifiedAt ? t('edit') : t('addPersonTag')} closeOnOverlayClick={false}>
+  return <Dialog open onClose={onClose} title={isNew ? t('addPersonTag') : t('edit')} closeOnOverlayClick={false}
+    actions={<>
+      {onDelete && <Button variant="danger" disabled={pending} onClick={onDelete}>{t('delete')}</Button>}
+      <Button busy={pending} disabled={!nameEn.trim()} onClick={() => onSave({ ...initial, name: nameEn.trim(), names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() }, color, notes: notes.trim() || undefined, modifiedAt: Date.now() })}>{t('save')}</Button>
+      <Button variant="secondary" disabled={pending} onClick={onClose}>{t('cancel')}</Button>
+    </>}>
     <div class={s.formGroup}>
-      <label class={s.label}>{t('name')}</label>
-      <input class={s.input} value={name} onInput={event => setName((event.target as HTMLInputElement).value)} />
+      <label class={s.label}>Name (EN)</label>
+      <input class={s.input} value={nameEn} onInput={event => setNameEn((event.target as HTMLInputElement).value)} />
+    </div>
+    <div class={s.formGroup}>
+      <label class={s.label}>Name (中文)</label>
+      <input class={s.input} value={nameZh} onInput={event => setNameZh((event.target as HTMLInputElement).value)} />
+    </div>
+    <div class={s.formGroup}>
+      <label class={s.label}>Name (日本語)</label>
+      <input class={s.input} value={nameJa} onInput={event => setNameJa((event.target as HTMLInputElement).value)} />
     </div>
     <div class={s.formGroup}>
       <label class={s.label}>{t('color')}</label>
@@ -45,10 +61,6 @@ function TagEditor({ initial, onSave, onClose, pending }: {
     <div class={s.formGroup}>
       <label class={s.label}>{t('notes')}</label>
       <textarea class={s.input} value={notes} onInput={event => setNotes((event.target as HTMLTextAreaElement).value)} />
-    </div>
-    <div class={s.flexGapSm}>
-      <Button busy={pending} disabled={!name.trim()} onClick={() => onSave({ ...initial, name: name.trim(), color, notes: notes.trim() || undefined, modifiedAt: Date.now() })}>{t('save')}</Button>
-      <Button variant="secondary" disabled={pending} onClick={onClose}>{t('cancel')}</Button>
     </div>
   </Dialog>;
 }
@@ -65,14 +77,16 @@ export function TagsTab() {
   const [editing, setEditing] = useState<PersonTag | null>(null);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<'name' | 'members'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [pendingId, setPendingId] = useState<string | null>(null);
   const memberCounts = new Map<string, number>();
   for (const person of query.data?.persons ?? [] as Person[])
     for (const tagId of person.tagIds ?? []) memberCounts.set(tagId, (memberCounts.get(tagId) ?? 0) + 1);
-  const visible = (query.data?.tags ?? []).filter(tag => `${tag.name} ${tag.notes ?? ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
+  const collator = new Intl.Collator(i18n.lang.value, { sensitivity: 'base', numeric: true });
+  const visible = (query.data?.tags ?? []).filter(tag => `${Object.values(tag.names).join(' ')} ${tag.notes ?? ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()))
     .sort((a, b) => sort === 'members'
-      ? (memberCounts.get(b.id) ?? 0) - (memberCounts.get(a.id) ?? 0) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
-      : a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      ? ((memberCounts.get(a.id) ?? 0) - (memberCounts.get(b.id) ?? 0)) * (sortDirection === 'asc' ? 1 : -1) || collator.compare(displayName(a), displayName(b)) || a.id.localeCompare(b.id)
+      : collator.compare(displayName(a), displayName(b)) * (sortDirection === 'asc' ? 1 : -1) || a.id.localeCompare(b.id));
 
   async function save(tag: PersonTag) {
     if (pendingId) return;
@@ -83,6 +97,7 @@ export function TagsTab() {
   }
 
   function remove(tag: PersonTag) {
+    setEditing(null);
     confirmDialog(t('confirmDelete'), t('deletePersonTagWarning'), async () => {
       if (pendingId) return;
       setPendingId(tag.id);
@@ -94,10 +109,10 @@ export function TagsTab() {
   return <div>
     <div class={s.toolbar}>
       <h2 class={s.sectionTitle}>{t('personTags')}</h2>
-      <Button disabled={!query.data || pendingId !== null} onClick={() => setEditing({ id: crypto.randomUUID(), name: '', color: randomTagColor() })}>{t('addPersonTag')}</Button>
+      <Button disabled={!query.data || pendingId !== null} onClick={() => setEditing({ id: crypto.randomUUID(), name: '', names: { en: '', zh: '', ja: '' }, color: randomTagColor() })}>{t('addPersonTag')}</Button>
     </div>
     <div class={s.toolbar}>
-      <input class={s.input} type="search" aria-label={t('search')} placeholder={t('search')} value={search} onInput={event => setSearch((event.target as HTMLInputElement).value)} />
+      <input class={s.input} style={{ flex: '1 1 12rem', minWidth: 0 }} type="search" aria-label={t('search')} placeholder={t('search')} value={search} onInput={event => setSearch((event.target as HTMLInputElement).value)} />
       <select class={s.input} aria-label={t('sortBy')} value={sort} onChange={event => setSort((event.target as HTMLSelectElement).value as 'name' | 'members')}>
         <option value="name">{t('name')}</option>
         <option value="members">{t('tagMembers')}</option>
@@ -105,18 +120,16 @@ export function TagsTab() {
     </div>
     {query.isInitialLoading ? <ContentSkeleton rows={5} /> : <div aria-busy={query.isRefetching}>
       {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" busy={query.isPending} onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
-      {visible.map(tag => <div key={tag.id} class={s.metricRow}>
-        <div>
-          <span class={s.badge} style={{ borderColor: tag.color }}>{tag.name}</span>
-          <span class={s.textMuted}> {t('tagMembers')}: {memberCounts.get(tag.id) ?? 0}</span>
-          {tag.notes && <p class={s.mutedParagraph}>{tag.notes}</p>}
-        </div>
-        <div class={s.flexGapSm}>
-          <Button variant="ghost" disabled={pendingId !== null} onClick={() => setEditing(tag)}>{t('edit')}</Button>
-          <Button variant="danger" busy={pendingId === tag.id} disabled={pendingId !== null} onClick={() => remove(tag)}>{t('delete')}</Button>
-        </div>
-      </div>)}
+      <ResponsiveDataView
+        items={visible}
+        columns={[{ header: t('name'), sortKey: 'name' }, { header: t('tagMembers'), sortKey: 'members' }, { header: t('notes') }]}
+        sorting={{ key: sort, direction: sortDirection, options: [{ key: 'name', label: t('name') }, { key: 'members', label: t('tagMembers') }], onChange: (key, direction) => { setSort(key as 'name' | 'members'); setSortDirection(direction); } }}
+        getKey={tag => tag.id}
+        renderDesktopRow={tag => <><td class={s.td}><PersonTagBadge tag={tag} /></td><td class={s.td}>{memberCounts.get(tag.id) ?? 0}</td><td class={s.td}>{tag.notes ?? '—'}</td></>}
+        renderMobileCard={tag => <><div class={dataStyles.mobileHeader}><div class={dataStyles.mobileTitle}><PersonTagBadge tag={tag} /></div></div><div class={dataStyles.mobileFields}><ResponsiveDataField label={t('tagMembers')}>{memberCounts.get(tag.id) ?? 0}</ResponsiveDataField>{tag.notes && <ResponsiveDataField label={t('notes')}>{tag.notes}</ResponsiveDataField>}</div></>}
+        renderActions={tag => <Button variant="ghost" disabled={pendingId !== null} onClick={() => setEditing(tag)}>{t('edit')}</Button>}
+      />
     </div>}
-    {editing && <TagEditor key={editing.id} initial={editing} pending={pendingId === editing.id} onSave={tag => void save(tag)} onClose={() => setEditing(null)} />}
+    {editing && <TagEditor key={editing.id} initial={editing} isNew={!query.data?.tags.some(tag => tag.id === editing.id)} pending={pendingId === editing.id} onSave={tag => void save(tag)} onDelete={query.data?.tags.some(tag => tag.id === editing.id) ? () => remove(editing) : undefined} onClose={() => setEditing(null)} />}
   </div>;
 }

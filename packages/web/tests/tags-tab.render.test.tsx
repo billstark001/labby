@@ -4,7 +4,7 @@ import { act } from 'preact/test-utils';
 import { afterEach, expect, test, vi } from 'vitest';
 
 const source = vi.hoisted(() => ({
-  tags: [{ id: 'tag-local', name: 'Local', color: '#a45132', notes: 'Group' }, { id: 'tag-grad', name: 'Graduate', color: '#396eae' }],
+  tags: [{ id: 'tag-local', name: 'Local', names: { en: 'Local', zh: '本地', ja: '地元' }, color: '#a45132', notes: 'Group' }, { id: 'tag-grad', name: 'Graduate', names: { en: 'Graduate', zh: '毕业生', ja: '卒業生' }, color: '#396eae' }],
   people: [{ id: 'p1', tagIds: ['tag-local'] }, { id: 'p2', tagIds: ['tag-local', 'tag-grad'] }],
   put: async (_tag: unknown): Promise<void> => {},
 }));
@@ -44,7 +44,7 @@ test('tag tab shows members, search, and a persistent list outside its editor', 
   await act(() => render(<TagsTab />, container));
   await act(async () => { await Promise.resolve(); });
   expect(container.textContent).toContain('Local');
-  expect(container.textContent).toContain(`${i18n.t('tagMembers')}: 2`);
+  expect(container.querySelectorAll('tbody tr')[1]?.textContent).toContain('Local2');
   const search = container.querySelector('input[type="search"]') as HTMLInputElement;
   await act(() => { search.value = 'grad'; search.dispatchEvent(new Event('input', { bubbles: true })); });
   expect(container.textContent).toContain('Graduate');

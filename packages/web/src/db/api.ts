@@ -40,6 +40,7 @@ function normalizeListQuery(query: ListQuery): ListQuery {
     limit: Math.max(1, Math.floor(query.limit)),
     sortBy: query.sortBy,
     sortDirection: query.sortDirection,
+    locale: query.locale,
   };
 }
 
@@ -61,6 +62,7 @@ function createEntityStore<T extends { id: string }>(client: ApiClient, path: st
       if (normalized.sortDirection) {
         params.set('sortDirection', normalized.sortDirection);
       }
+      if (normalized.locale) params.set('locale', normalized.locale);
       return client.request<PaginatedResult<T>>(`${path}?${params.toString()}`, { method: 'GET' });
     },
     put: (value: T) => client.request<T>(`${path}/${value.id}`, {

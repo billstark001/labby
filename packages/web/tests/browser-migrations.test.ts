@@ -10,6 +10,7 @@ const schemaSql = {
   graph: await readFile(new URL('../src/db/migrate/004.up.sql', import.meta.url), 'utf8'),
   identity: await readFile(new URL('../src/db/migrate/005.up.sql', import.meta.url), 'utf8'),
   constraints: await readFile(new URL('../src/db/migrate/006.up.sql', import.meta.url), 'utf8'),
+  localization: await readFile(new URL('../src/db/migrate/007.up.sql', import.meta.url), 'utf8'),
 };
 const KEYWORD_ID = '10000000-0000-4000-8000-000000000001';
 
@@ -50,6 +51,26 @@ test('v5 browser constraints migrate to canonical tag selectors', async () => {
     const row = (await db.query<{ payload: Record<string, unknown> }>("SELECT payload FROM entities WHERE kind='constraint'")).rows[0]!;
     assert.deepEqual(row.payload.tagIds, []);
     assert.equal('weight' in row.payload, false);
+  } finally { await db.close(); }
+});
+
+test('v6 browser records gain localized tag names and enabled constraints', async () => {
+  const db = new PGlite();
+  try {
+    await upgradeBrowserSchema(db, schemaSql);
+    await db.query("UPDATE app_metadata SET value='{\"version\":6}'::jsonb WHERE key='schema-version'");
+    const tagId = '10000000-0000-4000-8000-000000000003';
+    const constraintId = '10000000-0000-4000-8000-000000000004';
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
+      ['person-tag', tagId, new Date(1), JSON.stringify({ id: tagId, name: 'Local', color: '#336699' })]);
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
+      ['constraint', constraintId, new Date(1), JSON.stringify({ id: constraintId, type: 'no-overlap', personIds: [], tagIds: [] })]);
+    await upgradeBrowserSchema(db, schemaSql);
+    const rows = (await db.query<{ kind: string; payload: Record<string, unknown> }>(
+      "SELECT kind,payload FROM entities WHERE kind IN ('person-tag','constraint') ORDER BY kind",
+    )).rows;
+    assert.equal(rows[0]?.payload.disabled, false);
+    assert.deepEqual(rows[1]?.payload.names, { en: 'Local', zh: '', ja: '' });
   } finally { await db.close(); }
 });
 

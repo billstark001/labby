@@ -2,6 +2,7 @@ import currentSchemaSql from './current-schema.sql?raw';
 import graphMigrationSql from './migrate/004.up.sql?raw';
 import identityMigrationSql from './migrate/005.up.sql?raw';
 import constraintMigrationSql from './migrate/006.up.sql?raw';
+import localizationMigrationSql from './migrate/007.up.sql?raw';
 import { listBrowserGraphPage } from './graph';
 import { toast } from '@/components/ui/Toast';
 import { i18n } from '@/i18n';
@@ -144,31 +145,40 @@ function normalizedQuery(
   };
 }
 
-function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQuery, tagNames: ReadonlyMap<string, string>): number {
+function localizedName(record: Record<string, unknown>, locale: ListQuery['locale']): string {
+  const names = record.names as Record<string, string> | undefined;
+  const language = locale === 'zh-CN' ? 'zh' : locale === 'ja-JP' ? 'ja' : 'en';
+  return names?.[language]?.trim() || names?.en?.trim() || String(record.name ?? '').trim();
+}
+
+function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQuery, tagNames: ReadonlyMap<string, string>, keywordNames: ReadonlyMap<string, string>): number {
   const sortBy = query.sortBy ?? 'modifiedAt';
   const direction = query.sortDirection ?? (sortBy === 'modifiedAt' ? 'desc' : 'asc');
   const factor = direction === 'asc' ? 1 : -1;
   const leftRecord = left as unknown as Record<string, unknown>;
   const rightRecord = right as unknown as Record<string, unknown>;
-  const compareText = (a: unknown, b: unknown) => {
-    const first = String(a ?? '').trim().toLocaleLowerCase();
-    const second = String(b ?? '').trim().toLocaleLowerCase();
-    return first < second ? -1 : first > second ? 1 : 0;
-  };
+  const collator = new Intl.Collator(query.locale ?? 'en', { sensitivity: 'base', numeric: true });
+  const compareText = (a: unknown, b: unknown) => collator.compare(String(a ?? '').trim(), String(b ?? '').trim());
   const tagKey = (record: Record<string, unknown>) => (record.tagIds as string[] | undefined ?? [])
-    .map(id => tagNames.get(id)).filter((name): name is string => Boolean(name)).sort().join('|');
+    .map(id => tagNames.get(id)).filter((name): name is string => Boolean(name)).sort(collator.compare).join('|');
+  const keywordKey = (record: Record<string, unknown>) => (record.keywordIds as string[] | undefined ?? [])
+    .map(id => keywordNames.get(id)).filter((name): name is string => Boolean(name)).sort(collator.compare).join('|');
   let primary: number;
   if (sortBy === 'tags') {
     const a = tagKey(leftRecord); const b = tagKey(rightRecord);
     if (!a || !b) primary = a ? -1 : b ? 1 : 0;
     else primary = compareText(a, b) * factor;
+  } else if (sortBy === 'keywords') {
+    const a = keywordKey(leftRecord); const b = keywordKey(rightRecord);
+    if (!a || !b) primary = a ? -1 : b ? 1 : 0;
+    else primary = compareText(a, b) * factor;
   } else if (sortBy === 'disabled') primary = (Number(Boolean(leftRecord.disabled)) - Number(Boolean(rightRecord.disabled))) * factor;
   else if (sortBy === 'modifiedAt') primary = (Number(leftRecord.modifiedAt ?? 0) - Number(rightRecord.modifiedAt ?? 0)) * factor;
-  else primary = compareText(leftRecord[sortBy], rightRecord[sortBy]) * factor;
+  else primary = compareText(sortBy === 'name' ? localizedName(leftRecord, query.locale) : leftRecord[sortBy], sortBy === 'name' ? localizedName(rightRecord, query.locale) : rightRecord[sortBy]) * factor;
   if (primary !== 0) return primary;
   const byDate = Number(rightRecord.modifiedAt ?? 0) - Number(leftRecord.modifiedAt ?? 0);
   if (byDate) return byDate;
-  const byName = compareText(leftRecord.name, rightRecord.name);
+  const byName = compareText(localizedName(leftRecord, query.locale), localizedName(rightRecord, query.locale));
   if (byName) return byName;
   const byNotes = compareText(leftRecord.notes, rightRecord.notes);
   if (byNotes) return byNotes;
@@ -196,7 +206,7 @@ export async function createPGliteDB(): Promise<{
   try {
     const changed = await upgradeBrowserSchema(
       client,
-      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql },
+      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql },
       (kind) => {
         maintenanceToast = toast.loading(
           i18n.t(kind === 'initialize' ? 'dbInitializing' : 'dbMigrating'),
@@ -291,9 +301,12 @@ export async function createPGliteDB(): Promise<{
     const normalized = normalizedQuery(query);
     const tagNames = new Map<string, string>();
     if (kind === 'person' && normalized.sortBy === 'tags')
-      for (const tag of await all<PersonTag>('person-tag')) tagNames.set(tag.id, tag.name.trim().toLocaleLowerCase());
+      for (const tag of await all<PersonTag>('person-tag')) tagNames.set(tag.id, localizedName(tag as unknown as Record<string, unknown>, normalized.locale));
+    const keywordNames = new Map<string, string>();
+    if (kind === 'person' && normalized.sortBy === 'keywords')
+      for (const keyword of await all<Keyword>('keyword')) keywordNames.set(keyword.id, localizedName(keyword as unknown as Record<string, unknown>, normalized.locale));
     const values = (await all<T>(kind)).sort((left, right) =>
-      compareEntities(left, right, normalized, tagNames),
+      compareEntities(left, right, normalized, tagNames, keywordNames),
     );
     return {
       items: values.slice(normalized.offset, normalized.offset + normalized.limit),
@@ -545,7 +558,7 @@ export async function createPGliteDB(): Promise<{
         kind: 'person-tag',
         id: tag.id,
         updated_at: tag.modifiedAt ?? 0,
-        payload: tag,
+        payload: tag.names ? tag : { ...tag, names: { en: tag.name, zh: '', ja: '' } },
       })),
       ...dump.rankingHistory.map((j) => ({
         kind: 'ranking-judgment',
@@ -556,7 +569,10 @@ export async function createPGliteDB(): Promise<{
     ];
     const restoreIdMap = new Map<string, string>();
     for (const row of rawRows) restoreIdMap.set(row.id, await normalizeUuid(row.id));
-    const rows = rawRows.map(row => ({ ...row, id: restoreIdMap.get(row.id)!, payload: rewriteEntityIds(row.payload, restoreIdMap) }));
+    const rows = rawRows.map(row => {
+      const payload = rewriteEntityIds(row.payload, restoreIdMap) as Record<string, unknown>;
+      return { ...row, id: restoreIdMap.get(row.id)!, payload: row.kind === 'constraint' && payload.disabled === undefined ? { ...payload, disabled: false } : payload };
+    });
     await client.transaction(async (tx) => {
       await tx.query('DELETE FROM entities');
       for (const row of rows)

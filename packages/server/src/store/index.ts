@@ -541,21 +541,32 @@ export class LabbyStore {
     const limit = Math.max(1, Math.min(500, Math.floor(query.limit)));
     const direction = query.sortDirection === 'desc' ? 'DESC' : 'ASC';
     const sort = query.sortBy ?? 'modifiedAt';
-    const nameExpr = `lower(btrim(coalesce(t.payload->>'name', ''))) COLLATE "C"`;
+    const language = query.locale === 'zh-CN' ? 'zh' : query.locale === 'ja-JP' ? 'ja' : 'en';
+    const collation = this.pglite ? '"C"' : query.locale === 'zh-CN' ? '"zh-x-icu"' : query.locale === 'ja-JP' ? '"ja-x-icu"' : '"en-x-icu"';
+    const localizedName = (alias: string) => `lower(coalesce(nullif(btrim(${alias}.payload->'names'->>'${language}'), ''), nullif(btrim(${alias}.payload->'names'->>'en'), ''), btrim(coalesce(${alias}.payload->>'name', '')))) COLLATE ${collation}`;
+    const nameExpr = localizedName('t');
     const notesExpr = `lower(btrim(coalesce(t.payload->>'notes', ''))) COLLATE "C"`;
     const modifiedExpr = `coalesce((t.payload->>'modifiedAt')::bigint, 0)`;
     let primary = `${modifiedExpr} ${query.sortDirection === 'asc' ? 'ASC' : 'DESC'}`;
     let joins = '';
     if (sort === 'name') primary = `${nameExpr} ${direction}`;
     if (sort === 'notes') primary = `${notesExpr} ${direction}`;
-    if (sort === 'disabled' && table === 'persons') primary = `coalesce((t.payload->>'disabled')::boolean, false) ${direction}`;
+    if (sort === 'disabled' && table !== 'person_tags') primary = `coalesce((t.payload->>'disabled')::boolean, false) ${direction}`;
     if (sort === 'tags' && table === 'persons') {
       joins = `LEFT JOIN LATERAL (
-        SELECT string_agg(lower(btrim(tag.payload->>'name')) COLLATE "C", '|' ORDER BY lower(btrim(tag.payload->>'name')) COLLATE "C", tag.id) AS names
+        SELECT string_agg(${localizedName('tag')}, '|' ORDER BY ${localizedName('tag')}, tag.id) AS names
         FROM jsonb_array_elements_text(coalesce(t.payload->'tagIds', '[]'::jsonb)) AS member(tag_id)
         JOIN person_tags tag ON tag.id::text = member.tag_id
       ) tag_sort ON true`;
       primary = `tag_sort.names IS NULL ASC, tag_sort.names ${direction}`;
+    }
+    if (sort === 'keywords' && table === 'persons') {
+      joins = `LEFT JOIN LATERAL (
+        SELECT string_agg(${localizedName('keyword')}, '|' ORDER BY ${localizedName('keyword')}, keyword.id) AS names
+        FROM jsonb_array_elements_text(coalesce(t.payload->'keywordIds', '[]'::jsonb)) AS member(keyword_id)
+        JOIN keywords keyword ON keyword.id::text = member.keyword_id
+      ) keyword_sort ON true`;
+      primary = `keyword_sort.names IS NULL ASC, keyword_sort.names ${direction}`;
     }
     const [rows, totals] = await Promise.all([
       this.queryRows(sql.raw(`SELECT t.payload FROM ${table} t ${joins} ORDER BY ${primary}, ${modifiedExpr} DESC, ${nameExpr} ASC, ${notesExpr} ASC, t.id ASC LIMIT ${limit} OFFSET ${offset}`)),
@@ -1529,6 +1540,16 @@ export class LabbyStore {
         snapshotObject.tables.authVerificationCodes ?? [],
       ),
     };
+
+    // Backup payloads are data, not schema history; normalize records created before v7 on import.
+    for (const row of tables.person_tags) {
+      const tag = this.parsePayload<PersonTag>(row.payload);
+      if (!tag.names) row.payload = JSON.stringify({ ...tag, names: { en: tag.name, zh: '', ja: '' } });
+    }
+    for (const row of tables.constraints) {
+      const constraint = this.parsePayload<ScheduleConstraint>(row.payload);
+      if (constraint.disabled === undefined) row.payload = JSON.stringify({ ...constraint, disabled: false });
+    }
 
     const keywordIds = new Set(tables.keywords.map(row => String(row.id)));
     for (const row of tables.keyword_vectors) {

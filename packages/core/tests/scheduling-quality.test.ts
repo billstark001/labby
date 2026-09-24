@@ -55,6 +55,17 @@ describe('schedule quality objective and tag selectors', () => {
     expect(validateScheduleAssignments([session('2026-01-05', [['a', 'c']])], input)).toContain('No-overlap constraint violated on 2026-01-05');
   });
 
+  test('disabled constraints retain their selectors but do not affect hard or soft guidance', () => {
+    const input: SolverInput = { ...base, constraints: [
+      { id: 'hard', configId: config.id, type: 'no-overlap', personIds: ['a', 'c'], tagIds: [], disabled: true },
+      { id: 'soft', configId: config.id, type: 'frequency-multiplier', personIds: ['a'], tagIds: [], baseline: 1, multiplier: 0.25, roleScope: 'presenter', weight: 5, disabled: true },
+    ] };
+    const guidance = buildConstraintGuidance(buildCostContext(input));
+    expect(noOverlapForbidden('a', 'c', guidance)).toBe(false);
+    expect(guidance.frequency).toHaveLength(0);
+    expect(validateScheduleAssignments([session('2026-01-05', [['a', 'c']])], input)).toEqual([]);
+  });
+
   test('frequency constraints contribute to the objective for tag members', () => {
     const schedule = [session('2026-01-05', [['a', 'c']]), session('2026-01-12', [['a', 'd']])];
     const withRule = { ...base, constraints: [{ id: 'frequency', configId: config.id, type: 'frequency-multiplier' as const,

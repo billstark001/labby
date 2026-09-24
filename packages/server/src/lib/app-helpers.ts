@@ -9,18 +9,20 @@ export function parsePagination(input: { offset?: string; limit?: string }): { o
   };
 }
 
-export function parseEntityListSort(input: { sortBy?: string; sortDirection?: string }): {
+export function parseEntityListSort(input: { sortBy?: string; sortDirection?: string; locale?: string }): {
   sortBy: EntityListSortBy;
   sortDirection: ListSortDirection;
+  locale: 'en' | 'zh-CN' | 'ja-JP';
 } {
-  const sortBy = input.sortBy === 'name' || input.sortBy === 'notes' || input.sortBy === 'modifiedAt' || input.sortBy === 'tags' || input.sortBy === 'disabled'
+  const sortBy = input.sortBy === 'name' || input.sortBy === 'notes' || input.sortBy === 'modifiedAt' || input.sortBy === 'tags' || input.sortBy === 'keywords' || input.sortBy === 'disabled'
     ? input.sortBy
     : 'modifiedAt';
   const sortDirection = input.sortDirection === 'asc' || input.sortDirection === 'desc'
     ? input.sortDirection
     : (sortBy === 'modifiedAt' ? 'desc' : 'asc');
 
-  return { sortBy, sortDirection };
+  const locale = input.locale === 'zh-CN' || input.locale === 'ja-JP' ? input.locale : 'en';
+  return { sortBy, sortDirection, locale };
 }
 
 export function toPage<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; offset: number; limit: number } {

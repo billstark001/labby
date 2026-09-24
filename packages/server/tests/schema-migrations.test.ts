@@ -64,15 +64,21 @@ test('v5 constraints migrate to tag selectors without legacy no-overlap weight',
   const db = await memoryDatabase();
   try {
     await initializePostgresSchema(db);
-    await db.exec('DROP INDEX constraints_tag_ids_gin_idx; DROP INDEX constraints_person_ids_gin_idx; ALTER TABLE constraints DROP COLUMN tag_ids; DELETE FROM schema_migrations WHERE version=6;');
+    await db.exec('DROP INDEX constraints_tag_ids_gin_idx; DROP INDEX constraints_person_ids_gin_idx; ALTER TABLE constraints DROP COLUMN tag_ids; DELETE FROM schema_migrations WHERE version IN (6,7);');
     const id = '10000000-0000-4000-8000-000000000002';
     await db.query('INSERT INTO constraints(id,type,person_ids,payload,created_at,updated_at) VALUES($1,$2,$3::jsonb,$4::jsonb,now(),now())',
       [id, 'no-overlap', '[]', JSON.stringify({ id, configId: '', type: 'no-overlap', personIds: [], weight: 7 })]);
+    const tagId = '10000000-0000-4000-8000-000000000003';
+    await db.query('INSERT INTO person_tags(id,payload,updated_at) VALUES($1,$2::jsonb,now())',
+      [tagId, JSON.stringify({ id: tagId, name: 'Local', color: '#336699' })]);
     await migratePostgresSchema(db);
     const row = (await db.query<{ tag_ids: string[]; payload: Record<string, unknown> }>('SELECT tag_ids,payload FROM constraints')).rows[0]!;
     assert.deepEqual(row.tag_ids, []);
     assert.deepEqual(row.payload.tagIds, []);
     assert.equal('weight' in row.payload, false);
+    assert.equal(row.payload.disabled, false);
+    const tag = (await db.query<{ payload: Record<string, unknown> }>('SELECT payload FROM person_tags WHERE id=$1', [tagId])).rows[0]!;
+    assert.deepEqual(tag.payload.names, { en: 'Local', zh: '', ja: '' });
   } finally { await db.close(); }
 });
 

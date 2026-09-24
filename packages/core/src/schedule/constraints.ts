@@ -114,6 +114,7 @@ export function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
   );
 
   for (const c of ctx.constraints ?? []) {
+    if (c.disabled) continue;
     if (c.type === 'no-overlap') {
       guidance.noOverlap.push({
         left: resolve(c.personIds, c.tagIds),

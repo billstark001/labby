@@ -24,6 +24,7 @@ export interface Person extends BaseEntity {
 export interface PersonTag {
   id: string;
   name: string;
+  names: Record<string, string>;
   color: string; // CSS hex color (#RRGGBB)
   notes?: string;
   modifiedAt?: number;
@@ -327,6 +328,7 @@ export interface NoOverlapConstraint {
   /** Optional config scope. Omit or set empty string to apply to all configs. */
   configId?: string;
   type: 'no-overlap';
+  disabled?: boolean;
   /** Constraint applies to any person whose ID is in this set. */
   personIds: string[];
   tagIds: string[];
@@ -346,6 +348,7 @@ export interface AffinityBoostConstraint {
   /** Optional config scope. Omit or set empty string to apply to all configs. */
   configId?: string;
   type: 'affinity-boost';
+  disabled?: boolean;
   /** Members of the group whose co-occurrence should be boosted. */
   personIds: string[];
   tagIds: string[];
@@ -370,6 +373,7 @@ export interface FrequencyMultiplierConstraint {
   /** Optional config scope. Omit or set empty string to apply to all configs. */
   configId?: string;
   type: 'frequency-multiplier';
+  disabled?: boolean;
   personIds: string[];
   tagIds: string[];
   baseline: number;

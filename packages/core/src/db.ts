@@ -19,9 +19,10 @@ export interface ListQuery {
   limit: number;
   sortBy?: EntityListSortBy;
   sortDirection?: ListSortDirection;
+  locale?: 'en' | 'zh-CN' | 'ja-JP';
 }
 
-export type EntityListSortBy = 'modifiedAt' | 'name' | 'notes' | 'tags' | 'disabled';
+export type EntityListSortBy = 'modifiedAt' | 'name' | 'notes' | 'tags' | 'keywords' | 'disabled';
 
 export type ListSortDirection = 'asc' | 'desc';
 
