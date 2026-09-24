@@ -6,8 +6,12 @@
  */
 
 import nodemailer, { type Transporter, type SendMailOptions } from 'nodemailer';
+import MailComposer from 'nodemailer/lib/mail-composer';
 
-import { resolveGoogleOAuthCredentials } from './google.js';
+import { fetchGoogleAccessToken, resolveGoogleOAuthCredentials } from './google.js';
+
+const GMAIL_API_TIMEOUT_MS = 60_000;
+const GMAIL_API_BASE_URL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 export interface SmtpMailerOptions {
   mode: 'smtp';
@@ -20,7 +24,7 @@ export interface SmtpMailerOptions {
 }
 
 export interface GmailMailerOptions {
-  mode: 'gmail';
+  mode: 'gmail' | 'gmail-api';
   user: string;
   from: string;
   clientId: string;
@@ -46,13 +50,16 @@ export interface SendMailInput {
 }
 
 export class Mailer {
-  private readonly transporter: Transporter;
+  private readonly transporter?: Transporter;
+  private readonly gmailApi?: GmailMailerOptions;
   private readonly from: string;
 
   constructor(options: MailerOptions) {
     this.from = options.from;
-    this.transporter = options.mode === 'gmail'
-      ? nodemailer.createTransport({
+    if (options.mode === 'gmail-api') {
+      this.gmailApi = options;
+    } else if (options.mode === 'gmail') {
+      this.transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
           type: 'OAuth2',
@@ -61,8 +68,9 @@ export class Mailer {
           clientSecret: options.clientSecret,
           refreshToken: options.refreshToken,
         },
-      })
-      : nodemailer.createTransport({
+      });
+    } else if (options.mode === 'smtp') {
+      this.transporter = nodemailer.createTransport({
         host: options.host,
         port: options.port,
         secure: options.secure,
@@ -71,6 +79,18 @@ export class Mailer {
           pass: options.password,
         },
       });
+    }
+  }
+
+  private async gmailAccessToken(signal: AbortSignal): Promise<string> {
+    const credentials = this.gmailApi;
+    if (!credentials) throw new Error('Gmail API mailer is not configured');
+    return fetchGoogleAccessToken({
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
+      refreshToken: credentials.refreshToken,
+      signal,
+    });
   }
 
   async send(input: SendMailInput): Promise<void> {
@@ -82,13 +102,42 @@ export class Mailer {
       html: input.html,
       attachments: input.attachments,
     };
-    await this.transporter.sendMail(mailOptions);
+    if (this.gmailApi) {
+      const signal = AbortSignal.timeout(GMAIL_API_TIMEOUT_MS);
+      const raw = await new MailComposer(mailOptions).compile().build();
+      const accessToken = await this.gmailAccessToken(signal);
+      const response = await fetch(`${GMAIL_API_BASE_URL}/messages/send`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ raw: raw.toString('base64url') }),
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Gmail API send failed with status ${response.status}`);
+      }
+      return;
+    }
+    await this.transporter!.sendMail(mailOptions);
   }
 
-  /** Verify the SMTP connection (useful for startup health checks). */
+  /** Verify the configured mail transport without sending a message. */
   async verify(): Promise<boolean> {
     try {
-      await this.transporter.verify();
+      if (this.gmailApi) {
+        const signal = AbortSignal.timeout(GMAIL_API_TIMEOUT_MS);
+        const accessToken = await this.gmailAccessToken(signal);
+        const response = await fetch(`${GMAIL_API_BASE_URL}/profile`, {
+          headers: { authorization: `Bearer ${accessToken}` },
+          signal,
+        });
+        if (!response.ok) return false;
+        const profile = await response.json() as { emailAddress?: string };
+        return profile.emailAddress?.toLowerCase() === this.gmailApi.user.toLowerCase();
+      }
+      await this.transporter!.verify();
       return true;
     } catch {
       return false;
@@ -119,7 +168,7 @@ function buildFromHeader(defaultFrom: string, fromName: string | undefined): str
   return `"${escapeDisplayName(normalizedName)}" <${address}>`;
 }
 
-/** Create a Mailer instance from environment variables. Returns null if SMTP is not configured. */
+/** Create a Mailer instance from environment variables. Returns null if mail is not configured. */
 export function createMailerFromEnv(): Mailer | null {
   const provider = (process.env.SMTP_PROVIDER ?? '').trim().toLowerCase();
   const gmailUser = process.env.GMAIL_USER?.trim() ?? process.env.SMTP_USER?.trim();
@@ -129,7 +178,7 @@ export function createMailerFromEnv(): Mailer | null {
     || process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim()
     || process.env.GOOGLE_OAUTH_REFRESH_TOKEN_PATH?.trim(),
   );
-  const useGmail = provider === 'gmail' || (!smtpHost && gmailUser && googleTokenConfigured);
+  const useGmail = provider === 'gmail' || provider === 'gmail-api' || (!smtpHost && gmailUser && googleTokenConfigured);
 
   if (useGmail) {
     const googleCredentials = resolveGoogleOAuthCredentials({
@@ -143,7 +192,7 @@ export function createMailerFromEnv(): Mailer | null {
 
 
     return new Mailer({
-      mode: 'gmail',
+      mode: provider === 'gmail-api' ? 'gmail-api' : 'gmail',
       user: gmailUser,
       from,
       clientId: googleCredentials.clientId,

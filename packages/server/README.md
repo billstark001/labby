@@ -156,7 +156,7 @@ When `BACKUP_CRON` is configured, the server registers a recurring whole-databas
 - `BACKUP_TARGET=google-drive` uploads to Google Drive using OAuth credentials loaded from `GOOGLE_OAUTH_JSON_PATH`.
 - `BACKUP_TARGET=onedrive` uploads to OneDrive using Microsoft OAuth refresh credentials.
 
-Gmail delivery can reuse the same Google OAuth client JSON by setting `SMTP_PROVIDER=gmail` and supplying a Gmail-capable refresh token.
+Gmail delivery can reuse the same Google OAuth client JSON. Set `SMTP_PROVIDER=gmail-api` to send through the Gmail HTTPS API, or `SMTP_PROVIDER=gmail` to use Gmail SMTP. The API mode has a 60-second timeout covering token exchange and the Gmail request. Gmail API mode supports text, HTML, and attachments through the existing mailer interface.
 
 At runtime, direct `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` values take precedence
 over `GOOGLE_OAUTH_JSON_PATH`. Gmail uses `GMAIL_REFRESH_TOKEN` first, followed by

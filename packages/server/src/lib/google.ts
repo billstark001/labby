@@ -107,6 +107,7 @@ export async function fetchGoogleAccessToken(options: {
   clientId: string;
   clientSecret: string;
   refreshToken: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const body = new URLSearchParams({
     client_id: options.clientId,
@@ -121,6 +122,7 @@ export async function fetchGoogleAccessToken(options: {
       'content-type': 'application/x-www-form-urlencoded',
     },
     body,
+    signal: options.signal,
   });
 
   if (!response.ok) {

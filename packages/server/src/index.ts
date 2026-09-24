@@ -75,7 +75,7 @@ if (mailer) {
   // delay the HTTP listener; failed delivery remains visible in the logs.
   void mailer.verify().then((mailerOk) => {
     if (!mailerOk) {
-      console.warn('[mail] Mailer configured but verify() failed. Check Gmail OAuth/SMTP credentials.');
+      console.warn('[mail] Mailer configured but verify() failed. Check the mail provider and credentials.');
     } else {
       console.info('[mail] Mailer verify() succeeded.');
     }
