@@ -38,7 +38,7 @@ pnpm deploy:railway:cron --delete-env LABBY_CRON_ATTEMPTS
 
 Use `--delete-env KEY_A,KEY_B` or repeat the option. `--env-build <build>` selects a different configured env-lane build. `--no-env-sync` skips synchronization, and cannot be combined with deletion. Railway values are sent through stdin so secrets are not included in CLI arguments.
 
-Use `pnpm deploy:railway:incremental` for a conditional deployment. It still uploads a complete build, but skips the upload when the merge-base diff contains no API/web runtime files. If a safe diff base cannot be resolved, it deploys rather than silently skipping.
+Use `pnpm deploy:railway:incremental` for a conditional deployment. It still uploads a complete build, but skips the upload when the merge-base diff contains no API/web runtime files. If the diff base resolves to `HEAD` (as `origin/main` often does when deploying from `main`) or a safe diff base cannot be resolved, it deploys rather than silently skipping.
 
 ## Cron service
 
@@ -52,7 +52,7 @@ Declare another service in `.railway/railway.ts`, using the same Dockerfile with
 
 Set a distinct `deploy.cronSchedule` in each IaC service. Railway Cron uses UTC five-field expressions and has a five-minute minimum interval. Declare another service for each independently scheduled job. The process exits after the dispatch finishes; a non-2xx application response fails the execution, while transient cold-start gateway failures are retried with bounded backoff.
 
-Deploy the Cron service with `RAILWAY_SERVICE` targeting that service:
+Deploy the Cron service with:
 
 ```sh
 pnpm deploy:railway:cron
@@ -62,7 +62,7 @@ pnpm deploy:railway:cron:incremental
 
 ## Deployment variables
 
-- `RAILWAY_SERVICE`: service name or ID. Strongly recommended when the project has both API and Cron services.
+- `RAILWAY_SERVICE`: optional service name or ID override. By default, API commands target `labby-api` and Cron commands target `labby-auth-cleanup`, regardless of the CLI-linked service.
 - `RAILWAY_ENVIRONMENT`: environment name or ID.
 - `RAILWAY_PROJECT_ID`: project ID; when supplied, also supply an environment.
 - `RAILWAY_CLI`: alternate Railway executable path.

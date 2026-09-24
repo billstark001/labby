@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseRailwayDeployArguments, shouldDeployRailway } from '../../../scripts/railway-deploy.js';
+import { parseRailwayDeployArguments, railwayScopeArgs, shouldDeployRailway } from '../../../scripts/railway-deploy.js';
+
+test('Railway deploy scopes each target even when a different service is linked', () => {
+  assert.deepEqual(railwayScopeArgs('server', {}), ['--service', 'labby-api']);
+  assert.deepEqual(railwayScopeArgs('cron', {}), ['--service', 'labby-auth-cleanup']);
+  assert.deepEqual(railwayScopeArgs('server', {
+    RAILWAY_SERVICE: 'custom-api',
+    RAILWAY_ENVIRONMENT: 'production',
+    RAILWAY_PROJECT_ID: 'project-id',
+  }), ['--service', 'custom-api', '--environment', 'production', '--project', 'project-id']);
+  assert.throws(() => railwayScopeArgs('cron', { RAILWAY_PROJECT_ID: 'project-id' }), /requires RAILWAY_ENVIRONMENT/);
+});
 
 test('Railway incremental deploy selects only files used by its service image', () => {
   assert.equal(shouldDeployRailway(['docs/deploy-railway.md'], 'server'), false);

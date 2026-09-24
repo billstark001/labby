@@ -4,6 +4,11 @@ import { buildDeploymentEnvPlan, diffDeploymentEnvironment, parseDeploymentEnvAr
 
 export type RailwayServiceKind = 'server' | 'cron';
 
+const DEFAULT_RAILWAY_SERVICES: Record<RailwayServiceKind, string> = {
+  server: 'labby-api',
+  cron: 'labby-auth-cleanup',
+};
+
 const SHARED_DEPLOY_PATTERNS = [
   /^Dockerfile$/,
   /^\.railway\/railway\.ts$/,
@@ -48,9 +53,12 @@ export function shouldDeployRailway(files: string[], target: RailwayServiceKind)
 function changedFiles(): { base: string; files: string[] } | null {
   const requestedBase = process.env.DEPLOY_DIFF_BASE?.trim();
   const candidates = requestedBase ? [requestedBase] : ['origin/main', 'main', 'HEAD^'];
+  const head = run('git', ['rev-parse', 'HEAD'], { capture: true });
   for (const candidate of candidates) {
     const base = tryRun('git', ['merge-base', 'HEAD', candidate]);
     if (!base) continue;
+    // A ref pointing at HEAD says nothing about changes since the last upload.
+    if (base === head) return null;
     const output = tryRun('git', ['diff', '--name-only', `${base}..HEAD`]);
     if (output === null) continue;
     return { base, files: output.split('\n').map((file) => file.trim()).filter(Boolean) };
@@ -81,15 +89,15 @@ export function parseRailwayDeployArguments(args: string[]): { incremental: bool
   return { incremental, target };
 }
 
-function railwayScopeArgs(): string[] {
+export function railwayScopeArgs(target: RailwayServiceKind, env: NodeJS.ProcessEnv = process.env): string[] {
   const args: string[] = [];
-  if (process.env.RAILWAY_SERVICE?.trim()) args.push('--service', process.env.RAILWAY_SERVICE.trim());
-  if (process.env.RAILWAY_ENVIRONMENT?.trim()) args.push('--environment', process.env.RAILWAY_ENVIRONMENT.trim());
-  if (process.env.RAILWAY_PROJECT_ID?.trim()) {
-    if (!process.env.RAILWAY_ENVIRONMENT?.trim()) {
+  args.push('--service', env.RAILWAY_SERVICE?.trim() || DEFAULT_RAILWAY_SERVICES[target]);
+  if (env.RAILWAY_ENVIRONMENT?.trim()) args.push('--environment', env.RAILWAY_ENVIRONMENT.trim());
+  if (env.RAILWAY_PROJECT_ID?.trim()) {
+    if (!env.RAILWAY_ENVIRONMENT?.trim()) {
       throw new Error('RAILWAY_PROJECT_ID requires RAILWAY_ENVIRONMENT');
     }
-    args.push('--project', process.env.RAILWAY_PROJECT_ID.trim());
+    args.push('--project', env.RAILWAY_PROJECT_ID.trim());
   }
   return args;
 }
@@ -129,7 +137,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const parsedEnv = parseDeploymentEnvArguments(args, defaultBuild);
   const { incremental, target } = parseRailwayDeployArguments(parsedEnv.remaining);
   const railway = process.env.RAILWAY_CLI?.trim() || 'railway';
-  const scopeArgs = railwayScopeArgs();
+  const scopeArgs = railwayScopeArgs(target);
   let envChanged = false;
 
   if (parsedEnv.env.sync) {

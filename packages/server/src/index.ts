@@ -71,12 +71,17 @@ const { app, store, close } = await createApp({
 
 // Email / cron subsystem (optional – only starts if SMTP is configured)
 if (mailer) {
-  const mailerOk = await mailer.verify();
-  if (!mailerOk) {
-    console.warn('[mail] Mailer configured but verify() failed. Check Gmail OAuth/SMTP credentials.');
-  } else {
-    console.info('[mail] Mailer verify() succeeded.');
-  }
+  // Network verification can outlast Railway's healthcheck window. It must not
+  // delay the HTTP listener; failed delivery remains visible in the logs.
+  void mailer.verify().then((mailerOk) => {
+    if (!mailerOk) {
+      console.warn('[mail] Mailer configured but verify() failed. Check Gmail OAuth/SMTP credentials.');
+    } else {
+      console.info('[mail] Mailer verify() succeeded.');
+    }
+  }).catch((error: unknown) => {
+    console.warn('[mail] Mailer verification failed unexpectedly:', error);
+  });
 
   const recipients = (process.env.NOTIFY_RECIPIENTS ?? "")
     .split(",")
