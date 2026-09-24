@@ -1,7 +1,7 @@
 CREATE TABLE app_metadata (key text PRIMARY KEY, value jsonb NOT NULL);
 CREATE TABLE entities (
   kind text NOT NULL, id uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now(),
-  payload jsonb NOT NULL, PRIMARY KEY(kind,id)
+  payload jsonb NOT NULL, all_people boolean NOT NULL DEFAULT false, PRIMARY KEY(kind,id)
 );
 CREATE INDEX entities_kind_updated_idx ON entities(kind,updated_at DESC,id);
 CREATE TABLE embedding_migration_archive(keyword_id uuid PRIMARY KEY,source jsonb NOT NULL);
@@ -33,5 +33,5 @@ END;
 $$;
 CREATE TRIGGER entities_graph_change AFTER INSERT OR UPDATE OR DELETE ON entities
 FOR EACH ROW EXECUTE FUNCTION record_graph_change();
-INSERT INTO app_metadata VALUES('schema-version','{"version":7}');
+INSERT INTO app_metadata VALUES('schema-version','{"version":8}');
 CREATE INDEX entities_graph_id_idx ON entities(kind, id);

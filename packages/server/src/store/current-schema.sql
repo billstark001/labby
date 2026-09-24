@@ -51,8 +51,9 @@ CREATE TABLE persons (
 
   CREATE TABLE unavailabilities (
     id UUID PRIMARY KEY,
-    person_id UUID,
     person_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tag_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    all_people BOOLEAN NOT NULL DEFAULT FALSE,
     config_id UUID NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
@@ -127,7 +128,8 @@ CREATE TABLE persons (
   CREATE INDEX constraints_tag_ids_gin_idx ON constraints USING gin (tag_ids);
   CREATE INDEX schedules_created_at_idx ON schedules (created_at DESC, id DESC);
   CREATE INDEX schedules_updated_at_idx ON schedules (updated_at DESC, id DESC);
-  CREATE INDEX unavailabilities_person_idx ON unavailabilities (person_id);
+  CREATE INDEX unavailabilities_person_ids_gin_idx ON unavailabilities USING gin (person_ids);
+  CREATE INDEX unavailabilities_tag_ids_gin_idx ON unavailabilities USING gin (tag_ids);
   CREATE INDEX unavailabilities_config_idx ON unavailabilities (config_id);
   CREATE INDEX email_tasks_config_idx ON email_tasks (config_id);
   CREATE INDEX email_tasks_updated_at_idx ON email_tasks (updated_at DESC, id DESC);
@@ -189,7 +191,8 @@ INSERT INTO schema_migrations(version,name) VALUES
   (1,'baseline'), (2,'product-embedding-and-ranking-history'), (3,'graph-change-feed'),
   (4,'jsonb-documents'), (5,'uuid-timestamptz-person-tags'),
   (6,'constraint-tag-targets'),
-  (7,'localized-person-tags-and-constraint-state');
+  (7,'localized-person-tags-and-constraint-state'),
+  (8,'unavailability-selectors-and-closures');
 CREATE INDEX keywords_graph_id_idx ON keywords(id);
 
 CREATE TABLE person_tags (

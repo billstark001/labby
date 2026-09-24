@@ -3,6 +3,7 @@ import graphMigrationSql from './migrate/004.up.sql?raw';
 import identityMigrationSql from './migrate/005.up.sql?raw';
 import constraintMigrationSql from './migrate/006.up.sql?raw';
 import localizationMigrationSql from './migrate/007.up.sql?raw';
+import unavailabilityMigrationSql from './migrate/008.up.sql?raw';
 import { listBrowserGraphPage } from './graph';
 import { toast } from '@/components/ui/Toast';
 import { i18n } from '@/i18n';
@@ -30,6 +31,7 @@ import {
   validateKeywordVector,
   validateRankingJudgment,
   validateScheduleAssignments,
+  validateUnavailability,
   ProductEmbeddingEngine,
 } from '@labby/core';
 import { upgradeBrowserSchema } from './browser-migrations';
@@ -104,8 +106,8 @@ async function importLegacyDump(
 
     if (rows.length > 0) {
       await tx.query(
-        `INSERT INTO entities(kind, id, updated_at, payload)
-         SELECT kind, id, updated_at, payload
+        `INSERT INTO entities(kind, id, updated_at, payload, all_people)
+         SELECT kind, id, updated_at, payload, kind = 'unavailability' AND payload->>'allPeople' = 'true'
          FROM jsonb_to_recordset($1::jsonb)
            AS imported(kind text, id uuid, updated_at timestamptz, payload jsonb)
          ON CONFLICT(kind, id) DO NOTHING`,
@@ -189,10 +191,6 @@ function hasOverlap(left: readonly string[], right: Set<string>): boolean {
   return left.some((value) => right.has(value));
 }
 
-function unavailabilityPersonIds(value: PersonUnavailability): string[] {
-  return value.personIds?.length ? value.personIds : value.personId ? [value.personId] : [];
-}
-
 export async function createPGliteDB(): Promise<{
   db: LabbyDB;
   restore: (dump: DatabaseDump) => Promise<void>;
@@ -206,7 +204,7 @@ export async function createPGliteDB(): Promise<{
   try {
     const changed = await upgradeBrowserSchema(
       client,
-      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql },
+      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql, unavailability: unavailabilityMigrationSql },
       (kind) => {
         maintenanceToast = toast.loading(
           i18n.t(kind === 'initialize' ? 'dbInitializing' : 'dbMigrating'),
@@ -266,9 +264,9 @@ export async function createPGliteDB(): Promise<{
       record.updatedAt ?? record.modifiedAt ?? record.createdAt ?? Date.now(),
     );
     await client.query(
-      `INSERT INTO entities(kind, id, updated_at, payload) VALUES ($1, $2, $3, $4::jsonb)
-       ON CONFLICT(kind, id) DO UPDATE SET updated_at = excluded.updated_at, payload = excluded.payload`,
-      [kind, id, new Date(updatedAt), JSON.stringify(value)],
+      `INSERT INTO entities(kind, id, updated_at, payload, all_people) VALUES ($1, $2, $3, $4::jsonb, $5)
+       ON CONFLICT(kind, id) DO UPDATE SET updated_at = excluded.updated_at, payload = excluded.payload, all_people = excluded.all_people`,
+      [kind, id, new Date(updatedAt), JSON.stringify(value), kind === 'unavailability' && (value as PersonUnavailability).allPeople],
     );
   }
 
@@ -356,8 +354,8 @@ export async function createPGliteDB(): Promise<{
       list: (query) => list<PersonTag>('person-tag', query),
       put: (value) => put('person-tag', value.id, value),
       delete: async (id) => {
-        const referenced = await client.query<{ id: string }>("SELECT id FROM entities WHERE kind='constraint' AND (payload->'tagIds' ? $1 OR payload->'otherTagIds' ? $1) LIMIT 1", [id]);
-        if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling constraint');
+        const referenced = await client.query<{ id: string }>("SELECT id FROM entities WHERE (kind='constraint' AND (payload->'tagIds' ? $1 OR payload->'otherTagIds' ? $1)) OR (kind='unavailability' AND payload->'tagIds' ? $1) LIMIT 1", [id]);
+        if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling rule');
         const persons = await all<Person>('person');
         await client.transaction(async (tx) => {
           for (const person of persons.filter(item => item.tagIds?.includes(id))) {
@@ -423,8 +421,15 @@ export async function createPGliteDB(): Promise<{
     unavailabilities: {
       get: (id) => get<PersonUnavailability>('unavailability', id),
       list: (query) => list<PersonUnavailability>('unavailability', query),
-      put: (value) =>
-        put('unavailability', value.id, { ...value, personIds: unavailabilityPersonIds(value) }),
+      put: (value) => {
+        const errors = validateUnavailability(value);
+        if (errors.length) throw new Error(errors[0]);
+        return put('unavailability', value.id, {
+        ...value,
+        personIds: value.allPeople ? [] : [...new Set(value.personIds)],
+        tagIds: value.allPeople ? [] : [...new Set(value.tagIds)],
+        });
+      },
       delete: (id) => remove('unavailability', id),
       clear: () => clear('unavailability'),
     },
@@ -487,6 +492,7 @@ export async function createPGliteDB(): Promise<{
           ...constraint.tagIds,
           ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? []),
         ]));
+        selectedUnavailabilities.forEach(item => item.tagIds.forEach(id => referencedTagIds.add(id)));
         selectedConstraints.forEach((constraint) => {
           [...constraint.personIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [])]
             .forEach(id => personIds.add(id));
@@ -494,7 +500,7 @@ export async function createPGliteDB(): Promise<{
         persons.filter(person => person.tagIds?.some(tagId => referencedTagIds.has(tagId)))
           .forEach(person => personIds.add(person.id));
         selectedUnavailabilities.forEach((item) =>
-          unavailabilityPersonIds(item).forEach((id) => personIds.add(id)),
+          item.personIds.forEach((id) => personIds.add(id)),
         );
         const selectedPersons = persons.filter((item) => personIds.has(item.id));
         const keywordIds = new Set(selectedPersons.flatMap((item) => item.keywordIds));
@@ -520,7 +526,8 @@ export async function createPGliteDB(): Promise<{
         const referencedPersonIds = persons.filter(person => wanted.has(person.id) && (
           schedules.some(schedule => schedule.sessions.some(session => session.presentations.some(presentation =>
             presentation.presenterId === person.id || presentation.questionerIds.includes(person.id))))
-          || unavailabilities.some(item => unavailabilityPersonIds(item).includes(person.id))
+          || unavailabilities.some(item => item.personIds.includes(person.id)
+            || item.tagIds.some(tagId => person.tagIds?.includes(tagId)))
           || constraints.some(item => [...item.personIds, ...(item.type === 'frequency-multiplier' ? [] : item.otherPersonIds ?? [])].includes(person.id)
             || [...item.tagIds, ...(item.type === 'frequency-multiplier' ? [] : item.otherTagIds ?? [])].some(tagId => person.tagIds?.includes(tagId)))
         )).map(person => person.id).sort();
@@ -577,8 +584,8 @@ export async function createPGliteDB(): Promise<{
       await tx.query('DELETE FROM entities');
       for (const row of rows)
         await tx.query(
-          'INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
-          [row.kind, row.id, new Date(row.updated_at), JSON.stringify(row.payload)],
+          'INSERT INTO entities(kind,id,updated_at,payload,all_people) VALUES($1,$2,$3,$4::jsonb,$5)',
+          [row.kind, row.id, new Date(row.updated_at), JSON.stringify(row.payload), row.kind === 'unavailability' && row.payload.allPeople === true],
         );
     });
   }

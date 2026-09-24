@@ -76,7 +76,9 @@ function samplePlan(id = testUuid('s1'), configId = testUuid('c1')): SchedulePla
 function sampleUnavailability(id = testUuid('u1'), personId = testUuid('p1'), configId = testUuid('c1')): PersonUnavailability {
   return {
     id,
-    personId,
+    personIds: [personId],
+    tagIds: [],
+    allPeople: false,
     configId,
     startDate: '2026-01-03',
     endDate: '2026-01-04',
@@ -160,6 +162,8 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     assert.equal(await store.getSchedule(invalidPlan.id), undefined);
     await store.putSchedule(plan);
     await store.putUnavailability(unavailability);
+    const everyone = { ...sampleUnavailability(testUuid('all-people')), personIds: [], allPeople: true };
+    await store.putUnavailability(everyone);
     await store.putKeywordVector(vector);
     await store.putEmailTask(emailTask);
     await store.createUser(user);
@@ -175,6 +179,9 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     assert.equal((await store.getConfig(config.id))?.id, config.id);
     assert.equal((await store.getSchedule(plan.id))?.id, plan.id);
     assert.equal((await store.getUnavailability(unavailability.id))?.id, unavailability.id);
+    const everyoneRow = (await store.exportBackupSnapshot()).tables.unavailabilities.find(row => row.id === everyone.id);
+    assert.equal(Boolean(everyoneRow?.all_people), true);
+    assert.deepEqual(JSON.parse(String(everyoneRow?.payload)).personIds, []);
     assert.equal((await store.getKeywordVector(vector.keywordId))?.keywordId, vector.keywordId);
     assert.equal((await store.getKeywordVectors([vector.keywordId])).length, 1);
     assert.equal((await store.getEmailTask(emailTask.id))?.id, emailTask.id);
@@ -201,6 +208,7 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     await source.putKeywordVector(sampleVector(testUuid('k-a')));
     await source.putKeyword(sampleKeyword(testUuid('k-b')));
     await source.putKeywordVector(sampleVector(testUuid('k-b')));
+    await source.putUnavailability({ ...sampleUnavailability(testUuid('backup-all')), personIds: [], allPeople: true });
 
     const graph = await source.listGraph();
     assert.equal(graph.items.filter(item => item.keyword).length, 2);
@@ -220,6 +228,7 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     assert.deepEqual((await target.getPersonTag(tagId))?.names, { en: 'Local', zh: '', ja: '' });
     assert.equal((await target.listKeywords()).length, 2);
     assert.equal((await target.listKeywordVectors()).length, 2);
+    assert.equal((await target.getUnavailability(testUuid('backup-all')))?.allPeople, true);
   } finally {
     await source.close();
     await target.close();

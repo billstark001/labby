@@ -11,6 +11,7 @@ const schemaSql = {
   identity: await readFile(new URL('../src/db/migrate/005.up.sql', import.meta.url), 'utf8'),
   constraints: await readFile(new URL('../src/db/migrate/006.up.sql', import.meta.url), 'utf8'),
   localization: await readFile(new URL('../src/db/migrate/007.up.sql', import.meta.url), 'utf8'),
+  unavailability: await readFile(new URL('../src/db/migrate/008.up.sql', import.meta.url), 'utf8'),
 };
 const KEYWORD_ID = '10000000-0000-4000-8000-000000000001';
 
@@ -32,7 +33,9 @@ test('fresh browser schema is initialized once and preserves data on repeated up
   try {
     await upgradeBrowserSchema(db, schemaSql);
     assert.deepEqual((await db.query('SELECT value FROM app_metadata')).rows, [{ value: { version: BROWSER_SCHEMA_VERSION } }]);
-    await db.query('INSERT INTO entities VALUES (\'keyword\',$1,$2,\'{"name":"Keep"}\')', [KEYWORD_ID, new Date(1)]);
+    assert.deepEqual((await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='entities' AND column_name='all_people'")).rows,
+      [{ column_name: 'all_people' }]);
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES (\'keyword\',$1,$2,\'{"name":"Keep"}\')', [KEYWORD_ID, new Date(1)]);
     await upgradeBrowserSchema(db, schemaSql);
     assert.deepEqual((await db.query('SELECT payload FROM entities')).rows, [{ payload: { name: 'Keep' } }]);
     assert.deepEqual((await db.query('SELECT * FROM embedding_migration_archive')).rows, []);
@@ -43,6 +46,7 @@ test('v5 browser constraints migrate to canonical tag selectors', async () => {
   const db = new PGlite();
   try {
     await upgradeBrowserSchema(db, schemaSql);
+    await db.exec('ALTER TABLE entities DROP COLUMN all_people');
     await db.query("UPDATE app_metadata SET value='{\"version\":5}'::jsonb WHERE key='schema-version'");
     const id = '10000000-0000-4000-8000-000000000002';
     await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
@@ -58,6 +62,7 @@ test('v6 browser records gain localized tag names and enabled constraints', asyn
   const db = new PGlite();
   try {
     await upgradeBrowserSchema(db, schemaSql);
+    await db.exec('ALTER TABLE entities DROP COLUMN all_people');
     await db.query("UPDATE app_metadata SET value='{\"version\":6}'::jsonb WHERE key='schema-version'");
     const tagId = '10000000-0000-4000-8000-000000000003';
     const constraintId = '10000000-0000-4000-8000-000000000004';
@@ -71,6 +76,26 @@ test('v6 browser records gain localized tag names and enabled constraints', asyn
     )).rows;
     assert.equal(rows[0]?.payload.disabled, false);
     assert.deepEqual(rows[1]?.payload.names, { en: 'Local', zh: '', ja: '' });
+  } finally { await db.close(); }
+});
+
+test('v7 browser unavailability rows migrate to inclusive selectors', async () => {
+  const db = new PGlite();
+  try {
+    await upgradeBrowserSchema(db, schemaSql);
+    await db.exec('ALTER TABLE entities DROP COLUMN all_people');
+    await db.query("UPDATE app_metadata SET value=$1::jsonb WHERE key='schema-version'", [JSON.stringify({ version: 7 })]);
+    const id = '10000000-0000-4000-8000-000000000005';
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
+      ['unavailability', id, new Date(1), JSON.stringify({ id, personId: 'person', configId: 'config', startDate: '2026-01-01', endDate: '2026-01-02' })]);
+    await upgradeBrowserSchema(db, schemaSql);
+    const row = (await db.query<{ payload: Record<string, unknown>; all_people: boolean }>("SELECT payload,all_people FROM entities WHERE kind='unavailability'")).rows[0]!;
+    const payload = row.payload;
+    assert.deepEqual(payload.personIds, ['person']);
+    assert.deepEqual(payload.tagIds, []);
+    assert.equal(payload.allPeople, false);
+    assert.equal(row.all_people, false);
+    assert.equal('personId' in payload, false);
   } finally { await db.close(); }
 });
 
@@ -138,7 +163,7 @@ test('browser graph cursor feed reports deletes and equal-timestamp updates', as
     await upgradeBrowserSchema(db, schemaSql);
     const { listBrowserGraphPage } = await import('../src/db/graph.js');
     const first = await listBrowserGraphPage(db);
-    await db.query('INSERT INTO entities VALUES($1,$2,$3,$4)', ['keyword',KEYWORD_ID,new Date(1),JSON.stringify({id:KEYWORD_ID,name:'before'})]);
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4)', ['keyword',KEYWORD_ID,new Date(1),JSON.stringify({id:KEYWORD_ID,name:'before'})]);
     const added = await listBrowserGraphPage(db, { since: first.checkpoint! });
     assert.equal(added.items[0]!.keyword!.name, 'before');
     await db.query('UPDATE entities SET payload=$1 WHERE kind=$2 AND id=$3', [JSON.stringify({id:KEYWORD_ID,name:'after'}),'keyword',KEYWORD_ID]);

@@ -151,10 +151,16 @@ export function legacyDumpToEntityRows(dump: DatabaseDump): LegacyEntityRow[] {
     ...dump.configs.map(value => row('config', value.id, value)),
     ...dump.constraints.map(value => row('constraint', value.id, value)),
     ...dump.schedules.map(value => row('schedule', value.id, value)),
-    ...dump.unavailabilities.map(value => row('unavailability', value.id, {
-      ...value,
-      personIds: value.personIds?.length ? value.personIds : value.personId ? [value.personId] : [],
-    })),
+    ...dump.unavailabilities.map(value => {
+      const legacy = value as PersonUnavailability & { personId?: string };
+      const { personId, ...rest } = legacy;
+      return row('unavailability', value.id, {
+        ...rest,
+        personIds: value.personIds?.length ? value.personIds : personId ? [personId] : [],
+        tagIds: value.tagIds ?? [],
+        allPeople: value.allPeople === true,
+      });
+    }),
     ...dump.emailTasks.map(value => row('email-task', value.id, value)),
     ...(dump.systemSettings ? [row('system-settings', 'system', dump.systemSettings satisfies SystemSettings)] : []),
   ];

@@ -101,20 +101,6 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     }).then(() => undefined),
   };
 
-  const normalizedUnavailabilities: PersonUnavailabilityStore = {
-    ...unavailabilities,
-    put: (value: PersonUnavailability) => {
-      const normalizedPersonIds = Array.isArray(value.personIds) && value.personIds.length > 0
-        ? value.personIds
-        : (value.personId ? [value.personId] : []);
-      return unavailabilities.put({
-        ...value,
-        personId: normalizedPersonIds[0],
-        personIds: normalizedPersonIds,
-      });
-    },
-  };
-
   const foreignKeys = {
     readForSchedule: (query: ScheduleForeignKeyQuery) => client.request<ScheduleForeignKeyBundle>('/db/foreign-keys/schedule', {
       method: 'POST',
@@ -189,7 +175,7 @@ export function createApiDB(client: ApiClient = apiClient): LabbyDB {
     configs,
     constraints,
     schedules,
-    unavailabilities: normalizedUnavailabilities,
+    unavailabilities,
     emailTasks,
     systemSettings,
     foreignKeys,

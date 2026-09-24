@@ -29,7 +29,7 @@ import type {
   ListQuery,
   PaginatedResult,
 } from '@labby/core';
-import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, validateKeywordVector, validateRankingJudgment, validateScheduleAssignments } from '@labby/core';
+import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, validateKeywordVector, validateRankingJudgment, validateScheduleAssignments, validateUnavailability } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
 export const UserRole = {
@@ -262,17 +262,6 @@ function extractSchedulePersonIds(schedule: SchedulePlan): string[] {
     }
   }
   return uniqueIds(ids);
-}
-
-function normalizeUnavailabilityPersonIds(unavailability: PersonUnavailability): string[] {
-  const withMultiple = unavailability as PersonUnavailability & { personIds?: string[] };
-  if (Array.isArray(withMultiple.personIds) && withMultiple.personIds.length > 0) {
-    return uniqueIds(withMultiple.personIds);
-  }
-  if (unavailability.personId) {
-    return [unavailability.personId];
-  }
-  return [];
 }
 
 function escapeSqlLiteral(value: string): string {
@@ -629,8 +618,8 @@ export class LabbyStore {
   async deletePersonTag(id: string): Promise<void> {
     await this.ensureReady();
     await this.transaction(async query => {
-      const referenced = await query('SELECT 1 FROM constraints WHERE tag_ids ? $1 LIMIT 1', [id]) as { rows: unknown[] };
-      if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling constraint');
+      const referenced = await query('SELECT 1 FROM constraints WHERE tag_ids ? $1 UNION ALL SELECT 1 FROM unavailabilities WHERE tag_ids ? $1 LIMIT 1', [id]) as { rows: unknown[] };
+      if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling rule');
       const result = await query('SELECT id,payload FROM persons') as { rows: Array<{ id: string; payload: Person }> };
       const rows = result.rows;
       for (const row of rows) {
@@ -1006,51 +995,39 @@ export class LabbyStore {
 
   async getUnavailability(id: string): Promise<PersonUnavailability | undefined> {
     await this.ensureReady();
-    const payload = await this.getPayload<PersonUnavailability>(sql`SELECT payload FROM unavailabilities WHERE id = ${id}`);
-    if (!payload) return undefined;
-    const personIds = normalizeUnavailabilityPersonIds(payload);
-    return ({
-      ...payload,
-      personId: personIds[0],
-      personIds,
-    } as PersonUnavailability);
+    return this.getPayload<PersonUnavailability>(sql`SELECT payload FROM unavailabilities WHERE id = ${id}`);
   }
 
   async listUnavailabilities(): Promise<PersonUnavailability[]> {
     await this.ensureReady();
-    const values = await this.listPayloads<PersonUnavailability>(sql`SELECT payload FROM unavailabilities ORDER BY start_date, end_date, id`);
-    return values.map((value) => {
-      const personIds = normalizeUnavailabilityPersonIds(value);
-      return ({
-        ...value,
-        personId: personIds[0],
-        personIds,
-      } as PersonUnavailability);
-    });
+    return this.listPayloads<PersonUnavailability>(sql`SELECT payload FROM unavailabilities ORDER BY start_date, end_date, id`);
   }
 
   async putUnavailability(unavailability: PersonUnavailability): Promise<void> {
     await this.ensureReady();
-    const personIds = normalizeUnavailabilityPersonIds(unavailability);
+    const errors = validateUnavailability(unavailability);
+    if (errors.length) throw new Error(errors[0]);
     const normalized: PersonUnavailability = {
       ...unavailability,
-      personId: personIds[0],
-      personIds,
-    } as PersonUnavailability;
+      personIds: unavailability.allPeople ? [] : uniqueIds(unavailability.personIds),
+      tagIds: unavailability.allPeople ? [] : uniqueIds(unavailability.tagIds),
+    };
     await this.executeCommand(sql`
-      INSERT INTO unavailabilities (id, person_id, person_ids, config_id, start_date, end_date, payload)
+      INSERT INTO unavailabilities (id, person_ids, tag_ids, all_people, config_id, start_date, end_date, payload)
       VALUES (
         ${normalized.id},
-        ${normalized.personId ?? ''},
-        ${JSON.stringify(personIds)},
+        ${JSON.stringify(normalized.personIds)},
+        ${JSON.stringify(normalized.tagIds)},
+        ${normalized.allPeople},
         ${normalized.configId},
         ${normalized.startDate},
         ${normalized.endDate},
         ${JSON.stringify(normalized)}
       )
       ON CONFLICT(id) DO UPDATE SET
-        person_id = excluded.person_id,
         person_ids = excluded.person_ids,
+        tag_ids = excluded.tag_ids,
+        all_people = excluded.all_people,
         config_id = excluded.config_id,
         start_date = excluded.start_date,
         end_date = excluded.end_date,
@@ -1101,20 +1078,12 @@ export class LabbyStore {
     });
 
     const unavailabilityRows = await this.queryRows(sql.raw(`
-      SELECT payload, person_ids
+      SELECT payload, person_ids, tag_ids
       FROM unavailabilities
       WHERE config_id IN (${configInList})
       ORDER BY start_date, end_date, id
     `));
-    const unavailabilities = unavailabilityRows.map((row) => {
-      const payload = this.parsePayload<PersonUnavailability>(row.payload);
-      const personIds = normalizeUnavailabilityPersonIds(payload);
-      return ({
-        ...payload,
-        personId: personIds[0],
-        personIds,
-      } as PersonUnavailability);
-    });
+    const unavailabilities = unavailabilityRows.map((row) => this.parsePayload<PersonUnavailability>(row.payload));
 
     const personIdSet = new Set<string>();
     for (const row of [...scheduleRows, ...constraintRows, ...unavailabilityRows]) {
@@ -1126,7 +1095,10 @@ export class LabbyStore {
       }
     }
 
-    const referencedTagIds = uniqueIds(constraints.flatMap(extractConstraintTagIds));
+    const referencedTagIds = uniqueIds([
+      ...constraints.flatMap(extractConstraintTagIds),
+      ...unavailabilities.flatMap(item => item.tagIds),
+    ]);
     const taggedPersons = referencedTagIds.length
       ? await this.listPayloads<Person>(sql.raw(`SELECT payload FROM persons WHERE ${this.buildJsonArrayOverlapCondition("payload->'tagIds'", referencedTagIds)}`))
       : [];
@@ -1166,10 +1138,13 @@ export class LabbyStore {
     const constraintOverlapCondition = personTagIds.length
       ? `(${overlapCondition} OR ${this.buildJsonArrayOverlapCondition('tag_ids', personTagIds)})`
       : overlapCondition;
+    const unavailabilityOverlapCondition = personTagIds.length
+      ? `(${overlapCondition} OR ${this.buildJsonArrayOverlapCondition('tag_ids', personTagIds)})`
+      : overlapCondition;
     const [schedules, constraints, unavailabilities] = await Promise.all([
       this.queryRows(sql.raw(`SELECT person_ids FROM schedules WHERE ${overlapCondition}`)),
       this.queryRows(sql.raw(`SELECT person_ids, tag_ids FROM constraints WHERE ${constraintOverlapCondition}`)),
-      this.queryRows(sql.raw(`SELECT person_ids FROM unavailabilities WHERE ${overlapCondition}`)),
+      this.queryRows(sql.raw(`SELECT person_ids, tag_ids FROM unavailabilities WHERE ${unavailabilityOverlapCondition}`)),
     ]);
     const requested = new Set(personIds);
     const referenced = new Set<string>();
@@ -1177,7 +1152,13 @@ export class LabbyStore {
       const list = typeof ids === 'string' ? JSON.parse(ids) as unknown : ids;
       if (Array.isArray(list)) for (const id of list) if (requested.has(String(id))) referenced.add(String(id));
     };
-    for (const row of [...schedules, ...unavailabilities]) include(row.person_ids);
+    for (const row of schedules) include(row.person_ids);
+    for (const row of unavailabilities) {
+      include(row.person_ids);
+      const tags = typeof row.tag_ids === 'string' ? JSON.parse(row.tag_ids) as unknown : row.tag_ids;
+      if (Array.isArray(tags)) for (const person of persons)
+        if (person.tagIds?.some(tagId => tags.includes(tagId))) referenced.add(person.id);
+    }
     for (const row of constraints) {
       include(row.person_ids);
       const tags = typeof row.tag_ids === 'string' ? JSON.parse(row.tag_ids) as unknown : row.tag_ids;
@@ -1541,7 +1522,7 @@ export class LabbyStore {
       ),
     };
 
-    // Backup payloads are data, not schema history; normalize records created before v7 on import.
+    // Backup payloads are data, not schema history; normalize older records on import.
     for (const row of tables.person_tags) {
       const tag = this.parsePayload<PersonTag>(row.payload);
       if (!tag.names) row.payload = JSON.stringify({ ...tag, names: { en: tag.name, zh: '', ja: '' } });
@@ -1549,6 +1530,17 @@ export class LabbyStore {
     for (const row of tables.constraints) {
       const constraint = this.parsePayload<ScheduleConstraint>(row.payload);
       if (constraint.disabled === undefined) row.payload = JSON.stringify({ ...constraint, disabled: false });
+    }
+    for (const row of tables.unavailabilities) {
+      const legacy = this.parsePayload<Record<string, unknown>>(row.payload);
+      const personIds = Array.isArray(legacy.personIds) ? legacy.personIds
+        : typeof legacy.personId === 'string' ? [legacy.personId] : [];
+      const { personId: _discarded, ...rest } = legacy;
+      row.person_ids = JSON.stringify(personIds);
+      row.tag_ids = JSON.stringify(Array.isArray(legacy.tagIds) ? legacy.tagIds : []);
+      row.all_people = legacy.allPeople === true ? 'true' : 'false';
+      delete row.person_id;
+      row.payload = JSON.stringify({ ...rest, personIds, tagIds: JSON.parse(String(row.tag_ids)), allPeople: legacy.allPeople === true });
     }
 
     const keywordIds = new Set(tables.keywords.map(row => String(row.id)));

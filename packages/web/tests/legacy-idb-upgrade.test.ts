@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { DatabaseDump } from '@labby/core';
+import type { DatabaseDump, PersonUnavailability } from '@labby/core';
 
 import { legacyDumpToEntityRows, LEGACY_IDB_VERSION } from '../src/db/legacy-idb-upgrade';
 import { pendingBrowserSchemaVersions } from '../src/db/browser-migrations';
@@ -15,7 +15,7 @@ test('legacy IndexedDB upgrade uses a new version and normalizes the complete du
     configs: [],
     constraints: [],
     schedules: [],
-    unavailabilities: [{ id: 'u', configId: 'c', personId: 'p', date: '2026-01-01' }],
+    unavailabilities: [{ id: 'u', configId: 'c', personId: 'p', startDate: '2026-01-01', endDate: '2026-01-01' } as unknown as PersonUnavailability],
     emailTasks: [],
   };
 
@@ -27,13 +27,14 @@ test('legacy IndexedDB upgrade uses a new version and normalizes the complete du
 });
 
 test('browser schema upgrades are ordered and reject newer databases', () => {
-  assert.deepEqual(pendingBrowserSchemaVersions(0), [1, 2, 3, 4, 5, 6, 7]);
-  assert.deepEqual(pendingBrowserSchemaVersions(1), [2, 3, 4, 5, 6, 7]);
-  assert.deepEqual(pendingBrowserSchemaVersions(2), [3, 4, 5, 6, 7]);
-  assert.deepEqual(pendingBrowserSchemaVersions(4), [5, 6, 7]);
-  assert.deepEqual(pendingBrowserSchemaVersions(5), [6, 7]);
-  assert.deepEqual(pendingBrowserSchemaVersions(6), [7]);
-  assert.deepEqual(pendingBrowserSchemaVersions(7), []);
-  assert.throws(() => pendingBrowserSchemaVersions(8), /newer than supported/);
+  assert.deepEqual(pendingBrowserSchemaVersions(0), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(1), [2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(2), [3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(4), [5, 6, 7, 8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(5), [6, 7, 8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(6), [7, 8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(7), [8]);
+  assert.deepEqual(pendingBrowserSchemaVersions(8), []);
+  assert.throws(() => pendingBrowserSchemaVersions(9), /newer than supported/);
   for (const invalid of [-1, 0.5, NaN, Infinity]) assert.throws(() => pendingBrowserSchemaVersions(invalid), /Invalid/);
 });

@@ -55,7 +55,7 @@ test('CLI explicit target diagnoses legacy schema, default command migrates, rep
     const status = JSON.parse((await cli('--action', 'status', '--json')).stdout);
     assert.equal(status.state, 'legacy');
     assert.deepEqual(status.applied, []);
-    assert.deepEqual(status.pendingVersions, [2, 3, 4, 5, 6, 7]);
+    assert.deepEqual(status.pendingVersions, [2, 3, 4, 5, 6, 7, 8]);
     assert.equal(status.migrated, false);
     assert.match(status.nextCommand, /db:migrate/);
     const migrated = await cli();
@@ -64,7 +64,7 @@ test('CLI explicit target diagnoses legacy schema, default command migrates, rep
     const again = JSON.parse((await cli('--json')).stdout);
     assert.equal(again.state, 'current');
     assert.equal(again.migrated, false);
-    assert.equal(again.applied.length, 7);
+    assert.equal(again.applied.length, 8);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

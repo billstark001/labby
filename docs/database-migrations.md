@@ -63,6 +63,10 @@ Production execution must be explicitly authorized; ordinary server startup rema
 7. Localized person tags and constraint state:
    - Backfill `person_tags.payload.names` from the existing English `name`, with empty Chinese and Japanese translations.
    - Backfill `constraints.payload.disabled` as `false`. A disabled constraint remains stored but does not affect scheduling.
+8. Inclusive unavailability selectors and whole-group closures:
+   - Replace the legacy `person_id` column and payload with canonical `person_ids` and `tag_ids` arrays.
+   - Add a persisted `all_people` boolean, defaulting to false for existing records. Future personnel changes do not alter this selector.
+   - Keep the JSON payload in sync with the indexed selector columns; add GIN indexes for person and tag references.
 
 Conversion is approximate: it cannot preserve all old Euclidean distances or reconstruct
 judgments that the old application never saved. The original rows remain in
@@ -79,11 +83,12 @@ Browser-local PGlite is explicitly allowed to initialize and migrate automatical
 mounts notification UI before opening the database. Actual initialization, schema upgrade or
 legacy import displays progress and completion; failures remain visible with a retry action.
 
-Empty browser databases use current-schema.sql directly. Existing databases migrate to version 7:
+Empty browser databases use current-schema.sql directly. Existing databases migrate to version 8:
 version 3 archives and converts old keyword vectors, version 4 installs the graph revision clock and
 change-feed triggers, and version 5 normalizes entity IDs/timestamps before enabling person-tag
 entities. Version 6 normalizes all constraint tag selectors and removes the unused no-overlap weight.
 Version 7 backfills localized person-tag names and the enabled state of constraints.
+Version 8 canonicalizes unavailability selectors and adds the `entities.all_people` column. Browser writes, IndexedDB import, and restore keep it synchronized with the payload.
 Each upgrade transaction includes its schema version updates.
 ranking-judgment entities store accepted lists.
 The earlier IndexedDB import is a one-time migration; source vectors are archived and the
@@ -116,6 +121,7 @@ Server migrations live in packages/server/src/store/migrate:
 - 005.up.sql atomically maps IDs to UUID, converts relational timestamps, and creates person_tags.
 - 006.up.sql adds and backfills constraint tag selectors, removes the unused no-overlap weight, and adds selector indexes.
 - 007.up.sql backfills localized person-tag names and the enabled state of constraints.
+- 008.up.sql replaces legacy unavailability selectors and adds the persisted all-people flag.
 - current-schema.sql describes the complete latest schema independently; db:init uses it directly.
 - schema-state.ts only checks the version and is the sole schema dependency of server startup.
 - runtime.ts loads SQL batches without splitting on semicolons; schema.ts owns the

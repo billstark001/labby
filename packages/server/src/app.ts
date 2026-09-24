@@ -28,6 +28,7 @@ import {
   solveIncremental,
   keywordVectorsToSimilarityLookup,
   SYSTEM_SETTINGS_ID,
+  validateUnavailability,
 } from "@labby/core";
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
@@ -697,6 +698,8 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.get("/api/v1/db/unavailabilities/:id", async (c) => ok(c, (await store.getUnavailability(c.req.param("id"))) ?? null));
   app.put("/api/v1/db/unavailabilities/:id", async (c) => {
     const unavailability = await c.req.json<PersonUnavailability>();
+    const errors = validateUnavailability(unavailability);
+    if (errors.length) throw new AppError('VALIDATION_ERROR', errors[0]!, 400);
     await store.putUnavailability({ ...unavailability, id: c.req.param("id") });
     return ok(c, await store.getUnavailability(c.req.param("id")), 201);
   });
