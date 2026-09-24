@@ -3,8 +3,9 @@ import { syncGraph } from '@/lib/graph-sync';
 import { useEffect, useState } from 'preact/hooks';
 import { KeywordForm } from './KeywordForm';
 import { displayName } from '@/i18n';
-import { buildKeywordReferenceCount, listKeywordsPage, readKeywordForeignKeys, useDatabase } from '../db/index';
+import { buildKeywordReferenceCount, listKeywordsPage, readAllPaginated, readKeywordForeignKeys, useDatabase } from '../db/index';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { changedMemberships } from '@/lib/person-membership';
 import * as s from '../styles/components.css';
 import {
   Button,
@@ -36,6 +37,7 @@ export function KeywordList() {
     const bundle = await readKeywordForeignKeys(db, result.items.map(item => item.id));
     return { ...result, references: buildKeywordReferenceCount(bundle) };
   }, [db, page, pageSize, sortBy, sortDirection, locale]);
+  const membershipQuery = useAsyncResource(async () => editing ? readAllPaginated(db.persons) : [], [db, editing === 'new' ? 'new' : editing?.id]);
   const pagedKeywords = query.data?.items ?? [];
   const keywordReferenceCount = query.data?.references ?? new Map<string, number>();
   useEffect(() => {
@@ -49,8 +51,10 @@ export function KeywordList() {
     return (keywordReferenceCount.get(id) ?? 0) > 0;
   }
 
-  async function handleSave(k: Keyword) {
+  async function handleSave(k: Keyword, memberIds: string[]) {
     await db.keywords.put(k);
+    await Promise.all(changedMemberships(membershipQuery.data ?? [], 'keywordIds', k.id, memberIds)
+      .map(person => db.persons.put(person)));
     await Promise.all([query.refetch(), syncGraph(db)]);
     setEditing(null);
   }
@@ -83,12 +87,15 @@ export function KeywordList() {
           closeOnOverlayClick={false}
           title={editing === 'new' ? t('addKeyword') : t('edit')}
         >
-          <KeywordForm
+          {membershipQuery.isInitialLoading ? <ContentSkeleton rows={4} /> : membershipQuery.error && !membershipQuery.data ?
+            <p role="alert">{String(membershipQuery.error)} <Button onClick={() => void membershipQuery.refetch()}>{t('retry')}</Button></p> : <KeywordForm
+            key={editing === 'new' ? 'new' : editing.id}
             initial={editing === 'new' ? undefined : editing}
+            persons={membershipQuery.data ?? []}
             onSave={handleSave}
             onCancel={() => setEditing(null)}
             onDelete={editing === 'new' ? undefined : () => void handleDelete(editing)}
-          />
+          />}
         </Dialog>
       )}
 

@@ -3,7 +3,9 @@ import type { Keyword } from '@labby/core';
 import { KeywordForm } from './KeywordForm';
 import { Dialog } from './ui/Dialog';
 import { toast } from './ui/Toast';
-import { useDatabase } from '@/db/index';
+import { readAllPaginated, useDatabase } from '@/db/index';
+import { useAsyncResource } from '@/lib/use-async-resource';
+import { changedMemberships } from '@/lib/person-membership';
 /** Keyword similarity graph rendered with deck.gl (WebGL). */
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Deck, OrthographicView } from '@deck.gl/core';
@@ -16,6 +18,7 @@ import { fallbackEntityId } from '@/i18n';
 import { displayName } from '@/i18n';
 import * as s from '../styles/components.css';
 import { Button } from './ui/common';
+import { ContentSkeleton } from './ui';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
 import { productDistance, rankingQueryKey } from '@labby/core';
@@ -84,6 +87,7 @@ export function KeywordGraph() {
   const ready = graphReady.value;
   const fitted = useRef(false);
   const [editing, setEditing] = useState<Keyword | null>(null);
+  const membershipQuery = useAsyncResource(async () => editing ? readAllPaginated(db.persons) : [], [db, editing?.id]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<Deck<any> | null>(null);
   const transitionRef = useRef<number | null>(null);
@@ -437,13 +441,16 @@ export function KeywordGraph() {
         )}
       </div>
       {editing && <Dialog open onClose={() => setEditing(null)} title={t('edit')} closeOnOverlayClick={false}>
-        <KeywordForm initial={editing} onCancel={() => setEditing(null)} onSave={async keyword => {
+        {membershipQuery.isInitialLoading ? <ContentSkeleton rows={4} /> : membershipQuery.error && !membershipQuery.data ?
+          <p role="alert">{String(membershipQuery.error)} <Button onClick={() => void membershipQuery.refetch()}>{t('retry')}</Button></p> : <KeywordForm key={editing.id} initial={editing} persons={membershipQuery.data ?? []} onCancel={() => setEditing(null)} onSave={async (keyword, memberIds) => {
           try {
             await db.keywords.put(keyword);
+            await Promise.all(changedMemberships(membershipQuery.data ?? [], 'keywordIds', keyword.id, memberIds)
+              .map(person => db.persons.put(person)));
             setEditing(null);
             await syncGraph(db);
           } catch (error) { toast.error(String(error)); throw error; }
-        }} />
+        }} />}
       </Dialog>}
       <div class={s.graphLayout}>
         <div ref={canvasRef} class={s.graphCanvas} onDblClick={event => {

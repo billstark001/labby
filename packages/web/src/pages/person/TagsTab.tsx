@@ -3,9 +3,11 @@ import type { Person, PersonTag } from '@labby/core';
 
 import { Button, ContentSkeleton, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles } from '@/components/ui';
 import { PersonTagBadge } from '@/components/PersonTagBadge';
+import { PersonMembershipPicker } from '@/components/PersonMembershipPicker';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { readAllPaginated, useDatabase } from '@/db';
+import { changedMemberships } from '@/lib/person-membership';
 import { displayName, i18n } from '@/i18n';
 import { useAsyncResource } from '@/lib/use-async-resource';
 import * as s from '@/styles/components.css';
@@ -27,8 +29,8 @@ export function randomTagColor(): string {
   return `#${[red, green, blue].map(channel => Math.round((channel + offset) * 255).toString(16).padStart(2, '0')).join('')}`;
 }
 
-function TagEditor({ initial, isNew, onSave, onDelete, onClose, pending }: {
-  initial: PersonTag; isNew: boolean; onSave: (tag: PersonTag) => void; onDelete?: () => void; onClose: () => void; pending: boolean;
+function TagEditor({ initial, isNew, persons, onSave, onDelete, onClose, pending }: {
+  initial: PersonTag; isNew: boolean; persons: Person[]; onSave: (tag: PersonTag, memberIds: string[]) => void; onDelete?: () => void; onClose: () => void; pending: boolean;
 }) {
   const { t } = i18n;
   const [nameEn, setNameEn] = useState(initial.names.en);
@@ -36,10 +38,11 @@ function TagEditor({ initial, isNew, onSave, onDelete, onClose, pending }: {
   const [nameJa, setNameJa] = useState(initial.names.ja ?? '');
   const [color, setColor] = useState(initial.color);
   const [notes, setNotes] = useState(initial.notes ?? '');
+  const [memberIds, setMemberIds] = useState(persons.filter(person => person.tagIds?.includes(initial.id)).map(person => person.id));
   return <Dialog open onClose={onClose} title={isNew ? t('addPersonTag') : t('edit')} closeOnOverlayClick={false}
     actions={<>
       {onDelete && <Button variant="danger" disabled={pending} onClick={onDelete}>{t('delete')}</Button>}
-      <Button busy={pending} disabled={!nameEn.trim()} onClick={() => onSave({ ...initial, name: nameEn.trim(), names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() }, color, notes: notes.trim() || undefined, modifiedAt: Date.now() })}>{t('save')}</Button>
+      <Button busy={pending} disabled={!nameEn.trim()} onClick={() => onSave({ ...initial, name: nameEn.trim(), names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() }, color, notes: notes.trim() || undefined, modifiedAt: Date.now() }, memberIds)}>{t('save')}</Button>
       <Button variant="secondary" disabled={pending} onClick={onClose}>{t('cancel')}</Button>
     </>}>
     <div class={s.formGroup}>
@@ -62,6 +65,7 @@ function TagEditor({ initial, isNew, onSave, onDelete, onClose, pending }: {
       <label class={s.label}>{t('notes')}</label>
       <textarea class={s.input} value={notes} onInput={event => setNotes((event.target as HTMLTextAreaElement).value)} />
     </div>
+    <PersonMembershipPicker persons={persons} selectedIds={memberIds} onChange={setMemberIds} disabled={pending} />
   </Dialog>;
 }
 
@@ -88,10 +92,15 @@ export function TagsTab() {
       ? ((memberCounts.get(a.id) ?? 0) - (memberCounts.get(b.id) ?? 0)) * (sortDirection === 'asc' ? 1 : -1) || collator.compare(displayName(a), displayName(b)) || a.id.localeCompare(b.id)
       : collator.compare(displayName(a), displayName(b)) * (sortDirection === 'asc' ? 1 : -1) || a.id.localeCompare(b.id));
 
-  async function save(tag: PersonTag) {
+  async function save(tag: PersonTag, memberIds: string[]) {
     if (pendingId) return;
     setPendingId(tag.id);
-    try { await db.personTags.put(tag); await query.refetch(); setEditing(null); }
+    try {
+      await db.personTags.put(tag);
+      await Promise.all(changedMemberships(query.data?.persons ?? [], 'tagIds', tag.id, memberIds)
+        .map(person => db.persons.put(person)));
+      await query.refetch(); setEditing(null);
+    }
     catch (error) { toast.error(String(error)); }
     finally { setPendingId(null); }
   }
@@ -130,6 +139,6 @@ export function TagsTab() {
         renderActions={tag => <Button variant="ghost" disabled={pendingId !== null} onClick={() => setEditing(tag)}>{t('edit')}</Button>}
       />
     </div>}
-    {editing && <TagEditor key={editing.id} initial={editing} isNew={!query.data?.tags.some(tag => tag.id === editing.id)} pending={pendingId === editing.id} onSave={tag => void save(tag)} onDelete={query.data?.tags.some(tag => tag.id === editing.id) ? () => remove(editing) : undefined} onClose={() => setEditing(null)} />}
+    {editing && <TagEditor key={editing.id} initial={editing} persons={query.data?.persons ?? []} isNew={!query.data?.tags.some(tag => tag.id === editing.id)} pending={pendingId === editing.id} onSave={(tag, ids) => void save(tag, ids)} onDelete={query.data?.tags.some(tag => tag.id === editing.id) ? () => remove(editing) : undefined} onClose={() => setEditing(null)} />}
   </div>;
 }

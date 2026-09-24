@@ -7,7 +7,10 @@ import { graphStream } from '../src/lib/graph-sync';
 import { KeywordGraph } from '../src/components/KeywordGraph';
 
 const observed = vi.hoisted(() => ({ props: [] as any[], db: {} as LabbyDB }));
-vi.mock('@/db/index', () => ({ useDatabase: () => observed.db }));
+vi.mock('@/db/index', () => ({
+  useDatabase: () => observed.db,
+  readAllPaginated: async (store: { list: () => Promise<{ items: unknown[] }> }) => (await store.list()).items,
+}));
 vi.mock('../src/components/RankingCard', () => ({ RankingEditor: () => null }));
 vi.mock('@deck.gl/core', () => ({
   Deck: class {
@@ -35,6 +38,7 @@ describe('KeywordGraph incremental renders', () => {
     let mode: 'valid' | 'invalid' | 'empty' = 'valid';
     let revision = 0;
     const db = {
+      persons: { list: async () => ({ items: [], total: 0 }) },
       graph: {
         list: async (): Promise<GraphPage> => ({
           items:
@@ -108,11 +112,12 @@ describe('KeywordGraph incremental renders', () => {
       expect(container.textContent).toContain('Nodes: 1');
       expect(container.querySelector('[title^="Error:"]')).toBeNull();
       expect(observed.props.filter((props) => props.initialViewState)).toHaveLength(fits);
-      await act(() => {
+      await act(async () => {
         container
           .querySelector('[data-graph-canvas]')!
           .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 100, clientY: 100 }));
       });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
       expect(document.querySelector('[role="dialog"]')).not.toBeNull();
       expect((document.querySelector('[role="dialog"] input') as HTMLInputElement).value).toBe(
         'Revision 30',

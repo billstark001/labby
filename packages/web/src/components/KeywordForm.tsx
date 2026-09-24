@@ -1,23 +1,26 @@
 import { useState } from 'preact/hooks';
-import type { Keyword } from '@labby/core';
+import type { Keyword, Person } from '@labby/core';
 import { i18n } from '@/i18n';
 import { Button } from './ui/common';
 import * as s from '@/styles/components.css';
+import { PersonMembershipPicker } from './PersonMembershipPicker';
 
 interface KeywordFormProps {
   initial?: Partial<Keyword>;
-  onSave: (k: Keyword) => void | Promise<void>;
+  persons: Person[];
+  onSave: (k: Keyword, memberIds: string[]) => void | Promise<void>;
   onCancel: () => void;
   onDelete?: () => void;
 }
 
-export function KeywordForm({ initial, onSave, onCancel, onDelete }: KeywordFormProps) {
+export function KeywordForm({ initial, persons, onSave, onCancel, onDelete }: KeywordFormProps) {
   const { t } = i18n;
   const [nameEn, setNameEn] = useState(initial?.names?.['en'] ?? initial?.name ?? '');
   const [nameZh, setNameZh] = useState(initial?.names?.['zh'] ?? '');
   const [nameJa, setNameJa] = useState(initial?.names?.['ja'] ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [disabled, setDisabled] = useState(initial?.disabled ?? false);
+  const [memberIds, setMemberIds] = useState(persons.filter(person => initial?.id && person.keywordIds.includes(initial.id)).map(person => person.id));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -34,7 +37,7 @@ export function KeywordForm({ initial, onSave, onCancel, onDelete }: KeywordForm
         disabled,
         notes: notes.trim() || undefined,
         modifiedAt: Date.now(),
-      });
+      }, memberIds);
     } catch (error) {
       setError(String(error));
     } finally {
@@ -78,6 +81,8 @@ export function KeywordForm({ initial, onSave, onCancel, onDelete }: KeywordForm
         />
       </div>
       <label class={s.flexGapSm}><input type="checkbox" checked={disabled} onChange={event => setDisabled(event.currentTarget.checked)} /> {t('disabled')}</label>
+      <PersonMembershipPicker persons={persons} selectedIds={memberIds} onChange={setMemberIds} disabled={saving}
+        cannotAdd={person => !initial?.id || !person.keywordIds.includes(initial.id) ? person.keywordIds.length >= 10 : false} />
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={saving} disabled={saving || !nameEn.trim()} onClick={handleSave}>
           {t('save')}
