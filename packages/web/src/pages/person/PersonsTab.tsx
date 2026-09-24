@@ -15,6 +15,7 @@ import {
 } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
+import { PersonTagBadge, tagColorStyle } from '@/components/PersonTagBadge';
 
 const MAX_KEYWORDS = 10;
 
@@ -24,10 +25,11 @@ interface PersonFormProps {
   tags: PersonTag[];
   onSave: (p: Person, newKeywords: Keyword[]) => void;
   onCancel: () => void;
+  onDelete?: () => void;
   pending: boolean;
 }
 
-function PersonForm({ initial, keywords, tags, onSave, onCancel, pending }: PersonFormProps) {
+function PersonForm({ initial, keywords, tags, onSave, onCancel, onDelete, pending }: PersonFormProps) {
   const { t } = i18n;
 
   const [nameEn, setNameEn] = useState(initial?.names?.en ?? initial?.name ?? '');
@@ -38,6 +40,7 @@ function PersonForm({ initial, keywords, tags, onSave, onCancel, pending }: Pers
   const [newKeywordName, setNewKeywordName] = useState('');
   const [newKeywords, setNewKeywords] = useState<Keyword[]>([]);
   const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [disabled, setDisabled] = useState(initial?.disabled ?? false);
   const [keywordLimitHit, setKeywordLimitHit] = useState(false);
 
   const allKeywords = [...keywords, ...newKeywords];
@@ -63,7 +66,7 @@ function PersonForm({ initial, keywords, tags, onSave, onCancel, pending }: Pers
       metadata: initial?.metadata ?? {},
       keywordIds: selectedIds,
       tagIds: selectedTagIds,
-      disabled: initial?.disabled,
+      disabled,
       notes: notes.trim() || undefined,
       modifiedAt: Date.now(),
     }, newKeywords);
@@ -120,10 +123,10 @@ function PersonForm({ initial, keywords, tags, onSave, onCancel, pending }: Pers
               type="button"
               key={tag.id}
               class={`${s.badgeSelectable} ${selectedTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
-              style={{ borderColor: tag.color, boxShadow: selectedTagIds.includes(tag.id) ? `inset 0 0 0 1px ${tag.color}` : undefined }}
+              style={{ ...tagColorStyle(tag), boxShadow: selectedTagIds.includes(tag.id) ? `inset 0 0 0 1px ${tag.color}` : undefined }}
               onClick={() => setSelectedTagIds(prev => prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id])}
             >
-              <span style={{ color: tag.color }}>●</span> {tag.name}
+              <span style={{ color: tag.color }}>●</span> {displayName(tag)}
             </button>
           ))}
         </div>
@@ -166,9 +169,11 @@ function PersonForm({ initial, keywords, tags, onSave, onCancel, pending }: Pers
         <label class={s.label}>{t('notes')}</label>
         <textarea class={s.input} rows={3} value={notes} onInput={(e) => setNotes((e.target as HTMLTextAreaElement).value)} />
       </div>
+      <label class={s.flexGapSm}><input type="checkbox" checked={disabled} onChange={event => setDisabled(event.currentTarget.checked)} /> {t('disabled')}</label>
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={pending} onClick={handleSave}>{t('save')}</Button>
         <Button variant="secondary" disabled={pending} onClick={onCancel}>{t('cancel')}</Button>
+        {onDelete && <Button variant="danger" disabled={pending} onClick={onDelete}>{t('delete')}</Button>}
       </div>
     </div>
   );
@@ -177,6 +182,7 @@ function PersonForm({ initial, keywords, tags, onSave, onCancel, pending }: Pers
 export function PersonsTab() {
   const db = useDatabase();
   const { t } = i18n;
+  const locale = i18n.lang.value;
   const [editing, setEditing] = useState<Person | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -185,7 +191,7 @@ export function PersonsTab() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const query = useAsyncResource(async () => {
     const result = await listPersonsPage(db, {
-      offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection,
+      offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection, locale,
     });
     const [bundle, tags, keywords] = await Promise.all([
       readPersonForeignKeys(db, result.items.map(item => item.id)),
@@ -193,7 +199,7 @@ export function PersonsTab() {
       readAllPaginated(db.keywords),
     ]);
     return { ...result, bundle, tags, keywords, references: buildPersonReferenceCount(bundle) };
-  }, [db, page, pageSize, sortBy, sortDirection]);
+  }, [db, page, pageSize, sortBy, sortDirection, locale]);
   const persons = query.data?.items ?? [];
   const tags = query.data?.tags ?? [];
   const keywords = query.data?.keywords ?? [];
@@ -223,20 +229,12 @@ export function PersonsTab() {
     finally { setPendingId(null); }
   }
 
-  async function handleDisableToggle(p: Person) {
-    if (pendingId) return;
-    setPendingId(p.id);
-    const updated: Person = { ...p, disabled: !p.disabled, modifiedAt: Date.now() };
-    try { await db.persons.put(updated); await query.refetch(); }
-    catch (error) { toast.error(String(error)); }
-    finally { setPendingId(null); }
-  }
-
   async function handleDelete(p: Person) {
     const referenced = isPersonReferenced(p.id);
     const message = referenced
       ? `${t('deleteReferencedWarning')}\n\n${t('deleteHistory')}`
       : t('deleteHistory');
+    setEditing(null);
     confirmDialog(t('confirmDelete'), message, async () => {
       if (pendingId) return;
       setPendingId(p.id);
@@ -267,6 +265,7 @@ export function PersonsTab() {
             tags={tags}
             onSave={handleSave}
             onCancel={() => setEditing(null)}
+            onDelete={editing === 'new' ? undefined : () => void handleDelete(editing)}
             pending={pendingId !== null}
           />
         </Dialog>
@@ -284,7 +283,7 @@ export function PersonsTab() {
           key: sortBy, direction: sortDirection,
           options: [
             {key:'name',label:t('name')}, {key:'notes',label:t('notes')},
-            {key:'tags',label:t('personTags')}, {key:'disabled',label:t('disabled')},
+            {key:'tags',label:t('personTags')}, {key:'keywords',label:t('keywords')}, {key:'disabled',label:t('disabled')},
             {key:'modifiedAt',label:t('modifiedAt'),defaultDirection:'desc'},
           ],
           onChange: (key, direction) => {setSortBy(key as EntityListSortBy);setSortDirection(direction);setPage(1);},
@@ -292,8 +291,10 @@ export function PersonsTab() {
         items={persons}
         columns={[
           { header: t('name'), sortKey: 'name' },
-          { header: t('keywords') },
+          { header: t('personTags'), sortKey: 'tags' },
+          { header: t('keywords'), sortKey: 'keywords' },
           { header: t('notes'), sortKey: 'notes' },
+          { header: t('disabled'), sortKey: 'disabled' },
           { header: t('modifiedAt'), sortKey: 'modifiedAt' },
         ]}
         getKey={(person) => person.id}
@@ -306,13 +307,11 @@ export function PersonsTab() {
                 {displayName(person)}
                 {person.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
               </div>
-              <div class={s.tagList}>
-                {(person.tagIds ?? []).map(tagId => {
-                  const tag = tagMap.get(tagId);
-                  return tag ? <span key={tag.id} class={s.badge} style={{ borderColor: tag.color }}>{tag.name}</span> : null;
-                })}
-              </div>
             </td>
+            <td class={s.td}><div class={s.tagList}>{(person.tagIds ?? []).map(tagId => {
+              const tag = tagMap.get(tagId);
+              return tag ? <PersonTagBadge key={tag.id} tag={tag} /> : null;
+            })}</div></td>
             <td class={s.td}>
               <div class={s.tagList}>
                 {person.keywordIds.map((kid) => {
@@ -328,6 +327,7 @@ export function PersonsTab() {
             <td class={`${s.td} ${s.notesCell}`}>
               {person.notes && <span class={s.textMuted}>{person.notes}</span>}
             </td>
+            <td class={s.td}>{person.disabled ? t('disabled') : '—'}</td>
             <td class={s.td}>{person.modifiedAt ? new Date(person.modifiedAt!).toLocaleString() : '—'}</td>
           </>
         )}
@@ -338,7 +338,7 @@ export function PersonsTab() {
                 <div class={dataStyles.mobileTitle}>{displayName(person)}</div>
                 <div class={s.tagList}>{(person.tagIds ?? []).map(tagId => {
                   const tag = tagMap.get(tagId);
-                  return tag ? <span key={tag.id} class={s.badge} style={{ borderColor: tag.color }}>{tag.name}</span> : null;
+                  return tag ? <PersonTagBadge key={tag.id} tag={tag} /> : null;
                 })}</div>
                 {person.disabled && (
                   <div class={dataStyles.mobileSubtitle}>
@@ -369,13 +369,7 @@ export function PersonsTab() {
           </>
         )}
         renderActions={(person) => (
-          <>
-            <Button variant="ghost" onClick={() => setEditing(person)}>{t('edit')}</Button>
-            <Button variant="ghost" busy={pendingId === person.id} onClick={() => handleDisableToggle(person)}>
-              {person.disabled ? t('enable') : t('disable')}
-            </Button>
-            <Button variant="danger" disabled={pendingId !== null} onClick={() => handleDelete(person)}>{t('delete')}</Button>
-          </>
+          <Button variant="ghost" onClick={() => setEditing(person)}>{t('edit')}</Button>
         )}
       />
 

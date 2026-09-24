@@ -16,6 +16,7 @@ import {
   responsiveDataStyles as dataStyles,
 } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
+import { PersonTagBadge, tagColorStyle } from '@/components/PersonTagBadge';
 
 type ConstraintType = 'no-overlap' | 'affinity-boost' | 'frequency-multiplier';
 
@@ -26,6 +27,7 @@ interface ConstraintFormProps {
   configs: ScheduleConfig[];
   onSave: (constraint: ScheduleConstraint) => void;
   onCancel: () => void;
+  onDelete?: () => void;
   pending: boolean;
 }
 
@@ -35,10 +37,11 @@ function constraintTypeLabel(type: ConstraintType, t: (key: string) => string): 
   return t('constraintTypeFrequencyMultiplier');
 }
 
-function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pending }: ConstraintFormProps) {
+function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onDelete, pending }: ConstraintFormProps) {
   const { t } = i18n;
 
   const [configId, setConfigId] = useState(initial?.configId ?? '');
+  const [disabled, setDisabled] = useState(initial?.disabled ?? false);
   const [constraintType, setConstraintType] = useState<ConstraintType>(initial?.type ?? 'no-overlap');
   const [selectedPersonIds, setSelectedPersonIds] = useState<string[]>(initial?.personIds ?? []);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>(initial?.tagIds ?? []);
@@ -68,6 +71,7 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pen
         id: initial?.id ?? crypto.randomUUID(),
         configId,
         type: 'no-overlap',
+        disabled,
         personIds: selectedPersonIds,
         tagIds: selectedTagIds,
         ...cross,
@@ -81,6 +85,7 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pen
         id: initial?.id ?? crypto.randomUUID(),
         configId,
         type: 'affinity-boost',
+        disabled,
         personIds: selectedPersonIds,
         tagIds: selectedTagIds,
         ...cross,
@@ -94,6 +99,7 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pen
       id: initial?.id ?? crypto.randomUUID(),
       configId,
       type: 'frequency-multiplier',
+      disabled,
       personIds: selectedPersonIds,
       tagIds: selectedTagIds,
       baseline: Math.max(0, Number(baseline) || 0),
@@ -142,8 +148,9 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pen
           ))}
           {tags.map(tag => <button type="button" key={tag.id}
             class={`${s.badgeSelectable} ${selectedTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+            style={tagColorStyle(tag)}
             onClick={() => toggle(tag.id, selectedTagIds, setSelectedTagIds)}>
-            <span style={{ color: tag.color }}>●</span> {tag.name}
+            <span style={{ color: tag.color }}>●</span> {displayName(tag)}
           </button>)}
         </div>
       </div>
@@ -158,8 +165,9 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pen
               onClick={() => toggle(person.id, otherPersonIds, setOtherPersonIds)}>{displayName(person)}</button>)}
             {tags.map(tag => <button type="button" key={tag.id}
               class={`${s.badgeSelectable} ${otherTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+              style={tagColorStyle(tag)}
               onClick={() => toggle(tag.id, otherTagIds, setOtherTagIds)}>
-              <span style={{ color: tag.color }}>●</span> {tag.name}</button>)}
+              <span style={{ color: tag.color }}>●</span> {displayName(tag)}</button>)}
           </div>
         </>}
       </div>}
@@ -199,9 +207,11 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, pen
           </div>
         </>
       )}
+      <label class={s.flexGapSm}><input type="checkbox" checked={disabled} onChange={event => setDisabled(event.currentTarget.checked)} /> {t('disabled')}</label>
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={pending} onClick={handleSave}>{t('save')}</Button>
         <Button variant="secondary" disabled={pending} onClick={onCancel}>{t('cancel')}</Button>
+        {onDelete && <Button variant="danger" disabled={pending} onClick={onDelete}>{t('delete')}</Button>}
       </div>
     </div>
   );
@@ -239,16 +249,19 @@ export function ConstraintsTab() {
     return config ? getScheduleConfigLabel(config) : configId;
   }
 
-  function summarizeTargets(constraint: ScheduleConstraint): string {
+  function summarizeTargets(constraint: ScheduleConstraint) {
     const map = new Map(persons.map((person) => [person.id, displayName(person)]));
-    const tagMap = new Map(tags.map(tag => [tag.id, tag.name]));
-    const labels = [...constraint.personIds.map(id => map.get(id) ?? id),
-      ...constraint.tagIds.map(id => `#${tagMap.get(id) ?? id}`)];
-    const other = constraint.type === 'frequency-multiplier' ? [] : [
-      ...(constraint.otherPersonIds ?? []).map(id => map.get(id) ?? id),
-      ...(constraint.otherTagIds ?? []).map(id => `#${tagMap.get(id) ?? id}`),
-    ];
-    return `${labels.join(', ') || '—'}${other.length ? ` ↔ ${other.join(', ')}` : ''}`;
+    const tagMap = new Map(tags.map(tag => [tag.id, tag]));
+    const group = (personIds: string[], tagIds: string[]) => <span class={s.tagList}>
+      {personIds.map(id => <span key={id} class={s.badge}>{map.get(id) ?? id}</span>)}
+      {tagIds.map(id => { const tag = tagMap.get(id); return tag ? <PersonTagBadge key={id} tag={tag} /> : <span key={id} class={s.badge}>{id}</span>; })}
+      {!personIds.length && !tagIds.length && '—'}
+    </span>;
+    const otherPersonIds = constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [];
+    const otherTagIds = constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? [];
+    return <span class={s.flexGapSm}>{group(constraint.personIds, constraint.tagIds)}
+      {(otherPersonIds.length > 0 || otherTagIds.length > 0) && <> ↔ {group(otherPersonIds, otherTagIds)}</>}
+    </span>;
   }
 
   function summarizeParameters(constraint: ScheduleConstraint): string {
@@ -275,6 +288,7 @@ export function ConstraintsTab() {
   }
 
   async function handleDeleteConstraint(constraint: ScheduleConstraint): Promise<void> {
+    setEditing(null);
     confirmDialog(t('confirmDelete'), t('deleteHistory'), async () => {
       await action.run(`delete:${constraint.id}`, async () => {
         await db.constraints.delete(constraint.id);
@@ -304,6 +318,7 @@ export function ConstraintsTab() {
             configs={configs}
             onSave={handleSaveConstraint}
             onCancel={() => setEditing(null)}
+            onDelete={editing === 'new' ? undefined : () => void handleDeleteConstraint(editing)}
             pending={action.pendingKey?.startsWith('save:') ?? false}
           />
         </Dialog>
@@ -327,7 +342,7 @@ export function ConstraintsTab() {
         getKey={(constraint) => constraint.id}
         renderDesktopRow={(constraint) => (
           <>
-            <td class={s.td}>{constraintTypeLabel(constraint.type, t)}</td>
+            <td class={s.td}>{constraintTypeLabel(constraint.type, t)} {constraint.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}</td>
             <td class={s.td}>{findConfigLabel(constraint.configId)}</td>
             <td class={s.td}>
               <span class={s.textMuted}>{summarizeTargets(constraint)}</span>
@@ -354,10 +369,7 @@ export function ConstraintsTab() {
           </>
         )}
         renderActions={(constraint) => (
-          <>
-            <Button variant="ghost" onClick={() => setEditing(constraint)}>{t('edit')}</Button>
-            <Button variant="danger" busy={action.pendingKey === `delete:${constraint.id}`} disabled={action.pendingKey !== null} onClick={() => void handleDeleteConstraint(constraint)}>{t('delete')}</Button>
-          </>
+          <Button variant="ghost" onClick={() => setEditing(constraint)}>{t('edit')}</Button>
         )}
       />
 

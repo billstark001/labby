@@ -8,14 +8,16 @@ interface KeywordFormProps {
   initial?: Partial<Keyword>;
   onSave: (k: Keyword) => void | Promise<void>;
   onCancel: () => void;
+  onDelete?: () => void;
 }
 
-export function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
+export function KeywordForm({ initial, onSave, onCancel, onDelete }: KeywordFormProps) {
   const { t } = i18n;
   const [nameEn, setNameEn] = useState(initial?.names?.['en'] ?? initial?.name ?? '');
   const [nameZh, setNameZh] = useState(initial?.names?.['zh'] ?? '');
   const [nameJa, setNameJa] = useState(initial?.names?.['ja'] ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [disabled, setDisabled] = useState(initial?.disabled ?? false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -29,7 +31,7 @@ export function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
         name: nameEn.trim(),
         names: { en: nameEn.trim(), zh: nameZh.trim(), ja: nameJa.trim() },
         metadata: initial?.metadata ?? {},
-        disabled: initial?.disabled,
+        disabled,
         notes: notes.trim() || undefined,
         modifiedAt: Date.now(),
       });
@@ -75,6 +77,7 @@ export function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
           onInput={(e) => setNotes((e.target as HTMLTextAreaElement).value)}
         />
       </div>
+      <label class={s.flexGapSm}><input type="checkbox" checked={disabled} onChange={event => setDisabled(event.currentTarget.checked)} /> {t('disabled')}</label>
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={saving} disabled={saving || !nameEn.trim()} onClick={handleSave}>
           {t('save')}
@@ -82,6 +85,7 @@ export function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
         <Button variant="secondary" disabled={saving} onClick={onCancel}>
           {t('cancel')}
         </Button>
+        {onDelete && <Button variant="danger" disabled={saving} onClick={onDelete}>{t('delete')}</Button>}
       </div>
       {error && <p role="alert">{error}</p>}
     </div>

@@ -22,6 +22,7 @@ import { usePendingAction } from '@/lib/use-pending-action';
 export function KeywordList() {
   const db = useDatabase();
   const { t } = i18n;
+  const locale = i18n.lang.value;
   const [editing, setEditing] = useState<Keyword | null | 'new'>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -30,11 +31,11 @@ export function KeywordList() {
   const action = usePendingAction();
   const query = useAsyncResource(async () => {
     const result = await listKeywordsPage(db, {
-      offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection,
+      offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection, locale,
     });
     const bundle = await readKeywordForeignKeys(db, result.items.map(item => item.id));
     return { ...result, references: buildKeywordReferenceCount(bundle) };
-  }, [db, page, pageSize, sortBy, sortDirection]);
+  }, [db, page, pageSize, sortBy, sortDirection, locale]);
   const pagedKeywords = query.data?.items ?? [];
   const keywordReferenceCount = query.data?.references ?? new Map<string, number>();
   useEffect(() => {
@@ -54,17 +55,12 @@ export function KeywordList() {
     setEditing(null);
   }
 
-  async function handleDisableToggle(k: Keyword) {
-    const updated: Keyword = { ...k, disabled: !k.disabled, modifiedAt: Date.now() };
-    await db.keywords.put(updated);
-    await Promise.all([query.refetch(), syncGraph(db)]);
-  }
-
   async function handleDelete(k: Keyword) {
     const referenced = isKeywordReferenced(k.id);
     const message = referenced
       ? `${t('deleteReferencedWarning')}\n\n${t('deleteHistory')}`
       : t('deleteHistory');
+    setEditing(null);
     confirmDialog(t('confirmDelete'), message, async () => {
       await action.run(`delete:${k.id}`, async () => {
         await db.keywords.delete(k.id);
@@ -91,6 +87,7 @@ export function KeywordList() {
             initial={editing === 'new' ? undefined : editing}
             onSave={handleSave}
             onCancel={() => setEditing(null)}
+            onDelete={editing === 'new' ? undefined : () => void handleDelete(editing)}
           />
         </Dialog>
       )}
@@ -107,6 +104,7 @@ export function KeywordList() {
           key: sortBy, direction: sortDirection,
           options: [
             {key:'name',label:t('name')}, {key:'notes',label:t('notes')},
+            {key:'disabled',label:t('disabled')},
             {key:'modifiedAt',label:t('modifiedAt'),defaultDirection:'desc'},
           ],
           onChange: (key, direction) => {setSortBy(key as EntityListSortBy);setSortDirection(direction);setPage(1);},
@@ -115,6 +113,7 @@ export function KeywordList() {
         columns={[
           { header: t('name'), sortKey: 'name' },
           { header: t('notes'), sortKey: 'notes' },
+          { header: t('disabled'), sortKey: 'disabled' },
           { header: t('modifiedAt'), sortKey: 'modifiedAt' },
         ]}
         getKey={kw => kw.id}
@@ -132,6 +131,7 @@ export function KeywordList() {
             <td class={`${s.td} ${s.notesCell}`}>
               {kw.notes && <span class={s.textMuted}>{kw.notes}</span>}
             </td>
+            <td class={s.td}>{kw.disabled ? t('disabled') : '—'}</td>
             <td class={s.td}>{kw.modifiedAt ? new Date(kw.modifiedAt!).toLocaleString() : '—'}</td>
           </>
         )}
@@ -155,17 +155,7 @@ export function KeywordList() {
           </>
         )}
         renderActions={kw => (
-          <>
-            <Button variant="ghost" onClick={() => setEditing(kw)}>
-              {t('edit')}
-            </Button>
-            <Button variant="ghost" busy={action.pendingKey === `toggle:${kw.id}`} disabled={action.pendingKey !== null} onClick={() => void action.run(`toggle:${kw.id}`, () => handleDisableToggle(kw))}>
-              {kw.disabled ? t('enable') : t('disable')}
-            </Button>
-            <Button variant="danger" disabled={action.pendingKey !== null} onClick={() => void handleDelete(kw)}>
-              {t('delete')}
-            </Button>
-          </>
+          <Button variant="ghost" onClick={() => setEditing(kw)}>{t('edit')}</Button>
         )}
       />
 
