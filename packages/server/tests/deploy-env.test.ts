@@ -16,6 +16,18 @@ test('server example documents every runtime environment variable', async () => 
   );
 });
 
+test('provider examples document portable Google OAuth credentials', async () => {
+  for (const file of [
+    '../.env.railway.production.example',
+    '../.env.cloudrun.production.example',
+  ]) {
+    const example = await readFile(new URL(file, import.meta.url), 'utf8');
+    assert.match(example, /^GOOGLE_OAUTH_CLIENT_ID=/m);
+    assert.match(example, /^GOOGLE_OAUTH_CLIENT_SECRET=/m);
+    assert.match(example, /^GOOGLE_OAUTH_REFRESH_TOKEN=/m);
+  }
+});
+
 test('deployment env arguments keep empty-value sync separate from explicit deletion', () => {
   const parsed = parseDeploymentEnvArguments(
     ['--env-build', 'railway.production', '--delete-env=OLD_KEY,SECOND_KEY', '--delete-env', 'OLD_KEY', '--full'],

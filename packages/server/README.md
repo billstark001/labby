@@ -91,7 +91,8 @@ Optional settings:
 - `AUTH_ACCESS_TTL`, `AUTH_REFRESH_TTL`
 - `SMTP_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
 - `GMAIL_USER`, `GMAIL_REFRESH_TOKEN`
-- `GOOGLE_OAUTH_JSON_PATH`, `GOOGLE_OAUTH_REFRESH_TOKEN`
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_JSON_PATH`
+- `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_OAUTH_REFRESH_TOKEN_PATH`
 - `NOTIFY_RECIPIENTS`
 - `ENABLE_PUBLIC_EMAIL_TASK_ICS`, `PUBLIC_BASE_URL`
 - `SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
@@ -156,6 +157,12 @@ When `BACKUP_CRON` is configured, the server registers a recurring whole-databas
 - `BACKUP_TARGET=onedrive` uploads to OneDrive using Microsoft OAuth refresh credentials.
 
 Gmail delivery can reuse the same Google OAuth client JSON by setting `SMTP_PROVIDER=gmail` and supplying a Gmail-capable refresh token.
+
+At runtime, direct `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` values take precedence
+over `GOOGLE_OAUTH_JSON_PATH`. Gmail uses `GMAIL_REFRESH_TOKEN` first, followed by
+`GOOGLE_OAUTH_REFRESH_TOKEN` and then `GOOGLE_OAUTH_REFRESH_TOKEN_PATH`. Google Drive uses the
+shared token value followed by the same token-file fallback. Direct client variables must always be
+configured together.
 
 For container/server deployment:
 

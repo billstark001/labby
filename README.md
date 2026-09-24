@@ -107,7 +107,7 @@ Important settings:
 - `PASETO_SECRET` or `PASETO_ACCESS_KEY` + `PASETO_REFRESH_KEY`
 - `ROOT_USERNAME`, `ROOT_PASSWORD`, `ROOT_EMAIL`
 - `SMTP_*` and `NOTIFY_RECIPIENTS` for email reminders
-- `SMTP_PROVIDER=gmail`, `GMAIL_*`, `GOOGLE_OAUTH_JSON_PATH`, and `GOOGLE_OAUTH_REFRESH_TOKEN` to use Gmail OAuth instead of raw SMTP credentials
+- `SMTP_PROVIDER=gmail`, `GMAIL_*`, and Google OAuth credentials to use Gmail OAuth instead of raw SMTP credentials. Runtime client credentials prefer `GOOGLE_OAUTH_CLIENT_ID` plus `GOOGLE_OAUTH_CLIENT_SECRET`, then fall back to `GOOGLE_OAUTH_JSON_PATH`. Gmail refresh tokens prefer `GMAIL_REFRESH_TOKEN`, then `GOOGLE_OAUTH_REFRESH_TOKEN`, then `GOOGLE_OAUTH_REFRESH_TOKEN_PATH`.
 - `BACKUP_*` to schedule whole-database backups
 - `GOOGLE_DRIVE_FOLDER_ID` for Google Drive uploads
 - `ONEDRIVE_*` for OneDrive uploads

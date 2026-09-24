@@ -86,7 +86,17 @@ Required IAM for the Cloud Run runtime service account:
 
 ## Gmail OAuth JSON and Token (Secret Manager)
 
-Recommended secure pattern:
+The portable runtime configuration uses Secret Manager-backed environment variables:
+
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GMAIL_REFRESH_TOKEN` for Gmail, or `GOOGLE_OAUTH_REFRESH_TOKEN` for the shared/Google Drive token
+
+Direct client values take precedence over the compatible file-based pattern below. Gmail token
+precedence is `GMAIL_REFRESH_TOKEN`, `GOOGLE_OAUTH_REFRESH_TOKEN`, then
+`GOOGLE_OAUTH_REFRESH_TOKEN_PATH`; Google Drive uses the shared value and then the token path.
+
+File mounts remain supported:
 
 1. Keep OAuth client JSON and refresh token JSON in Secret Manager.
 2. Mount them as files in Cloud Run.
