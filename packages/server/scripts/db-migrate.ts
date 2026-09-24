@@ -24,10 +24,10 @@ try {
   const { values } = args;
   if (values.help) {
     console.log(
-      'Usage: pnpm --filter @labby/server db:migrate [--action up|status|archive] [--postgres URL | --pglite DIR] [--env-file FILE] [--json]',
+      'Usage: pnpm --filter @labby/server db:migrate [--action up|status|archive] [--postgres URL | --pglite DIR] [--json]',
     );
     console.log(
-      'Default action: up. Connection priority: explicit option, environment, packages/server/.env, runtime PGlite default.',
+      'Default action: up. Connection priority: explicit option, injected environment, runtime PGlite default.',
     );
   } else {
     if (!['up', 'status', 'archive'].includes(values.action!))

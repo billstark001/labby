@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -36,23 +36,19 @@ test('CLI target priority, address-only environment and secret redaction', () =>
   );
 });
 
-test('CLI dotenv status diagnoses legacy schema, default command migrates, repeated run is harmless', async () => {
+test('CLI explicit target diagnoses legacy schema, default command migrates, repeated run is harmless', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'labby-cli-test-'));
   const dataDir = path.join(dir, 'db');
-  const envFile = path.join(dir, '.env');
   const cwd = fileURLToPath(new URL('../', import.meta.url));
   const env = { ...process.env };
-  for (const key of ['DATABASE_URL', 'DATABASE_SSL', 'DB_DRIVER', 'PGLITE_DATA_DIR'])
-    delete env[key];
   const run = promisify(execFile);
   const cli = (...args: string[]) =>
     run(
       process.execPath,
-      ['--import', 'tsx', 'scripts/db-migrate.ts', '--env-file', envFile, ...args],
+      ['--import', 'tsx', 'scripts/db-migrate.ts', '--pglite', dataDir, ...args],
       { cwd, env },
     );
   try {
-    await writeFile(envFile, 'DB_DRIVER=pglite\nPGLITE_DATA_DIR=' + dataDir + '\n');
     const db = new PGlite({ dataDir, extensions: { vector } });
     await runSqlFile(db, '001.up.sql');
     await db.close();

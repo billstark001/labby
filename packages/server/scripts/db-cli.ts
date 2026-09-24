@@ -1,5 +1,3 @@
-import { config as loadDotenv } from 'dotenv';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
@@ -37,16 +35,12 @@ export function parseDatabaseArgs(defaultAction: 'init' | 'up') {
     options: {
       postgres: { type: 'string' },
       pglite: { type: 'string' },
-      'env-file': { type: 'string' },
       action: { type: 'string', default: defaultAction },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
     },
   });
   if (values.help) return { values, target: { dialect: 'pglite' as const, dataDir: '' } };
-  const envFile = values['env-file'] ?? fileURLToPath(new URL('../.env', import.meta.url));
-  const loaded = loadDotenv({ path: envFile, quiet: true });
-  if (values['env-file'] && loaded.error) throw new Error('Cannot load the specified --env-file.');
   return { values, target: resolveCliTarget(values, process.env) };
 }
 

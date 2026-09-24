@@ -10,10 +10,10 @@
     "start": "node dist/index.js",
     "start:local": "node --env-file=.env --env-file-if-exists=.env.local dist/index.js",
     "auth:gmail": "tsx scripts/gmail-auth.ts",
-    "db:init": "tsx scripts/db-init.ts",
-    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:init": "env-lane run server --quiet -- tsx scripts/db-init.ts",
+    "db:migrate": "env-lane run server --quiet -- tsx scripts/db-migrate.ts",
     "test": "tsx --test tests/**/*.test.ts",
-    "db:similarity-locks": "tsx scripts/db-similarity-locks.ts"
+    "db:similarity-locks": "env-lane run server --quiet -- tsx scripts/db-similarity-locks.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -36,6 +36,7 @@
     "@types/node": "^26.5.1",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.23.1",
+    "env-lane": "^0.4.2",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }

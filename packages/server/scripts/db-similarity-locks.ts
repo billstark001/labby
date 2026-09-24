@@ -1,10 +1,14 @@
 import { parseDatabaseArgs, withDatabase, safeError } from './db-cli.js';
+import type { StoreConnectionConfig } from '../src/store/index.js';
 
-const { values, target } = parseDatabaseArgs('status');
+let target: StoreConnectionConfig | undefined;
 try {
+  const args = parseDatabaseArgs('status');
+  target = args.target;
+  const { values } = args;
   if (values.help) {
     console.log(
-      'Usage: pnpm --filter @labby/server db:similarity-locks [--action status|release-legacy] [--postgres URL | --env-file FILE]',
+      'Usage: pnpm --filter @labby/server db:similarity-locks [--action status|release-legacy] [--postgres URL]',
     );
     console.log('Default is read-only. Stop all old server instances before release-legacy.');
   } else {

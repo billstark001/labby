@@ -9,10 +9,10 @@ try {
   target = args.target;
   if (args.values.help) {
     console.log(
-      'Usage: pnpm --filter @labby/server db:init [--postgres URL | --pglite DIR] [--env-file FILE] [--json]',
+      'Usage: pnpm --filter @labby/server db:init [--postgres URL | --pglite DIR] [--json]',
     );
     console.log(
-      'Creates the complete current schema in an empty database. Environment and packages/server/.env are supported.',
+      'Creates the complete current schema in an empty database. The package command injects the env-lane server target.',
     );
   } else {
     if (args.values.action !== 'init')
