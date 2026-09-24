@@ -9,9 +9,11 @@ Labby uses two Railway service types built from the same Dockerfile:
 
 Railway's Cron schedule is service configuration, so create one Cron service for each independently scheduled job. The checked-in `.railway/railway.ts` currently declares the API service and the authentication-maintenance Cron service. Do not run the same job through local cron, Cloud Scheduler, and Railway Cron at the same time.
 
-Railway infrastructure is managed with the current Infrastructure-as-Code format in `.railway/railway.ts`. Run `pnpm railway:plan` before `pnpm railway:apply`; secrets are represented with `preserve()` and remain stored in Railway. The deprecated `railway.json` format must not be reintroduced because a repository-wide file is also applied to Cron uploads and can override their one-shot configuration.
+Railway infrastructure is managed with the current Infrastructure-as-Code format in `.railway/railway.ts`. Run `pnpm railway:plan` before `pnpm railway:apply`; the wrapper installs the pinned IaC authoring SDK into the ignored `.cache/` directory when needed. The SDK is deployment tooling, not an application development dependency. Secrets are represented with `preserve()` and remain stored in Railway. The deprecated `railway.json` format must not be reintroduced because a repository-wide file is also applied to Cron uploads and can override their one-shot configuration.
 
-Deployment environment resolution uses env-lane. The API deployment reads the repository `.env` and then optional `.env.railway.production`; the Cron deployment uses `.env` and optional `.env.railway.cron.production`. Shell variables select the Railway project/service but are not implicitly copied into the service environment. Only the runtime-variable allowlist is synchronized.
+Deployment environment resolution uses env-lane. The API deployment reads `packages/server/.env` and then optional `packages/server/.env.railway.production`; the Cron deployment uses the same package base and optional `packages/server/.env.railway.cron.production`. Shell variables select the Railway project/service but are not implicitly copied into the service environment. Only the runtime-variable allowlist is synchronized. A repository-root `.env` is never read.
+The complete command-to-file matrix and precedence rules are documented in
+[environment-files.md](environment-files.md).
 
 ## API/web service
 

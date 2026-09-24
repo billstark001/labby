@@ -72,7 +72,13 @@ Node's native env-file flags. Shell variables take precedence. `--env-file-if-ex
 Node 22.9 or newer; this repository requires Node 24 or newer. The production `start` command
 does not load dotenv files and consumes only its injected process environment.
 
-For a fuller backup/Gmail example, see `.env.backup.example` in the repository root.
+Database maintenance package scripts execute their programs through `env-lane run server`. The
+default `local` build loads `.env`, optional `.env.local`, and then the shell; set
+`ENV_BUILD=BUILD` to select another configured package-local layer. `auth:gmail` loads only
+`packages/server/.env`. See
+[`docs/environment-files.md`](../../docs/environment-files.md) for the complete command matrix.
+
+For a fuller backup/Gmail example, see `.env.backup.example` in this package.
 
 Required or important settings:
 

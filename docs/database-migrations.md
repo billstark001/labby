@@ -2,9 +2,13 @@
 
 ## Safety and execution
 
-Tests use isolated PGlite fixtures and do not connect to production. Maintenance commands support
-explicit connection options, process environment and dotenv. CLI defaults load packages/server/.env;
---env-file selects a different file. Existing environment values take precedence over dotenv.
+Tests use isolated PGlite fixtures and do not connect to production. Maintenance commands resolve
+environment through env-lane. The default `local` build loads `packages/server/.env`, optional
+`packages/server/.env.local`, and then the process environment. The package scripts invoke the
+database program through `env-lane run server`; the database source itself only consumes
+`process.env`. Set `ENV_BUILD=BUILD` to select another configured package-local layer. Arbitrary
+env-file paths and the repository-root `.env` are not supported. See
+[environment-files.md](environment-files.md) for the full matrix.
 
 Connection priority is --postgres/--pglite, then configured environment, then the runtime's local
 PGlite default. DATABASE_URL alone selects PostgreSQL for the CLI; DB_DRIVER, DATABASE_SSL and

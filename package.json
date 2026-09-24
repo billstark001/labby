@@ -27,6 +27,7 @@
     "preview": "pnpm --filter @labby/web preview",
     "db:init": "pnpm --filter @labby/server run db:init",
     "db:migrate": "pnpm --filter @labby/server run db:migrate",
+    "docker:up": "docker compose --env-file packages/server/.env up --build",
     "deploy:cloudrun:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/cloud-run-incremental-deploy.ts",
     "deploy:railway": "pnpm --filter @labby/server exec tsx ../../scripts/railway-deploy.ts --full --target server",
     "deploy:railway:incremental": "pnpm --filter @labby/server exec tsx ../../scripts/railway-deploy.ts --incremental --target server",
@@ -35,6 +36,8 @@
     "railway:plan": "node scripts/railway-config.mjs plan",
     "railway:apply": "node scripts/railway-config.mjs apply",
     "railway:cron": "node packages/server/dist/cron/railway-dispatch.js",
+    "env:sort": "node scripts/sort-env.mjs",
+    "env:sort:check": "node scripts/sort-env.mjs --check",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "lint": "pnpm -r --if-present lint"

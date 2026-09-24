@@ -12,10 +12,11 @@ run/
 *.db-shm
 *.db-wal
 
-# Environment files
+# Environment files (including provider overrides and nested package files)
 .env
-.env.local
-.env.*.local
+.env.*
+**/.env
+**/.env.*
 
 # Logs
 *.log

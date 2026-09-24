@@ -142,6 +142,7 @@ export async function buildDeploymentEnvPlan(options: {
   build: string;
   allowedKeys: readonly string[];
   deleteKeys?: readonly string[];
+  target?: string;
 }): Promise<DeploymentEnvPlan> {
   const allowed = new Set(options.allowedKeys);
   const deletes = [...new Set(options.deleteKeys ?? [])];
@@ -151,7 +152,7 @@ export async function buildDeploymentEnvPlan(options: {
 
   const resolved = await resolveInjectedEnv({
     cwd: options.root,
-    target: '.',
+    target: options.target ?? 'server',
     build: options.build,
     includeProcessEnv: false,
   });

@@ -39,10 +39,11 @@ pnpm install
 # Frontend-only development
 pnpm --filter @labby/web dev
 
-# Full workspace development
-# Initialize the server database explicitly before the first server run:
+# API-backed development. Initialize the server database before the first run:
 pnpm --filter @labby/server db:init --pglite ./run/labby-pg
-pnpm dev
+# Run these in separate terminals:
+pnpm dev:server
+pnpm dev:server:web
 
 # Production build
 pnpm build
@@ -73,9 +74,9 @@ The similarity engine is a shared TypeScript implementation in `@labby/core`, so
 Labby now ships with a production Docker image and a `docker-compose.yml` example.
 
 ```bash
-cp .env.example .env
-# edit .env and set at least ROOT_PASSWORD and PASETO_SECRET
-docker compose up --build
+cp packages/server/.env.example packages/server/.env
+# edit packages/server/.env and set at least ROOT_PASSWORD and PASETO_SECRET
+pnpm docker:up
 ```
 
 The container:
@@ -88,13 +89,19 @@ The container:
 
 ## Environment
 
-See `.env.example` for all server variables.
+See [docs/environment-files.md](docs/environment-files.md) for the exact file and precedence used by
+each command. Server, database, Docker, and deployment commands use env files under
+`packages/server`; project commands do not load a repository-root `.env`.
 
 Extra examples:
 
-- `.env.backup.example` shows Gmail, email backup, Google Drive, and OneDrive configuration examples.
-- `packages/web/.env.frontend-only.example` builds the browser-only deployment.
-- `packages/web/.env.server.example` builds the server-connected deployment.
+- `packages/server/.env.backup.example` shows Gmail, email backup, Google Drive, and OneDrive configuration examples.
+- `packages/web/.env.frontend-only.example` documents the browser-only values.
+- `packages/web/.env.server.example` documents the server-connected values.
+
+Those web examples are not loaded automatically; the checked-in `dev:*` and `build:*` scripts set
+the corresponding values explicitly. Use Vite's conventional `.env.development*` or
+`.env.production*` files for additional web variables.
 
 Important settings:
 

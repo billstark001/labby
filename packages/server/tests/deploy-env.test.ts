@@ -30,7 +30,7 @@ test('env-lane deployment plan preserves explicit empty values and deletion wins
       path.join(root, 'env-lane.config.mjs'),
       `export default {
         selector: { defaultBuild: 'local', builds: ['local', 'railway.production'], buildValidation: 'error' },
-        workspace: { defaultTarget: '.', includeRoot: true },
+        workspace: { aliases: { server: '.' }, defaultTarget: 'server', includeRoot: true },
         dotenv: { order: ['.env', '.env.{build}'], includeProcessEnv: false }
       };\n`,
     );

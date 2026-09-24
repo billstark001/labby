@@ -10,10 +10,12 @@
 6. Production one-shot jobs execute compiled artifacts from the production image. They must not depend on development-only runners such as `tsx`.
 7. Full deployment is the explicit recovery path. Incremental deployment is a conditional full upload, may skip only when no target runtime file changed, and must deploy when its diff base cannot be established safely.
 8. Unknown scheduler modes and external mode without dispatch authentication fail at startup. Dispatch clients use HTTPS, retry only transient network/gateway failures, and surface application failures.
-9. Railway resources are declared in `.railway/railway.ts`; deprecated repository-wide `railway.json` files are forbidden because they can override per-service API and Cron settings. Plans are reviewed before they are applied, and secrets use `preserve()` rather than source-controlled values.
+9. Railway resources are declared in `.railway/railway.ts`; deprecated repository-wide `railway.json` files are forbidden because they can override per-service API and Cron settings. Plans are reviewed before they are applied, secrets use `preserve()` rather than source-controlled values, and the pinned Railway IaC authoring SDK is installed on demand outside the application dependency graph.
 10. Container builds pin the package-manager version to the same exact version recorded by the lockfile. Production installs use a frozen lockfile so toolchain drift fails before deployment.
-11. Application runtime code consumes `process.env` and does not load dotenv files. Local commands use Node's native env-file flags; deployment commands resolve layered provider files with env-lane and synchronize only an explicit allowlist.
+11. Application runtime code consumes `process.env` and does not load dotenv files. Local server commands use Node's native env-file flags; database package scripts inject package-local layers with `env-lane run` rather than calling env-lane from application code; deployment tooling may use the env-lane API and synchronizes only an explicit allowlist.
 12. Environment omission means “leave remote value unchanged”, an explicit empty assignment means “set empty”, and deletion requires a named command-line argument. Synchronizers must redact values from logs and must not pass Railway secrets in command arguments.
+13. Env-file layout follows checked-in example templates. Use env-lane sorting explicitly; sorting must preserve values and comments, skip absent private files, and never change resolution precedence. Provider override files and nested package env files must be excluded from container build contexts.
+14. Every env file belongs to the package that consumes it. Project commands must not load a repository-root `.env`; server provider overrides and their examples live under `packages/server`, while Vite files live under `packages/web`.
 
 ## Dialogs
 

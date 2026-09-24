@@ -130,7 +130,7 @@ Optional env vars:
 - `CLOUD_RUN_DEPLOY_ARGS`
 - `CLOUD_RUN_QUIET` (`false` to disable `--quiet`)
 
-The helper resolves the repository `.env` followed by optional `.env.cloudrun.production` through env-lane. It passes only the server runtime allowlist to `gcloud --update-env-vars`, so omitted remote values are retained and an explicit empty assignment is synchronized as an empty string. Delete values only through argv:
+The helper resolves `packages/server/.env` followed by optional `packages/server/.env.cloudrun.production` through env-lane. It never reads a repository-root `.env`. It passes only the server runtime allowlist to `gcloud --update-env-vars`, so omitted remote values are retained and an explicit empty assignment is synchronized as an empty string. The complete command-to-file matrix and precedence rules are documented in [environment-files.md](environment-files.md). Delete values only through argv:
 
 ```bash
 pnpm deploy:cloudrun:incremental --delete-env SMTP_PASSWORD
