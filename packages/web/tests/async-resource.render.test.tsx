@@ -24,7 +24,11 @@ it('async resources show loading before effects and never show data for another 
   }
 
   try {
-    await act(() => render(<Harness />, container));
+    await act(() => {
+      render(<Harness />, container);
+      expect(container.querySelector('span')!.dataset.status).toBe('idle');
+      expect(container.querySelector('span')!.dataset.loading).toBe('true');
+    });
     await act(async () => { resolvers.get(0)!('zero'); });
     expect(container.querySelector('span')!.textContent).toBe('zero');
 
