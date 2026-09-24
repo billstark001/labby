@@ -182,9 +182,10 @@ interface UnavailFormProps {
   initial?: PersonUnavailability;
   onSave: (u: PersonUnavailability) => Promise<void>;
   onCancel: () => void;
+  onDelete?: () => void;
 }
 
-export function UnavailForm({ configId, initial, onSave, onCancel }: UnavailFormProps) {
+export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: UnavailFormProps) {
   const { t } = i18n;
   const persons = personsSignal.value;
   const [personIds, setPersonIds] = useState<string[]>(() => {
@@ -256,6 +257,7 @@ export function UnavailForm({ configId, initial, onSave, onCancel }: UnavailForm
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={saving} onClick={() => void handleSave()}>{t('save')}</Button>
         <Button variant="secondary" disabled={saving} onClick={onCancel}>{t('cancel')}</Button>
+        {onDelete && <Button variant="danger" disabled={saving} onClick={onDelete}>{t('delete')}</Button>}
       </div>
       {error && <p role="alert" class={s.textDanger}>{error}</p>}
     </div>

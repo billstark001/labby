@@ -46,6 +46,16 @@ globalStyle('button', {
 globalStyle('input, select, textarea', {
   fontFamily: 'inherit',
   fontSize: vars.font.size.sm,
+  colorScheme: 'inherit',
+});
+
+globalStyle('input:not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea, option, optgroup', {
+  color: vars.color.text,
+  backgroundColor: vars.color.surface,
+});
+
+globalStyle('input[type="checkbox"], input[type="radio"]', {
+  accentColor: vars.color.primary,
 });
 
 globalStyle('a', {

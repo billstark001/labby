@@ -167,10 +167,7 @@ export function ConfigPanel({
                 );
               }}
               renderActions={unavail => (
-                <>
-                  <Button variant="ghost" onClick={() => onEditUnavail(unavail)}>{t('edit')}</Button>
-                  <Button variant="danger" onClick={() => onDeleteUnavail(unavail.id)}>{t('delete')}</Button>
-                </>
+                <Button variant="ghost" onClick={() => onEditUnavail(unavail)}>{t('edit')}</Button>
               )}
             />
           )}
@@ -189,6 +186,7 @@ export function ConfigPanel({
             initial={editingUnavail ?? undefined}
             onSave={onSaveUnavail}
             onCancel={onCloseUnavailForm}
+            onDelete={editingUnavail ? () => { onCloseUnavailForm(); onDeleteUnavail(editingUnavail.id); } : undefined}
           />
         </Dialog>
       )}

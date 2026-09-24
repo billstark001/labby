@@ -807,17 +807,21 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         onClose={() => { if (!sendingNow) setSendNowOpen(false); }}
         closeOnOverlayClick={!sendingNow}
         title={t('emailTaskSendNow')}
+        width="min(520px, 92vw)"
         actions={<>
           <Button busy={sendingNow} onClick={() => void triggerSendNow()}>
-            {sendingNow ? t('emailTaskSending') : t('confirm')}
+            {sendingNow ? t('emailTaskSending') : t('emailTaskSendNow')}
           </Button>
           <Button variant="secondary" disabled={sendingNow} onClick={() => setSendNowOpen(false)}>{t('cancel')}</Button>
         </>}
       >
-        <p>{t('emailTaskOneOffRecipientsHint')}</p>
-        <label class={s.label} for="send-now-recipients">{t('emailTaskEmails')}</label>
-        <textarea id="send-now-recipients" class={s.input} rows={3} value={sendRecipientsText}
-          disabled={sendingNow} onInput={event => setSendRecipientsText((event.target as HTMLTextAreaElement).value)} />
+        <p class={s.mutedParagraph}>{t('emailTaskOneOffRecipientsHint')}</p>
+        <div class={s.formGroup}>
+          <label class={s.label} for="send-now-recipients">{t('emailTaskEmails')}</label>
+          <textarea id="send-now-recipients" class={s.input} style={{ display: 'block', width: '100%', boxSizing: 'border-box', resize: 'vertical' }} rows={3} value={sendRecipientsText}
+            disabled={sendingNow} onInput={event => setSendRecipientsText((event.target as HTMLTextAreaElement).value)} />
+          <small class={s.textMuted}>{t('emailTaskRecipientSeparatorHint')}</small>
+        </div>
         {sendNowError && <p role="alert" class={s.textDanger}>{sendNowError}</p>}
       </Dialog>}
 

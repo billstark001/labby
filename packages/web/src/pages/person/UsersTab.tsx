@@ -73,9 +73,10 @@ interface EditUserFormProps {
   user: SafeUser;
   onSave: () => void;
   onCancel: () => void;
+  onDelete: () => void;
 }
 
-function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
+function EditUserForm({ user, onSave, onCancel, onDelete }: EditUserFormProps) {
   const { t } = i18n;
   const action = usePendingAction();
   const [role, setRole] = useState<UserRoleWithoutRoot>(user.role as UserRoleWithoutRoot);
@@ -115,6 +116,7 @@ function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={action.pendingKey === 'save'} onClick={() => void handleSubmit()}>{t('save')}</Button>
         <Button variant="secondary" disabled={action.pendingKey !== null} onClick={onCancel}>{t('cancel')}</Button>
+        <Button variant="danger" disabled={action.pendingKey !== null} onClick={onDelete}>{t('deleteUser')}</Button>
       </div>
     </div>
   );
@@ -129,6 +131,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
   const users = usersQuery.data ?? [];
 
   function handleDelete(user: SafeUser) {
+    setEditingUser(null);
     confirmDialog(t('deleteUser'), t('deleteUserWarning'), async () => {
       await action.run(`delete:${user.id}`, async () => {
         await deleteUser(user.id);
@@ -181,11 +184,6 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
                       {t('editUser')}
                     </Button>
                   )}
-                  {canManageUsers && user.role < USER_ROLE_ROOT && (
-                    <Button variant="danger" busy={action.pendingKey === `delete:${user.id}`} disabled={action.pendingKey !== null} onClick={() => handleDelete(user)}>
-                      {t('deleteUser')}
-                    </Button>
-                  )}
                 </div>
               </td>
             </tr>
@@ -214,6 +212,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
               await usersQuery.refetch();
             }}
             onCancel={() => setEditingUser(null)}
+            onDelete={() => handleDelete(editingUser)}
           />
         </Dialog>
       )}

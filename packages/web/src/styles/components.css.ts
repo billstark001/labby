@@ -255,9 +255,15 @@ export const input = style({
   padding: `${vars.space.sm} ${vars.space.md}`,
   borderRadius: vars.radius.md,
   border: `1px solid ${vars.color.border}`,
+  background: vars.color.surface,
+  color: vars.color.text,
+  colorScheme: 'inherit',
+  fontFamily: 'inherit',
   fontSize: vars.font.size.sm,
   outline: 'none',
   selectors: {
+    '&::placeholder': { color: vars.color.textMuted },
+    '&:disabled': { opacity: 0.6, background: vars.color.background },
     '&:focus': {
       borderColor: vars.color.primary,
       boxShadow: `0 0 0 2px ${vars.color.primary}30`,
