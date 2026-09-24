@@ -16,6 +16,7 @@
 12. Environment omission means “leave remote value unchanged”, an explicit empty assignment means “set empty”, and deletion requires a named command-line argument. Synchronizers must redact values from logs and must not pass Railway secrets in command arguments.
 13. Env-file layout follows checked-in example templates. Use env-lane sorting explicitly; sorting must preserve values and comments, skip absent private files, and never change resolution precedence. Provider override files and nested package env files must be excluded from container build contexts.
 14. Every env file belongs to the package that consumes it. Project commands must not load a repository-root `.env`; server provider overrides and their examples live under `packages/server`, while Vite files live under `packages/web`.
+15. Before a Railway IaC apply, review the full plan for variable/resource deletion. After a requested region change, inspect live service replica placement separately; a plan summary alone is not proof that replicas moved.
 
 ## Dialogs
 
