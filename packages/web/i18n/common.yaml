@@ -353,6 +353,31 @@ insertSession:
   zh-CN: 插入组会
   ja-JP: セッションを挿入
 
+rescheduleSession:
+  en: Change this session date
+  zh-CN: 调整此次组会日期
+  ja-JP: この回の日付を変更
+
+postponeSession:
+  en: Postpone this and later sessions
+  zh-CN: 顺延此次及后续组会
+  ja-JP: この回以降を順延
+
+swapPreviousSession:
+  en: Exchange with previous session
+  zh-CN: 与上一次组会交换
+  ja-JP: 前回と入れ替え
+
+swapNextSession:
+  en: Exchange with next session
+  zh-CN: 与下一次组会交换
+  ja-JP: 次回と入れ替え
+
+postponeSessionHelp:
+  en: Each session from this one moves to the next planned date. The last moves to the next scheduled weekday.
+  zh-CN: 从此次起，每次组会移至下一次原定日期；最后一次移至下一个排定星期。
+  ja-JP: この回以降をそれぞれ次の予定日に移し、最後の回は次の設定曜日に移します。
+
 deleteSession:
   en: Delete this session
   zh-CN: 删除此次组会
@@ -809,6 +834,21 @@ configLabelPlaceholder:
   zh-CN: 留空则使用自动摘要
   ja-JP: 空欄の場合は自動サマリを使用
 
+configCalendarSection:
+  en: Calendar and meeting time
+  zh-CN: 日历与组会时间
+  ja-JP: 日程と開催時間
+
+configMeetingSection:
+  en: Meeting capacity
+  zh-CN: 组会人数
+  ja-JP: 各回の人数
+
+configSolverSection:
+  en: Assignment preferences
+  zh-CN: 排班偏好
+  ja-JP: 割当の設定
+
 configDays:
   en: Days of Week
   zh-CN: 星期
@@ -1145,6 +1185,26 @@ unavailEnd:
 
 unavailPerson:
   en: Person
+  zh-CN: 人员
+  ja-JP: 参加者
+
+unavailEveryone:
+  en: Everyone (cancel sessions in this range)
+  zh-CN: 全员（取消此范围内的组会）
+  ja-JP: 全員（この期間の組会を中止）
+
+unavailInclusiveHelp:
+  en: Both the first and last dates are included. Choose people, tags, or everyone.
+  zh-CN: 起止两日均包含在内。可选择人员、人员标签或全员。
+  ja-JP: 開始日と終了日の両方を含みます。参加者、タグ、または全員を選択してください。
+
+unavailInvalid:
+  en: Choose a target and a valid inclusive date range.
+  zh-CN: 请选择目标及有效的起止日期。
+  ja-JP: 対象と有効な開始日・終了日を選択してください。
+
+selectPeople:
+  en: People
   zh-CN: 人员
   ja-JP: 参加者
 
