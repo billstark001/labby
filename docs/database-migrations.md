@@ -60,6 +60,9 @@ Production execution must be explicitly authorized; ordinary server startup rema
    - Add indexed `tag_ids` alongside `person_ids` and backfill it from constraint JSON, including the second pair group.
    - Normalize stored constraint payloads to explicit `tagIds: []` and remove the unused `no-overlap.weight` field. No runtime alias for the old shape remains.
    - Add GIN indexes for person/tag membership used by foreign-key and reference checks.
+7. Localized person tags and constraint state:
+   - Backfill `person_tags.payload.names` from the existing English `name`, with empty Chinese and Japanese translations.
+   - Backfill `constraints.payload.disabled` as `false`. A disabled constraint remains stored but does not affect scheduling.
 
 Conversion is approximate: it cannot preserve all old Euclidean distances or reconstruct
 judgments that the old application never saved. The original rows remain in
@@ -76,10 +79,11 @@ Browser-local PGlite is explicitly allowed to initialize and migrate automatical
 mounts notification UI before opening the database. Actual initialization, schema upgrade or
 legacy import displays progress and completion; failures remain visible with a retry action.
 
-Empty browser databases use current-schema.sql directly. Existing databases migrate to version 6:
+Empty browser databases use current-schema.sql directly. Existing databases migrate to version 7:
 version 3 archives and converts old keyword vectors, version 4 installs the graph revision clock and
 change-feed triggers, and version 5 normalizes entity IDs/timestamps before enabling person-tag
 entities. Version 6 normalizes all constraint tag selectors and removes the unused no-overlap weight.
+Version 7 backfills localized person-tag names and the enabled state of constraints.
 Each upgrade transaction includes its schema version updates.
 ranking-judgment entities store accepted lists.
 The earlier IndexedDB import is a one-time migration; source vectors are archived and the
@@ -88,6 +92,7 @@ source IndexedDB database is not deleted. No old runtime aliases are retained.
 ## Backups and recovery
 
 Server backup format is version 3 and contains personTags, rankingJudgments and embeddingMigrationArchive.
+When restoring an older version-3 backup, import normalizes missing localized tag names and constraint enabled states before writing rows; this does not change the backup file.
 Old backup format 1 is not accepted by the new restore API. To use such a backup, restore with
 the old application into an isolated database first, then run the migration.
 
@@ -110,6 +115,7 @@ Server migrations live in packages/server/src/store/migrate:
 - 004.up.sql converts legacy text JSON documents to JSONB.
 - 005.up.sql atomically maps IDs to UUID, converts relational timestamps, and creates person_tags.
 - 006.up.sql adds and backfills constraint tag selectors, removes the unused no-overlap weight, and adds selector indexes.
+- 007.up.sql backfills localized person-tag names and the enabled state of constraints.
 - current-schema.sql describes the complete latest schema independently; db:init uses it directly.
 - schema-state.ts only checks the version and is the sole schema dependency of server startup.
 - runtime.ts loads SQL batches without splitting on semicolons; schema.ts owns the
