@@ -140,11 +140,7 @@ export function createDummyDB(): LabbyDB {
         unavailabilities: [],
       }),
       readForPerson: async (_query) => ({
-        keywords: [],
-        personTags: [],
-        constraints: [],
-        schedules: [],
-        unavailabilities: [],
+        referencedPersonIds: [],
       }),
       readForKeyword: async (_query) => ({
         persons: [],

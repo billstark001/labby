@@ -34,6 +34,7 @@ CREATE TABLE persons (
     config_id UUID,
     type TEXT NOT NULL,
     person_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tag_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -122,6 +123,8 @@ CREATE TABLE persons (
   CREATE INDEX configs_updated_at_idx ON configs (updated_at DESC, id DESC);
   CREATE INDEX constraints_config_idx ON constraints (config_id);
   CREATE INDEX constraints_updated_at_idx ON constraints (updated_at DESC, id DESC);
+  CREATE INDEX constraints_person_ids_gin_idx ON constraints USING gin (person_ids);
+  CREATE INDEX constraints_tag_ids_gin_idx ON constraints USING gin (tag_ids);
   CREATE INDEX schedules_created_at_idx ON schedules (created_at DESC, id DESC);
   CREATE INDEX schedules_updated_at_idx ON schedules (updated_at DESC, id DESC);
   CREATE INDEX unavailabilities_person_idx ON unavailabilities (person_id);
@@ -184,7 +187,8 @@ CREATE TABLE schema_migrations (
 );
 INSERT INTO schema_migrations(version,name) VALUES
   (1,'baseline'), (2,'product-embedding-and-ranking-history'), (3,'graph-change-feed'),
-  (4,'jsonb-documents'), (5,'uuid-timestamptz-person-tags');
+  (4,'jsonb-documents'), (5,'uuid-timestamptz-person-tags'),
+  (6,'constraint-tag-targets');
 CREATE INDEX keywords_graph_id_idx ON keywords(id);
 
 CREATE TABLE person_tags (

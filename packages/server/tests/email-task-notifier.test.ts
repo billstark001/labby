@@ -214,7 +214,7 @@ test('EmailTaskNotifier consumes skip-next once after manual send, even without 
     });
 
     // Manual run should send immediately and keep skip-next for the next scheduled run.
-    await notifier.runTaskNow(id('task-skip-next'));
+    await notifier.runTaskNow(id('task-skip-next'), ['skip-next@example.com']);
     assert.equal(sent.length, 1);
 
     // First scheduled run consumes skip-next and should not send.
@@ -339,10 +339,12 @@ test('EmailTaskNotifier skips disabled scheduled runs but allows manual send wit
     const afterScheduled = await store.getEmailTask(id('task-disabled'));
     assert.equal(typeof afterScheduled?.lastSkippedAt, 'number');
 
-    await notifier.runTaskNow(id('task-disabled'));
+    const manualResult = await notifier.runTaskNow(id('task-disabled'), ['one-off@example.com']);
+    assert.deepEqual(manualResult, { sent: 1, failed: 0 });
     assert.equal(sent.length, 1);
-    assert.deepEqual(sent[0]?.to, ['disabled@example.com']);
+    assert.deepEqual(sent[0]?.to, ['one-off@example.com']);
     assert.equal(sent[0]?.fromName, `Labby ${id('cfg-disabled')}`);
+    assert.deepEqual((await store.getEmailTask(id('task-disabled')))?.emails, ['disabled@example.com']);
   } finally {
     await store.close();
   }
@@ -397,7 +399,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
       defaultHour: 9,
     });
 
-    await notifier.runTaskNow(id('task-template-helper'));
+    await notifier.runTaskNow(id('task-template-helper'), ['helper@example.com']);
     assert.equal(sent.length, 1);
     assert.match(sent[0]?.text ?? '', /2026/);
 
@@ -412,7 +414,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
     });
 
     await assert.rejects(
-      () => notifier.runTaskNow(id('task-template-error')),
+      () => notifier.runTaskNow(id('task-template-error'), ['error@example.com']),
       /failed for 1 recipient/,
     );
   } finally {
@@ -487,7 +489,7 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
       publicBaseUrl: 'https://example.test',
     });
 
-    await notifierWithoutPublicIcs.runTaskNow(id('task-tz'));
+    await notifierWithoutPublicIcs.runTaskNow(id('task-tz'), ['tz@example.com']);
     assert.equal(sent[0]?.text, 'Asia/Tokyo|missing');
     const firstIcs = sent[0]?.attachments?.find((item) => item.filename.endsWith('.ics'));
     assert.match(firstIcs?.content.toString('utf-8') ?? '', /DTSTART;TZID=Asia\/Tokyo:/);
@@ -501,7 +503,7 @@ test('EmailTaskNotifier resolves timezone fallback and exposes ICS URL only when
       publicBaseUrl: 'https://example.test/',
     });
 
-    await notifierWithPublicIcs.runTaskNow(id('task-tz'));
+    await notifierWithPublicIcs.runTaskNow(id('task-tz'), ['tz@example.com']);
     assert.equal(sent[1]?.text, `Asia/Tokyo|https://example.test/public/email-tasks/${id('task-tz')}/schedule.ics`);
   } finally {
     await store.close();

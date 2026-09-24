@@ -28,6 +28,11 @@ const MIGRATIONS = [
     name: SCHEMA_NAMES[4],
     up: (client: MigrationClient) => runSqlFile(client, '005.up.sql'),
   },
+  {
+    version: 6,
+    name: SCHEMA_NAMES[5],
+    up: (client: MigrationClient) => runSqlFile(client, '006.up.sql'),
+  },
 ] as const;
 
 /** Runs on a dedicated connection, so BEGIN/COMMIT/locks cannot hop pool connections. */

@@ -10,6 +10,7 @@
 
 import cron from 'node-cron';
 import type { ScheduledTask } from 'node-cron';
+import { safeErrorInfo } from '../lib/logging.js';
 
 export interface CronJobDefinition {
   /** Human-readable name, used for logging and deregistration. */
@@ -68,16 +69,14 @@ export class CronScheduler {
   private upsertMirror(definition: CronJobDefinition): void {
     if (!this.mirror) return;
     void this.mirror.upsert(definition).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[scheduler] Failed to upsert mirrored job "${definition.name}": ${message}`);
+      console.error(JSON.stringify({ event: 'scheduler_mirror_upsert_error', job: definition.name, ...safeErrorInfo(err) }));
     });
   }
 
   private removeMirror(name: string): void {
     if (!this.mirror) return;
     void this.mirror.remove(name).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[scheduler] Failed to remove mirrored job "${name}": ${message}`);
+      console.error(JSON.stringify({ event: 'scheduler_mirror_remove_error', job: name, ...safeErrorInfo(err) }));
     });
   }
 
@@ -101,7 +100,7 @@ export class CronScheduler {
           try {
             await definition.handler();
           } catch (err) {
-            console.error(`[cron] Job "${definition.name}" failed:`, err);
+            console.error(JSON.stringify({ event: 'cron_job_error', job: definition.name, ...safeErrorInfo(err) }));
           }
         },
         {
@@ -141,8 +140,7 @@ export class CronScheduler {
 
     if (this.mirror?.shutdown) {
       void this.mirror.shutdown().catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[scheduler] Failed to shutdown mirror: ${message}`);
+        console.error(JSON.stringify({ event: 'scheduler_mirror_shutdown_error', ...safeErrorInfo(err) }));
       });
     }
   }

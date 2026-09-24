@@ -167,38 +167,7 @@ export async function readKeywordForeignKeys(db: LabbyDB, keywordIds: string[]):
 }
 
 export function buildPersonReferenceCount(bundle: PersonForeignKeyBundle): Map<string, number> {
-  const counts = new Map<string, number>();
-
-  for (const schedule of bundle.schedules) {
-    for (const session of schedule.sessions) {
-      for (const presentation of session.presentations) {
-        counts.set(presentation.presenterId, (counts.get(presentation.presenterId) ?? 0) + 1);
-        for (const questionerId of presentation.questionerIds) {
-          counts.set(questionerId, (counts.get(questionerId) ?? 0) + 1);
-        }
-      }
-    }
-  }
-
-  for (const unavailability of bundle.unavailabilities) {
-    const personIds = Array.isArray(unavailability.personIds) && unavailability.personIds.length > 0
-      ? unavailability.personIds
-      : (unavailability.personId ? [unavailability.personId] : []);
-    for (const personId of personIds) {
-      counts.set(personId, (counts.get(personId) ?? 0) + 1);
-    }
-  }
-
-  for (const constraint of bundle.constraints) {
-    const personIds = Array.isArray((constraint as { personIds?: unknown }).personIds)
-      ? ((constraint as { personIds: string[] }).personIds)
-      : [];
-    for (const personId of personIds) {
-      counts.set(personId, (counts.get(personId) ?? 0) + 1);
-    }
-  }
-
-  return counts;
+  return new Map(bundle.referencedPersonIds.map(id => [id, 1]));
 }
 
 export function buildKeywordReferenceCount(bundle: KeywordForeignKeyBundle): Map<string, number> {

@@ -2,7 +2,6 @@ import fs from "fs";
 import path from "path";
 import { Hono, type Context } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
-import { logger } from "hono/logger";
 import { z } from "zod";
 
 import type {
@@ -19,6 +18,7 @@ import type {
 import {
   buildScheduleIcs,
   computeScheduleMetrics,
+  createSolverDiagnostics,
   explainScheduleMetrics,
   generateId,
   getEnvironmentTimeZone,
@@ -33,9 +33,11 @@ import {
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
 import { EmbeddingService } from "./lib/embedding-service.js";
 import type { Mailer } from "./lib/mailer.js";
+import type { ManualEmailResult } from "./cron/email-task-notifier.js";
 import { getActiveBackupService } from "./backup/service.js";
 import { AppError } from "./lib/errors.js";
-import { fail, ok } from "./lib/http.js";
+import { fail, getRequestId, ok } from "./lib/http.js";
+import { safeErrorInfo } from './lib/logging.js';
 import {
   getAuthSession,
   requireClientAuth,
@@ -90,7 +92,7 @@ export interface CreateAppOptions {
   onEmailTasksChanged?: () => Promise<void> | void;
   onConfigsChanged?: () => Promise<void> | void;
   onSchedulesChanged?: () => Promise<void> | void;
-  runEmailTaskNow?: (taskId: string) => Promise<void>;
+  runEmailTaskNow?: (taskId: string, recipients: string[]) => Promise<ManualEmailResult>;
   schedulerDispatchApiKey?: string;
   onSchedulerDispatch?: (jobName: string) => Promise<boolean>;
 }
@@ -173,7 +175,22 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   const app = new Hono();
 
   if (options.enableLogger ?? true) {
-    app.use("*", logger());
+    app.use("*", async (c, next) => {
+      const started = performance.now();
+      const dbMetrics = { dbQueries: 0, dbDurationMs: 0 };
+      try { await store.withRequestMetrics(dbMetrics, next); }
+      finally {
+        console.info(JSON.stringify({
+          event: 'http_request', requestId: getRequestId(c), method: c.req.method,
+          route: c.req.routePath, status: c.res.status,
+          durationMs: Math.round(performance.now() - started),
+          dbQueries: dbMetrics.dbQueries,
+          dbDurationMs: Math.round(dbMetrics.dbDurationMs),
+          responseBytes: Number(c.res.headers.get('content-length')) || undefined,
+          ...store.poolStats(),
+        }));
+      }
+    });
   }
   app.use("/api/v1/*", requireRequestId);
   app.use("/api/v1/db/*", requireClientAuth(authService));
@@ -548,7 +565,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const query = c.req.query();
     const { offset, limit } = parsePagination(query);
     const sort = parseEntityListSort(query);
-    return ok(c, toPage(await store.listPersons(sort), offset, limit));
+    return ok(c, await store.listPersonsPage({ offset, limit, ...sort }));
   });
   app.get("/api/v1/db/persons/:id", async (c) => ok(c, (await store.getPerson(c.req.param("id"))) ?? null));
   app.put("/api/v1/db/persons/:id", async (c) => {
@@ -564,7 +581,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
   app.get('/api/v1/db/person-tags', async (c) => {
     const { offset, limit } = parsePagination(c.req.query());
     const sort = parseEntityListSort(c.req.query());
-    return ok(c, toPage(await store.listPersonTags(sort), offset, limit));
+    return ok(c, await store.listPersonTagsPage({ offset, limit, ...sort }));
   });
   app.get('/api/v1/db/person-tags/:id', async (c) => ok(c, (await store.getPersonTag(c.req.param('id'))) ?? null));
   app.put('/api/v1/db/person-tags/:id', async (c) => {
@@ -581,7 +598,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     const query = c.req.query();
     const { offset, limit } = parsePagination(query);
     const sort = parseEntityListSort(query);
-    return ok(c, toPage(await store.listKeywords(sort), offset, limit));
+    return ok(c, await store.listKeywordsPage({ offset, limit, ...sort }));
   });
   app.get("/api/v1/db/keywords/:id", async (c) => ok(c, (await store.getKeyword(c.req.param("id"))) ?? null));
   app.put("/api/v1/db/keywords/:id", async (c) => {
@@ -725,13 +742,14 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     if (!options.runEmailTaskNow) {
       throw new AppError('INTERNAL_ERROR', 'email sender is not configured on server', 503);
     }
+    const { recipients } = z.object({ recipients: z.array(z.email()).min(1).max(50) }).parse(await c.req.json());
     try {
-      await options.runEmailTaskNow(taskId);
+      const result = await options.runEmailTaskNow(taskId, [...new Set(recipients.map(value => value.trim()))]);
+      return ok(c, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new AppError('VALIDATION_ERROR', message, 400);
+      throw new AppError('VALIDATION_ERROR', message, 422);
     }
-    return ok(c, { ok: true });
   });
   app.post('/api/v1/db/email-tasks/:id/skip-next', async (c) => {
     const taskId = c.req.param('id');
@@ -773,18 +791,21 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
 
     const similarityLookup = keywordVectorsToSimilarityLookup(vectors);
 
+    const diagnostics = createSolverDiagnostics();
     const sessions = solveFull({
       persons,
       similarities: similarityLookup,
       config,
       unavailabilities,
       constraints,
+      diagnostics,
     });
     const plan: SchedulePlan = {
       id: generateId(),
       createdAt: Date.now(),
       configId: config.id,
       sessions,
+      solverDiagnostics: diagnostics,
     };
     const metrics = computeScheduleMetrics(plan, {
       persons,
@@ -829,6 +850,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       warnings.push(`changeDate ${body.changeDate} is earlier than suggested default ${suggestedDate}`);
     }
 
+    const diagnostics = createSolverDiagnostics();
     const sessions = solveIncremental({
       persons,
       similarities: similarityLookup,
@@ -840,12 +862,14 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       changeDate: resolvedChangeDate,
       mode: body.mode,
       constraints,
+      diagnostics,
     });
     const plan: SchedulePlan = {
       id: generateId(),
       createdAt: Date.now(),
       configId: config.id,
       sessions,
+      solverDiagnostics: diagnostics,
       sessionMutations: previousPlan.sessionMutations,
     };
     const metrics = computeScheduleMetrics(plan, {
@@ -988,7 +1012,8 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     if (err instanceof z.ZodError) {
       return fail(c, "VALIDATION_ERROR", err.issues.map((i) => i.message).join("; "), 400);
     }
-    console.error(err);
+    console.error(JSON.stringify({ event: 'request_error', requestId: getRequestId(c), route: c.req.routePath,
+      ...safeErrorInfo(err), ...store.poolStats() }));
     return fail(c, "INTERNAL_ERROR", "internal server error", 500);
   });
 

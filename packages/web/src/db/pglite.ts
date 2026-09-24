@@ -1,6 +1,7 @@
 import currentSchemaSql from './current-schema.sql?raw';
 import graphMigrationSql from './migrate/004.up.sql?raw';
 import identityMigrationSql from './migrate/005.up.sql?raw';
+import constraintMigrationSql from './migrate/006.up.sql?raw';
 import { listBrowserGraphPage } from './graph';
 import { toast } from '@/components/ui/Toast';
 import { i18n } from '@/i18n';
@@ -27,6 +28,7 @@ import {
   SYSTEM_SETTINGS_ID,
   validateKeywordVector,
   validateRankingJudgment,
+  validateScheduleAssignments,
   ProductEmbeddingEngine,
 } from '@labby/core';
 import { upgradeBrowserSchema } from './browser-migrations';
@@ -142,22 +144,35 @@ function normalizedQuery(
   };
 }
 
-function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQuery): number {
+function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQuery, tagNames: ReadonlyMap<string, string>): number {
   const sortBy = query.sortBy ?? 'modifiedAt';
   const direction = query.sortDirection ?? (sortBy === 'modifiedAt' ? 'desc' : 'asc');
   const factor = direction === 'asc' ? 1 : -1;
   const leftRecord = left as unknown as Record<string, unknown>;
   const rightRecord = right as unknown as Record<string, unknown>;
-  const leftValue = leftRecord[sortBy];
-  const rightValue = rightRecord[sortBy];
-  const primary =
-    typeof leftValue === 'number' && typeof rightValue === 'number'
-      ? leftValue - rightValue
-      : String(leftValue ?? '').localeCompare(String(rightValue ?? ''));
-  if (primary !== 0) return primary * factor;
-  return String(leftRecord.id ?? leftRecord.keywordId ?? '').localeCompare(
-    String(rightRecord.id ?? rightRecord.keywordId ?? ''),
-  );
+  const compareText = (a: unknown, b: unknown) => {
+    const first = String(a ?? '').trim().toLocaleLowerCase();
+    const second = String(b ?? '').trim().toLocaleLowerCase();
+    return first < second ? -1 : first > second ? 1 : 0;
+  };
+  const tagKey = (record: Record<string, unknown>) => (record.tagIds as string[] | undefined ?? [])
+    .map(id => tagNames.get(id)).filter((name): name is string => Boolean(name)).sort().join('|');
+  let primary: number;
+  if (sortBy === 'tags') {
+    const a = tagKey(leftRecord); const b = tagKey(rightRecord);
+    if (!a || !b) primary = a ? -1 : b ? 1 : 0;
+    else primary = compareText(a, b) * factor;
+  } else if (sortBy === 'disabled') primary = (Number(Boolean(leftRecord.disabled)) - Number(Boolean(rightRecord.disabled))) * factor;
+  else if (sortBy === 'modifiedAt') primary = (Number(leftRecord.modifiedAt ?? 0) - Number(rightRecord.modifiedAt ?? 0)) * factor;
+  else primary = compareText(leftRecord[sortBy], rightRecord[sortBy]) * factor;
+  if (primary !== 0) return primary;
+  const byDate = Number(rightRecord.modifiedAt ?? 0) - Number(leftRecord.modifiedAt ?? 0);
+  if (byDate) return byDate;
+  const byName = compareText(leftRecord.name, rightRecord.name);
+  if (byName) return byName;
+  const byNotes = compareText(leftRecord.notes, rightRecord.notes);
+  if (byNotes) return byNotes;
+  return compareText(leftRecord.id ?? leftRecord.keywordId, rightRecord.id ?? rightRecord.keywordId);
 }
 
 function hasOverlap(left: readonly string[], right: Set<string>): boolean {
@@ -181,7 +196,7 @@ export async function createPGliteDB(): Promise<{
   try {
     const changed = await upgradeBrowserSchema(
       client,
-      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql },
+      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql },
       (kind) => {
         maintenanceToast = toast.loading(
           i18n.t(kind === 'initialize' ? 'dbInitializing' : 'dbMigrating'),
@@ -223,6 +238,19 @@ export async function createPGliteDB(): Promise<{
   }
 
   async function put(kind: EntityKind, id: string, value: StoredEntity): Promise<void> {
+    if (kind === 'schedule') {
+      const schedule = value as SchedulePlan;
+      const config = await get<ScheduleConfig>('config', schedule.configId);
+      if (!config) throw new Error('Schedule config not found');
+      const [persons, unavailabilities, constraints] = await Promise.all([
+        all<Person>('person'), all<PersonUnavailability>('unavailability'), all<ScheduleConstraint>('constraint'),
+      ]);
+      const violations = validateScheduleAssignments(schedule.sessions, {
+        config, persons, unavailabilities, constraints: constraints.filter(item => item.configId === config.id),
+        similarities: { getPairSimilarity: () => undefined },
+      });
+      if (violations.length) throw new Error(violations[0]);
+    }
     const record = value as unknown as Record<string, unknown>;
     const updatedAt = Number(
       record.updatedAt ?? record.modifiedAt ?? record.createdAt ?? Date.now(),
@@ -261,8 +289,11 @@ export async function createPGliteDB(): Promise<{
     query: ListQuery,
   ): Promise<PaginatedResult<T>> {
     const normalized = normalizedQuery(query);
+    const tagNames = new Map<string, string>();
+    if (kind === 'person' && normalized.sortBy === 'tags')
+      for (const tag of await all<PersonTag>('person-tag')) tagNames.set(tag.id, tag.name.trim().toLocaleLowerCase());
     const values = (await all<T>(kind)).sort((left, right) =>
-      compareEntities(left, right, normalized),
+      compareEntities(left, right, normalized, tagNames),
     );
     return {
       items: values.slice(normalized.offset, normalized.offset + normalized.limit),
@@ -312,6 +343,8 @@ export async function createPGliteDB(): Promise<{
       list: (query) => list<PersonTag>('person-tag', query),
       put: (value) => put('person-tag', value.id, value),
       delete: async (id) => {
+        const referenced = await client.query<{ id: string }>("SELECT id FROM entities WHERE kind='constraint' AND (payload->'tagIds' ? $1 OR payload->'otherTagIds' ? $1) LIMIT 1", [id]);
+        if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling constraint');
         const persons = await all<Person>('person');
         await client.transaction(async (tx) => {
           for (const person of persons.filter(item => item.tagIds?.includes(id))) {
@@ -437,9 +470,16 @@ export async function createPGliteDB(): Promise<{
             }),
           ),
         );
-        selectedConstraints.forEach((constraint) =>
-          (constraint.personIds ?? []).forEach((id) => personIds.add(id)),
-        );
+        const referencedTagIds = new Set(selectedConstraints.flatMap(constraint => [
+          ...constraint.tagIds,
+          ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? []),
+        ]));
+        selectedConstraints.forEach((constraint) => {
+          [...constraint.personIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [])]
+            .forEach(id => personIds.add(id));
+        });
+        persons.filter(person => person.tagIds?.some(tagId => referencedTagIds.has(tagId)))
+          .forEach(person => personIds.add(person.id));
         selectedUnavailabilities.forEach((item) =>
           unavailabilityPersonIds(item).forEach((id) => personIds.add(id)),
         );
@@ -451,41 +491,27 @@ export async function createPGliteDB(): Promise<{
           schedules: selectedSchedules,
           unavailabilities: selectedUnavailabilities,
           persons: selectedPersons,
-          personTags: personTags.filter(tag => selectedPersons.some(person => person.tagIds?.includes(tag.id))),
+          personTags: personTags.filter(tag => referencedTagIds.has(tag.id) || selectedPersons.some(person => person.tagIds?.includes(tag.id))),
           keywords: keywords.filter((item) => keywordIds.has(item.id)),
           keywordVectors: keywordVectors.filter((item) => keywordIds.has(item.keywordId)),
         };
       },
       readForPerson: async ({ personIds }) => {
         const wanted = new Set(personIds);
-        const [persons, keywords, personTags, constraints, schedules, unavailabilities] = await Promise.all([
+        const [persons, constraints, schedules, unavailabilities] = await Promise.all([
           all<Person>('person'),
-          all<Keyword>('keyword'),
-          all<PersonTag>('person-tag'),
           all<ScheduleConstraint>('constraint'),
           all<SchedulePlan>('schedule'),
           all<PersonUnavailability>('unavailability'),
         ]);
-        const keywordIds = new Set(
-          persons.filter((item) => wanted.has(item.id)).flatMap((item) => item.keywordIds),
-        );
-        return {
-          keywords: keywords.filter((item) => keywordIds.has(item.id)),
-          personTags: personTags.filter(tag => persons.some(person => wanted.has(person.id) && person.tagIds?.includes(tag.id))),
-          constraints: constraints.filter((item) => hasOverlap(item.personIds ?? [], wanted)),
-          schedules: schedules.filter((item) =>
-            item.sessions.some((session) =>
-              session.presentations.some(
-                (presentation) =>
-                  wanted.has(presentation.presenterId) ||
-                  hasOverlap(presentation.questionerIds, wanted),
-              ),
-            ),
-          ),
-          unavailabilities: unavailabilities.filter((item) =>
-            hasOverlap(unavailabilityPersonIds(item), wanted),
-          ),
-        };
+        const referencedPersonIds = persons.filter(person => wanted.has(person.id) && (
+          schedules.some(schedule => schedule.sessions.some(session => session.presentations.some(presentation =>
+            presentation.presenterId === person.id || presentation.questionerIds.includes(person.id))))
+          || unavailabilities.some(item => unavailabilityPersonIds(item).includes(person.id))
+          || constraints.some(item => [...item.personIds, ...(item.type === 'frequency-multiplier' ? [] : item.otherPersonIds ?? [])].includes(person.id)
+            || [...item.tagIds, ...(item.type === 'frequency-multiplier' ? [] : item.otherTagIds ?? [])].some(tagId => person.tagIds?.includes(tagId)))
+        )).map(person => person.id).sort();
+        return { referencedPersonIds };
       },
       readForKeyword: async ({ keywordIds }) => {
         const wanted = new Set(keywordIds);

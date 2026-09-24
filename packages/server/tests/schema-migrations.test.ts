@@ -60,6 +60,22 @@ test('fresh migration builds the current schema and remains idempotent', async (
   } finally { await db.close(); }
 });
 
+test('v5 constraints migrate to tag selectors without legacy no-overlap weight', async () => {
+  const db = await memoryDatabase();
+  try {
+    await initializePostgresSchema(db);
+    await db.exec('DROP INDEX constraints_tag_ids_gin_idx; DROP INDEX constraints_person_ids_gin_idx; ALTER TABLE constraints DROP COLUMN tag_ids; DELETE FROM schema_migrations WHERE version=6;');
+    const id = '10000000-0000-4000-8000-000000000002';
+    await db.query('INSERT INTO constraints(id,type,person_ids,payload,created_at,updated_at) VALUES($1,$2,$3::jsonb,$4::jsonb,now(),now())',
+      [id, 'no-overlap', '[]', JSON.stringify({ id, configId: '', type: 'no-overlap', personIds: [], weight: 7 })]);
+    await migratePostgresSchema(db);
+    const row = (await db.query<{ tag_ids: string[]; payload: Record<string, unknown> }>('SELECT tag_ids,payload FROM constraints')).rows[0]!;
+    assert.deepEqual(row.tag_ids, []);
+    assert.deepEqual(row.payload.tagIds, []);
+    assert.equal('weight' in row.payload, false);
+  } finally { await db.close(); }
+});
+
 test('legacy vectors are converted deterministically and the entire source row is archived', async () => {
   const db = await memoryDatabase();
   try {

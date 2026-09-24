@@ -192,12 +192,12 @@ type TaskExecutionDecision =
   | { kind: 'send' };
 
 interface TaskDeliveryFailure {
-  recipient: string;
-  reason: string;
+  kind: 'render' | 'send';
 }
 
-function summarizeTemplateErrors(errors: Array<{ kind: string; message: string }>): string {
-  return errors.map((error) => `${error.kind}: ${error.message}`).join('; ');
+export interface ManualEmailResult {
+  sent: number;
+  failed: number;
 }
 
 export class EmailTaskNotifier {
@@ -322,50 +322,52 @@ export class EmailTaskNotifier {
     await this.executeTask(task, { manual: false });
   }
 
-  async runTaskNow(taskId: string): Promise<void> {
+  async runTaskNow(taskId: string, recipients: string[]): Promise<ManualEmailResult> {
     const task = await this.options.store.getEmailTask(taskId);
-    if (!task) return;
-    await this.executeTask(task, { manual: true });
+    if (!task) throw new Error('Email task not found');
+    return this.executeTask(task, { manual: true, recipients });
   }
 
-  private async executeTask(task: EmailTask, options: { manual: boolean }): Promise<void> {
+  private async executeTask(task: EmailTask, options: { manual: boolean; recipients?: string[] }): Promise<ManualEmailResult> {
     const context = await this.loadExecutionContext(task);
     const decision = this.determineExecutionDecision(task, context, options);
 
     if (decision.kind === 'unregister-missing-config') {
+      if (options.manual) throw new Error('Email task has no schedule configuration');
       this.options.scheduler.unregister(`email-task:${task.id}`);
-      return;
+      return { sent: 0, failed: 0 };
     }
 
     const { config, persons, latest, sentCounts, runAt, timezone } = context;
 
     if (decision.kind === 'skip-disabled') {
       await this.persistScheduledSkip(task, runAt);
-      return;
+      return { sent: 0, failed: 0 };
     }
 
     if (decision.kind === 'skip-ended') {
       this.options.scheduler.unregister(`email-task:${task.id}`);
       await this.persistScheduledSkip(task, runAt);
-      return;
+      return { sent: 0, failed: 0 };
     }
 
     if (decision.kind === 'skip-next') {
       await this.persistScheduledSkip(task, runAt, {
         skipNextRun: false,
       });
-      return;
+      return { sent: 0, failed: 0 };
     }
 
     if (decision.kind === 'skip-no-schedule') {
+      if (options.manual) throw new Error('No generated schedule is available');
       if (!options.manual) {
         await this.persistScheduledSkip(task, runAt);
       }
-      return;
+      return { sent: 0, failed: 0 };
     }
 
     if (!config || !latest) {
-      return;
+      throw new Error('Email task is missing its schedule');
     }
 
     const locale = (task.metadata?.dateLocale as string | undefined)
@@ -383,9 +385,10 @@ export class EmailTaskNotifier {
     const failures: TaskDeliveryFailure[] = [];
     let sentAny = false;
 
-    for (const recipient of task.emails) {
+    let sent = 0;
+    for (const recipient of options.recipients ?? task.emails) {
       const currentSent = sentCounts[recipient] ?? 0;
-      if (task.recentTimes > 0 && currentSent >= task.recentTimes) {
+      if (!options.manual && task.recentTimes > 0 && currentSent >= task.recentTimes) {
         continue;
       }
 
@@ -404,11 +407,8 @@ export class EmailTaskNotifier {
         format: (task.metadata?.format as 'markdown' | 'html' | undefined) ?? 'markdown',
       });
       if (rendered.errors.length > 0) {
-        console.warn(`[email-task] template render errors for task ${task.id}:`, rendered.errors);
-        failures.push({
-          recipient,
-          reason: `body template failed (${summarizeTemplateErrors(rendered.errors)})`,
-        });
+        console.warn(JSON.stringify({ event: 'email_template_error', taskId: task.id, part: 'body', count: rendered.errors.length }));
+        failures.push({ kind: 'render' });
         continue;
       }
 
@@ -416,11 +416,8 @@ export class EmailTaskNotifier {
         ? renderTemplate(task.subjectTemplate, context)
         : { output: '', errors: [] };
       if (renderedSubject.errors.length > 0) {
-        console.warn(`[email-task] subject template render errors for task ${task.id}:`, renderedSubject.errors);
-        failures.push({
-          recipient,
-          reason: `subject template failed (${summarizeTemplateErrors(renderedSubject.errors)})`,
-        });
+        console.warn(JSON.stringify({ event: 'email_template_error', taskId: task.id, part: 'subject', count: renderedSubject.errors.length }));
+        failures.push({ kind: 'render' });
         continue;
       }
 
@@ -428,11 +425,8 @@ export class EmailTaskNotifier {
         ? renderTemplate(task.senderNameTemplate, context)
         : { output: '', errors: [] };
       if (renderedSenderName.errors.length > 0) {
-        console.warn(`[email-task] sender name template render errors for task ${task.id}:`, renderedSenderName.errors);
-        failures.push({
-          recipient,
-          reason: `sender name template failed (${summarizeTemplateErrors(renderedSenderName.errors)})`,
-        });
+        console.warn(JSON.stringify({ event: 'email_template_error', taskId: task.id, part: 'sender', count: renderedSenderName.errors.length }));
+        failures.push({ kind: 'render' });
         continue;
       }
 
@@ -445,31 +439,32 @@ export class EmailTaskNotifier {
           html: rendered.html,
           attachments,
         });
-      } catch (error) {
-        failures.push({
-          recipient,
-          reason: error instanceof Error ? error.message : String(error),
-        });
+      } catch {
+        failures.push({ kind: 'send' });
         continue;
       }
 
-      sentCounts[recipient] = currentSent + 1;
+      if (!options.manual) sentCounts[recipient] = currentSent + 1;
       sentAny = true;
+      sent++;
     }
 
-    if (sentAny || failures.length === 0) {
+    if (!options.manual && (sentAny || failures.length === 0)) {
       await this.persistTask(task, {
         sentCounts,
         lastRunAt: runAt,
       });
     }
 
-    if (failures.length > 0) {
-      const summary = failures
-        .map((failure) => `${failure.recipient}: ${failure.reason}`)
-        .join('; ');
-      throw new Error(`Email task ${task.id} failed for ${failures.length} recipient(s): ${summary}`);
+    if (options.manual) {
+      if (sent === 0) throw new Error(failures.length > 0 ? `Email delivery failed for ${failures.length} recipient(s)` : 'No recipients were sent an email');
+      return { sent, failed: failures.length };
     }
+
+    if (failures.length > 0) {
+      throw new Error(`Email task ${task.id} failed for ${failures.length} recipient(s)`);
+    }
+    return { sent, failed: 0 };
   }
 
   private buildTemplateContext(

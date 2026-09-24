@@ -21,7 +21,7 @@ export interface ListQuery {
   sortDirection?: ListSortDirection;
 }
 
-export type EntityListSortBy = 'modifiedAt' | 'name' | 'notes';
+export type EntityListSortBy = 'modifiedAt' | 'name' | 'notes' | 'tags' | 'disabled';
 
 export type ListSortDirection = 'asc' | 'desc';
 
@@ -147,11 +147,7 @@ export interface ScheduleForeignKeyQuery {
 }
 
 export interface PersonForeignKeyBundle {
-  keywords: Keyword[];
-  personTags: PersonTag[];
-  schedules: SchedulePlan[];
-  constraints: ScheduleConstraint[];
-  unavailabilities: PersonUnavailability[];
+  referencedPersonIds: string[];
 }
 
 export interface PersonForeignKeyQuery {

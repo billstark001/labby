@@ -173,8 +173,9 @@ test('template preview, email-task CRUD and metrics API work', async () => {
       const sendNowRes = await failingRuntime.app.request(`/api/v1/db/email-tasks/${failingTaskId}/send-now`, {
         method: 'POST',
         headers: makeHeaders(failingToken),
+        body: JSON.stringify({ recipients: ['recipient@example.test'] }),
       });
-      assert.equal(sendNowRes.status, 400);
+      assert.equal(sendNowRes.status, 422);
       const sendNowJson = await sendNowRes.json() as { message: string };
       assert.match(sendNowJson.message, /template render failed/);
     } finally {

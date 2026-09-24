@@ -13,7 +13,7 @@ export function parseEntityListSort(input: { sortBy?: string; sortDirection?: st
   sortBy: EntityListSortBy;
   sortDirection: ListSortDirection;
 } {
-  const sortBy = input.sortBy === 'name' || input.sortBy === 'notes' || input.sortBy === 'modifiedAt'
+  const sortBy = input.sortBy === 'name' || input.sortBy === 'notes' || input.sortBy === 'modifiedAt' || input.sortBy === 'tags' || input.sortBy === 'disabled'
     ? input.sortBy
     : 'modifiedAt';
   const sortDirection = input.sortDirection === 'asc' || input.sortDirection === 'desc'

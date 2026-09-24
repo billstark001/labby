@@ -8,6 +8,7 @@ import { Pool, type PoolClient } from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { checkPostgresSchema } from './schema-state.js';
+import { safeErrorInfo } from '../lib/logging.js';
 
 import type {
   EntityListSortBy,
@@ -25,8 +26,10 @@ import type {
   SystemSettings,
   GraphQuery,
   GraphPage,
+  ListQuery,
+  PaginatedResult,
 } from '@labby/core';
-import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, validateKeywordVector, validateRankingJudgment } from '@labby/core';
+import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, validateKeywordVector, validateRankingJudgment, validateScheduleAssignments } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
 export const UserRole = {
@@ -105,11 +108,7 @@ interface ScheduleForeignKeyBundle {
 }
 
 interface PersonForeignKeyBundle {
-  keywords: Keyword[];
-  personTags: PersonTag[];
-  constraints: ScheduleConstraint[];
-  schedules: SchedulePlan[];
-  unavailabilities: PersonUnavailability[];
+  referencedPersonIds: string[];
 }
 
 interface KeywordForeignKeyBundle {
@@ -247,9 +246,11 @@ function uniqueIds(values: readonly string[]): string[] {
 }
 
 function extractConstraintPersonIds(constraint: ScheduleConstraint): string[] {
-  const value = constraint as { personIds?: unknown };
-  if (!Array.isArray(value.personIds)) return [];
-  return uniqueIds(value.personIds.filter((item): item is string => typeof item === 'string'));
+  return uniqueIds([...constraint.personIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [])]);
+}
+
+function extractConstraintTagIds(constraint: ScheduleConstraint): string[] {
+  return uniqueIds([...constraint.tagIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? [])]);
 }
 
 function extractSchedulePersonIds(schedule: SchedulePlan): string[] {
@@ -289,6 +290,18 @@ export class LabbyStore {
     connection?: PoolClient;
     db?: Pick<PostgresDrizzleDb, 'execute'>;
   }>();
+  private readonly requestMetrics = new AsyncLocalStorage<{ dbQueries: number; dbDurationMs: number }>();
+
+  withRequestMetrics<T>(metrics: { dbQueries: number; dbDurationMs: number }, work: () => Promise<T>): Promise<T> {
+    return this.requestMetrics.run(metrics, work);
+  }
+
+  private recordQuery(started: number): void {
+    const metrics = this.requestMetrics.getStore();
+    if (!metrics) return;
+    metrics.dbQueries += 1;
+    metrics.dbDurationMs += performance.now() - started;
+  }
 
   constructor(config: StoreConnectionConfig) {
     this.dialect = config.dialect;
@@ -305,11 +318,13 @@ export class LabbyStore {
       this.pgPool = new Pool({
         connectionString: config.connectionString,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
-        connectionTimeoutMillis: 10000,
-        idleTimeoutMillis: 10000,
+        max: 8,
+        connectionTimeoutMillis: 15000,
+        idleTimeoutMillis: 60000,
         allowExitOnIdle: true,
         query_timeout: 20000,
       });
+      this.pgPool.on('error', error => console.error(JSON.stringify({ event: 'db_pool_error', ...safeErrorInfo(error), ...this.poolStats() })));
       this.db = drizzlePostgres(this.pgPool);
     }
 
@@ -367,7 +382,10 @@ export class LabbyStore {
 
   private async queryRows(query: ReturnType<typeof sql>): Promise<DbRow[]> {
     const db = this.similarityTransaction.getStore()?.db ?? this.db;
-    const result = await db.execute(query as never);
+    const started = performance.now();
+    let result: unknown;
+    try { result = await db.execute(query as never); }
+    finally { this.recordQuery(started); this.logSlowQuery(started, 'read'); }
     if (result && typeof result === 'object' && 'rows' in result && Array.isArray((result as { rows?: unknown }).rows)) {
       return (result as { rows: DbRow[] }).rows;
     }
@@ -376,16 +394,32 @@ export class LabbyStore {
 
   private async executeCommand(query: ReturnType<typeof sql>): Promise<void> {
     const db = this.similarityTransaction.getStore()?.db ?? this.db;
-    await db.execute(query as never);
+    const started = performance.now();
+    try { await db.execute(query as never); }
+    finally { this.recordQuery(started); this.logSlowQuery(started, 'write'); }
+  }
+
+  private logSlowQuery(started: number, operation: 'read' | 'write' | 'connect'): void {
+    const durationMs = Math.round(performance.now() - started);
+    if (durationMs < 250) return;
+    console.info(JSON.stringify({ event: 'db_slow', operation, durationMs, ...this.poolStats() }));
+  }
+
+  poolStats(): { poolTotal: number; poolIdle: number; poolWaiting: number } {
+    return { poolTotal: this.pgPool?.totalCount ?? 0, poolIdle: this.pgPool?.idleCount ?? 0, poolWaiting: this.pgPool?.waitingCount ?? 0 };
   }
 
   private async checkSchema(): Promise<void> {
+    const started = performance.now();
     if (this.pglite) {
       await checkPostgresSchema({ query: async (text, params) => this.pglite!.query(text, params) });
     } else {
+      const connecting = performance.now();
       const connection = await this.pgPool!.connect();
+      this.logSlowQuery(connecting, 'connect');
       try { await checkPostgresSchema(connection); } finally { connection.release(); }
     }
+    this.logSlowQuery(started, 'read');
   }
 
   private async ensureReady(): Promise<void> {
@@ -501,6 +535,42 @@ export class LabbyStore {
     return persons.sort((left, right) => compareSortableEntities(left, right, sort));
   }
 
+  private async listEntityPage<T>(table: 'persons' | 'person_tags' | 'keywords', query: ListQuery): Promise<PaginatedResult<T>> {
+    await this.ensureReady();
+    const offset = Math.max(0, Math.floor(query.offset));
+    const limit = Math.max(1, Math.min(500, Math.floor(query.limit)));
+    const direction = query.sortDirection === 'desc' ? 'DESC' : 'ASC';
+    const sort = query.sortBy ?? 'modifiedAt';
+    const nameExpr = `lower(btrim(coalesce(t.payload->>'name', ''))) COLLATE "C"`;
+    const notesExpr = `lower(btrim(coalesce(t.payload->>'notes', ''))) COLLATE "C"`;
+    const modifiedExpr = `coalesce((t.payload->>'modifiedAt')::bigint, 0)`;
+    let primary = `${modifiedExpr} ${query.sortDirection === 'asc' ? 'ASC' : 'DESC'}`;
+    let joins = '';
+    if (sort === 'name') primary = `${nameExpr} ${direction}`;
+    if (sort === 'notes') primary = `${notesExpr} ${direction}`;
+    if (sort === 'disabled' && table === 'persons') primary = `coalesce((t.payload->>'disabled')::boolean, false) ${direction}`;
+    if (sort === 'tags' && table === 'persons') {
+      joins = `LEFT JOIN LATERAL (
+        SELECT string_agg(lower(btrim(tag.payload->>'name')) COLLATE "C", '|' ORDER BY lower(btrim(tag.payload->>'name')) COLLATE "C", tag.id) AS names
+        FROM jsonb_array_elements_text(coalesce(t.payload->'tagIds', '[]'::jsonb)) AS member(tag_id)
+        JOIN person_tags tag ON tag.id::text = member.tag_id
+      ) tag_sort ON true`;
+      primary = `tag_sort.names IS NULL ASC, tag_sort.names ${direction}`;
+    }
+    const [rows, totals] = await Promise.all([
+      this.queryRows(sql.raw(`SELECT t.payload FROM ${table} t ${joins} ORDER BY ${primary}, ${modifiedExpr} DESC, ${nameExpr} ASC, ${notesExpr} ASC, t.id ASC LIMIT ${limit} OFFSET ${offset}`)),
+      this.queryRows(sql.raw(`SELECT count(*)::int AS total FROM ${table}`)),
+    ]);
+    return {
+      items: rows.map(row => this.parsePayload<T>(row.payload)),
+      total: Number(totals[0]?.total ?? 0), offset, limit,
+    };
+  }
+
+  listPersonsPage(query: ListQuery): Promise<PaginatedResult<Person>> { return this.listEntityPage('persons', query); }
+  listPersonTagsPage(query: ListQuery): Promise<PaginatedResult<PersonTag>> { return this.listEntityPage('person_tags', query); }
+  listKeywordsPage(query: ListQuery): Promise<PaginatedResult<Keyword>> { return this.listEntityPage('keywords', query); }
+
   async putPerson(person: Person): Promise<void> {
     await this.ensureReady();
     const updated = { ...person, modifiedAt: person.modifiedAt ?? nowMs() };
@@ -548,6 +618,8 @@ export class LabbyStore {
   async deletePersonTag(id: string): Promise<void> {
     await this.ensureReady();
     await this.transaction(async query => {
+      const referenced = await query('SELECT 1 FROM constraints WHERE tag_ids ? $1 LIMIT 1', [id]) as { rows: unknown[] };
+      if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling constraint');
       const result = await query('SELECT id,payload FROM persons') as { rows: Array<{ id: string; payload: Person }> };
       const rows = result.rows;
       for (const row of rows) {
@@ -777,13 +849,15 @@ export class LabbyStore {
       modifiedAt: constraint.modifiedAt ?? nowMs(),
     };
     const personIds = JSON.stringify(extractConstraintPersonIds(updated));
+    const tagIds = JSON.stringify(extractConstraintTagIds(updated));
     await this.executeCommand(sql`
-      INSERT INTO constraints (id, config_id, type, person_ids, payload, created_at, updated_at)
-      VALUES (${updated.id}, ${updated.configId || null}, ${updated.type}, ${personIds}, ${JSON.stringify(updated)}, ${new Date(updated.modifiedAt)}, ${new Date(updated.modifiedAt)})
+      INSERT INTO constraints (id, config_id, type, person_ids, tag_ids, payload, created_at, updated_at)
+      VALUES (${updated.id}, ${updated.configId || null}, ${updated.type}, ${personIds}, ${tagIds}, ${JSON.stringify(updated)}, ${new Date(updated.modifiedAt)}, ${new Date(updated.modifiedAt)})
       ON CONFLICT(id) DO UPDATE SET
         config_id = excluded.config_id,
         type = excluded.type,
         person_ids = excluded.person_ids,
+        tag_ids = excluded.tag_ids,
         payload = excluded.payload,
         updated_at = excluded.updated_at
     `);
@@ -885,6 +959,16 @@ export class LabbyStore {
 
   async putSchedule(schedule: SchedulePlan): Promise<void> {
     await this.ensureReady();
+    const config = await this.getConfig(schedule.configId);
+    if (!config) throw new Error('Schedule config not found');
+    const [persons, unavailabilities, constraints] = await Promise.all([
+      this.listPersons(), this.listUnavailabilities(), this.listConstraintsByConfig(config.id),
+    ]);
+    const violations = validateScheduleAssignments(schedule.sessions, {
+      config, persons, unavailabilities, constraints,
+      similarities: { getPairSimilarity: () => undefined },
+    });
+    if (violations.length) throw new Error(violations[0]);
     const updated = { ...schedule, modifiedAt: schedule.modifiedAt ?? nowMs() };
     const personIds = JSON.stringify(extractSchedulePersonIds(updated));
     await this.executeCommand(sql`
@@ -991,7 +1075,7 @@ export class LabbyStore {
     const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(row.payload));
 
     const constraintRows = await this.queryRows(sql.raw(`
-      SELECT id, config_id, payload, person_ids
+      SELECT id, config_id, payload, person_ids, tag_ids
       FROM constraints
       WHERE config_id IN (${configInList}) OR config_id IS NULL
       ORDER BY updated_at DESC, id DESC
@@ -1031,13 +1115,18 @@ export class LabbyStore {
       }
     }
 
+    const referencedTagIds = uniqueIds(constraints.flatMap(extractConstraintTagIds));
+    const taggedPersons = referencedTagIds.length
+      ? await this.listPayloads<Person>(sql.raw(`SELECT payload FROM persons WHERE ${this.buildJsonArrayOverlapCondition("payload->'tagIds'", referencedTagIds)}`))
+      : [];
+    for (const person of taggedPersons) personIdSet.add(person.id);
     const persons = await this.listPayloadsByIds<Person>('persons', 'id', [...personIdSet]);
     const keywordIdSet = new Set<string>();
     for (const person of persons) {
       for (const keywordId of person.keywordIds ?? []) keywordIdSet.add(keywordId);
     }
     const keywordIds = [...keywordIdSet];
-    const tagIds = uniqueIds(persons.flatMap(person => person.tagIds ?? []));
+    const tagIds = uniqueIds([...referencedTagIds, ...persons.flatMap(person => person.tagIds ?? [])]);
     const [keywords, keywordVectors, personTags] = await Promise.all([
       this.listPayloadsByIds<Keyword>('keywords', 'id', keywordIds),
       this.getKeywordVectors(keywordIds),
@@ -1059,73 +1148,32 @@ export class LabbyStore {
   async listPersonForeignKeys(query: PersonForeignKeyQuery): Promise<PersonForeignKeyBundle> {
     await this.ensureReady();
     const personIds = uniqueIds(query.personIds ?? []);
-    if (personIds.length === 0) {
-      return {
-        keywords: [],
-        personTags: [],
-        constraints: [],
-        schedules: [],
-        unavailabilities: [],
-      };
-    }
-
+    if (personIds.length === 0) return { referencedPersonIds: [] };
     const persons = await this.listPayloadsByIds<Person>('persons', 'id', personIds);
-    const keywordIdSet = new Set<string>();
-    for (const person of persons) {
-      for (const keywordId of person.keywordIds ?? []) keywordIdSet.add(keywordId);
-    }
-    const keywords = await this.listPayloadsByIds<Keyword>('keywords', 'id', [...keywordIdSet]);
-    const tagIds = uniqueIds(persons.flatMap(person => person.tagIds ?? []));
-    const personTags = await this.listPayloadsByIds<PersonTag>('person_tags', 'id', tagIds);
-
     const overlapCondition = this.buildJsonArrayOverlapCondition('person_ids', personIds);
-
-    const scheduleRows = await this.queryRows(sql.raw(`
-      SELECT payload
-      FROM schedules
-      WHERE ${overlapCondition}
-      ORDER BY updated_at DESC, created_at DESC, id DESC
-    `));
-    const schedules = scheduleRows.map((row) => this.parsePayload<SchedulePlan>(row.payload));
-
-    const constraintRows = await this.queryRows(sql.raw(`
-      SELECT id, config_id, payload
-      FROM constraints
-      WHERE ${overlapCondition}
-      ORDER BY updated_at DESC, id DESC
-    `));
-    const constraints = constraintRows.map((row) => {
-      const payload = this.parsePayload<ScheduleConstraint>(row.payload);
-      return {
-        ...payload,
-        id: String(payload.id ?? row.id),
-        configId: String(row.config_id ?? payload.configId ?? ''),
-      };
-    });
-
-    const unavailabilityRows = await this.queryRows(sql.raw(`
-      SELECT payload
-      FROM unavailabilities
-      WHERE ${overlapCondition}
-      ORDER BY start_date, end_date, id
-    `));
-    const unavailabilities = unavailabilityRows.map((row) => {
-      const payload = this.parsePayload<PersonUnavailability>(row.payload);
-      const normalizedIds = normalizeUnavailabilityPersonIds(payload);
-      return ({
-        ...payload,
-        personId: normalizedIds[0],
-        personIds: normalizedIds,
-      } as PersonUnavailability);
-    });
-
-    return {
-      keywords,
-      personTags,
-      constraints,
-      schedules,
-      unavailabilities,
+    const personTagIds = uniqueIds(persons.flatMap(person => person.tagIds ?? []));
+    const constraintOverlapCondition = personTagIds.length
+      ? `(${overlapCondition} OR ${this.buildJsonArrayOverlapCondition('tag_ids', personTagIds)})`
+      : overlapCondition;
+    const [schedules, constraints, unavailabilities] = await Promise.all([
+      this.queryRows(sql.raw(`SELECT person_ids FROM schedules WHERE ${overlapCondition}`)),
+      this.queryRows(sql.raw(`SELECT person_ids, tag_ids FROM constraints WHERE ${constraintOverlapCondition}`)),
+      this.queryRows(sql.raw(`SELECT person_ids FROM unavailabilities WHERE ${overlapCondition}`)),
+    ]);
+    const requested = new Set(personIds);
+    const referenced = new Set<string>();
+    const include = (ids: unknown) => {
+      const list = typeof ids === 'string' ? JSON.parse(ids) as unknown : ids;
+      if (Array.isArray(list)) for (const id of list) if (requested.has(String(id))) referenced.add(String(id));
     };
+    for (const row of [...schedules, ...unavailabilities]) include(row.person_ids);
+    for (const row of constraints) {
+      include(row.person_ids);
+      const tags = typeof row.tag_ids === 'string' ? JSON.parse(row.tag_ids) as unknown : row.tag_ids;
+      if (Array.isArray(tags)) for (const person of persons)
+        if (person.tagIds?.some(tagId => tags.includes(tagId))) referenced.add(person.id);
+    }
+    return { referencedPersonIds: [...referenced].sort() };
   }
 
   async listKeywordForeignKeys(query: KeywordForeignKeyQuery): Promise<KeywordForeignKeyBundle> {

@@ -56,6 +56,10 @@ Production execution must be explicitly authorized; ordinary server startup rema
    - Convert persisted epoch-millisecond columns to `timestamptz` with millisecond-equivalent instants;
      public payload timestamps remain epoch milliseconds for API compatibility.
    - Add the UUID/timestamptz `person_tags` table and refresh graph cursors.
+6. Canonical scheduling constraint selectors:
+   - Add indexed `tag_ids` alongside `person_ids` and backfill it from constraint JSON, including the second pair group.
+   - Normalize stored constraint payloads to explicit `tagIds: []` and remove the unused `no-overlap.weight` field. No runtime alias for the old shape remains.
+   - Add GIN indexes for person/tag membership used by foreign-key and reference checks.
 
 Conversion is approximate: it cannot preserve all old Euclidean distances or reconstruct
 judgments that the old application never saved. The original rows remain in
@@ -72,10 +76,11 @@ Browser-local PGlite is explicitly allowed to initialize and migrate automatical
 mounts notification UI before opening the database. Actual initialization, schema upgrade or
 legacy import displays progress and completion; failures remain visible with a retry action.
 
-Empty browser databases use current-schema.sql directly. Existing databases migrate to version 5:
+Empty browser databases use current-schema.sql directly. Existing databases migrate to version 6:
 version 3 archives and converts old keyword vectors, version 4 installs the graph revision clock and
 change-feed triggers, and version 5 normalizes entity IDs/timestamps before enabling person-tag
-entities. Each upgrade transaction includes its schema version updates.
+entities. Version 6 normalizes all constraint tag selectors and removes the unused no-overlap weight.
+Each upgrade transaction includes its schema version updates.
 ranking-judgment entities store accepted lists.
 The earlier IndexedDB import is a one-time migration; source vectors are archived and the
 source IndexedDB database is not deleted. No old runtime aliases are retained.
@@ -104,6 +109,7 @@ Server migrations live in packages/server/src/store/migrate:
 - 003.up.sql installs the graph change feed.
 - 004.up.sql converts legacy text JSON documents to JSONB.
 - 005.up.sql atomically maps IDs to UUID, converts relational timestamps, and creates person_tags.
+- 006.up.sql adds and backfills constraint tag selectors, removes the unused no-overlap weight, and adds selector indexes.
 - current-schema.sql describes the complete latest schema independently; db:init uses it directly.
 - schema-state.ts only checks the version and is the sole schema dependency of server startup.
 - runtime.ts loads SQL batches without splitting on semicolons; schema.ts owns the

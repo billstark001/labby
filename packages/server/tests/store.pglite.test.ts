@@ -151,8 +151,13 @@ test('LabbyStore initializes and supports core CRUD', async () => {
 
     await store.putPersonTag(tag);
     await store.putPerson(person);
+    await store.putPerson(samplePerson(testUuid('p2')));
     await store.putKeyword(keyword);
     await store.putConfig(config);
+    const invalidPlan = samplePlan(testUuid('s-invalid'));
+    invalidPlan.sessions[0]!.presentations[0]!.questionerIds = [testUuid('p1')];
+    await assert.rejects(() => store.putSchedule(invalidPlan), /self-questioning/);
+    assert.equal(await store.getSchedule(invalidPlan.id), undefined);
     await store.putSchedule(plan);
     await store.putUnavailability(unavailability);
     await store.putKeywordVector(vector);
@@ -161,6 +166,10 @@ test('LabbyStore initializes and supports core CRUD', async () => {
     await store.saveRefreshToken(token);
 
     assert.equal((await store.getPerson(person.id))?.id, person.id);
+    const requestMetrics = { dbQueries: 0, dbDurationMs: 0 };
+    await store.withRequestMetrics(requestMetrics, () => store.getPerson(person.id));
+    assert.equal(requestMetrics.dbQueries, 1);
+    assert.ok(requestMetrics.dbDurationMs >= 0);
     assert.equal((await store.getPersonTag(tag.id))?.color, '#336699');
     assert.equal((await store.getKeyword(keyword.id))?.id, keyword.id);
     assert.equal((await store.getConfig(config.id))?.id, config.id);
@@ -241,6 +250,22 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
     assert.equal(personsByNotes[0]?.id, newer.id);
     assert.equal(personsByNotes[1]?.id, older.id);
 
+    const alphaTag = { id: testUuid('tag-alpha'), name: 'Alpha team', color: '#336699' };
+    const zetaTag = { id: testUuid('tag-zeta'), name: 'Zeta team', color: '#663399' };
+    await store.putPersonTag(alphaTag);
+    await store.putPersonTag(zetaTag);
+    newer.tagIds = [alphaTag.id]; newer.disabled = true;
+    older.tagIds = [zetaTag.id];
+    await store.putPerson(newer);
+    await store.putPerson(older);
+    const byTag = await store.listPersonsPage({ offset: 0, limit: 1, sortBy: 'tags', sortDirection: 'asc' });
+    assert.equal(byTag.total, 2);
+    assert.deepEqual(byTag.items.map(person => person.id), [newer.id]);
+    const byTagSecondPage = await store.listPersonsPage({ offset: 1, limit: 1, sortBy: 'tags', sortDirection: 'asc' });
+    assert.deepEqual(byTagSecondPage.items.map(person => person.id), [older.id]);
+    const byDisabled = await store.listPersonsPage({ offset: 0, limit: 2, sortBy: 'disabled', sortDirection: 'asc' });
+    assert.deepEqual(byDisabled.items.map(person => person.id), [older.id, newer.id]);
+
     const keywordZeta = sampleKeyword(testUuid('k-zeta'));
     keywordZeta.name = 'Zeta';
     keywordZeta.names.en = 'Zeta';
@@ -270,13 +295,14 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
       configId: config.id,
       type: 'no-overlap',
       personIds: [older.id, newer.id],
-      weight: 2,
+      tagIds: [],
     });
     await store.putConstraint({
       id: testUuid('constraint-2'),
       configId: config.id,
       type: 'frequency-multiplier',
       personIds: [newer.id],
+      tagIds: [],
       baseline: 1,
       multiplier: 2,
       roleScope: 'presenter',
@@ -300,11 +326,13 @@ test('JSONB schedule foreign keys load presenters, questioners, constraints and 
     for (const id of ['p1','p2','p3','p4'].map(testUuid)) await store.putPerson(samplePerson(id));
     await store.putConfig(sampleConfig());
     await store.putSchedule(samplePlan());
-    await store.putConstraint({id:testUuid('constraint'),configId:testUuid('c1'),type:'no-overlap',personIds:[testUuid('p3')],weight:1});
+    await store.putConstraint({id:testUuid('constraint'),configId:testUuid('c1'),type:'no-overlap',personIds:[testUuid('p3')],tagIds:[]});
     await store.putUnavailability(sampleUnavailability(testUuid('u1'),testUuid('p4')));
     const bundle=await store.listScheduleForeignKeys({configIds:[testUuid('c1')]});
     assert.deepEqual(bundle.persons.map(person=>person.id).sort(),['p1','p2','p3','p4'].map(testUuid).sort());
     assert.ok(bundle.persons.every(person=>person.name?.startsWith('Person')));
     assert.equal(bundle.keywords[0]?.id,testUuid('k1'));
+    const references = await store.listPersonForeignKeys({ personIds: ['p1','p2','p3','p4'].map(testUuid) });
+    assert.deepEqual(references.referencedPersonIds, ['p1','p2','p3','p4'].map(testUuid).sort());
   } finally {await store.close();}
 });

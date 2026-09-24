@@ -9,6 +9,7 @@ const schemaSql = {
   current: await readFile(new URL('../src/db/current-schema.sql', import.meta.url), 'utf8'),
   graph: await readFile(new URL('../src/db/migrate/004.up.sql', import.meta.url), 'utf8'),
   identity: await readFile(new URL('../src/db/migrate/005.up.sql', import.meta.url), 'utf8'),
+  constraints: await readFile(new URL('../src/db/migrate/006.up.sql', import.meta.url), 'utf8'),
 };
 const KEYWORD_ID = '10000000-0000-4000-8000-000000000001';
 
@@ -34,6 +35,21 @@ test('fresh browser schema is initialized once and preserves data on repeated up
     await upgradeBrowserSchema(db, schemaSql);
     assert.deepEqual((await db.query('SELECT payload FROM entities')).rows, [{ payload: { name: 'Keep' } }]);
     assert.deepEqual((await db.query('SELECT * FROM embedding_migration_archive')).rows, []);
+  } finally { await db.close(); }
+});
+
+test('v5 browser constraints migrate to canonical tag selectors', async () => {
+  const db = new PGlite();
+  try {
+    await upgradeBrowserSchema(db, schemaSql);
+    await db.query("UPDATE app_metadata SET value='{\"version\":5}'::jsonb WHERE key='schema-version'");
+    const id = '10000000-0000-4000-8000-000000000002';
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
+      ['constraint', id, new Date(1), JSON.stringify({ id, configId: '', type: 'no-overlap', personIds: [], weight: 4 })]);
+    await upgradeBrowserSchema(db, schemaSql);
+    const row = (await db.query<{ payload: Record<string, unknown> }>("SELECT payload FROM entities WHERE kind='constraint'")).rows[0]!;
+    assert.deepEqual(row.payload.tagIds, []);
+    assert.equal('weight' in row.payload, false);
   } finally { await db.close(); }
 });
 

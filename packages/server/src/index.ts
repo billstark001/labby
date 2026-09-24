@@ -7,6 +7,7 @@ import { resolveSchedulerMode, scheduler, type SchedulerMode } from "./cron/sche
 import { createMailerFromEnv } from "./lib/mailer.js";
 import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-task-notifier.js";
 import { resolvePublicBaseUrl, resolveStoreConnectionConfig } from "./lib/runtime-config.js";
+import { safeErrorInfo } from './lib/logging.js';
 
 const port = Number(process.env.PORT ?? 4410);
 const dbConfig = resolveStoreConnectionConfig(process.env);
@@ -59,11 +60,11 @@ const { app, store, close } = await createApp({
   onSchedulesChanged: async () => {
     await emailTaskNotifier?.syncJobs();
   },
-  runEmailTaskNow: async (taskId: string) => {
+  runEmailTaskNow: async (taskId: string, recipients: string[]) => {
     if (!emailTaskNotifier) {
       throw new Error('email task notifier is not configured');
     }
-    await emailTaskNotifier.runTaskNow(taskId);
+    return emailTaskNotifier.runTaskNow(taskId, recipients);
   },
   schedulerDispatchApiKey: process.env.SCHEDULER_DISPATCH_API_KEY,
   onSchedulerDispatch: async (jobName: string) => scheduler.runNow(jobName),
@@ -80,7 +81,7 @@ if (mailer) {
       console.info('[mail] Mailer verify() succeeded.');
     }
   }).catch((error: unknown) => {
-    console.warn('[mail] Mailer verification failed unexpectedly:', error);
+    console.warn(JSON.stringify({ event: 'mailer_verification_error', ...safeErrorInfo(error) }));
   });
 
   const recipients = (process.env.NOTIFY_RECIPIENTS ?? "")
@@ -132,7 +133,7 @@ if (scheduler.hasMirror) {
     await scheduler.syncMirrorNow();
     console.info(`[scheduler] Mirrored ${scheduler.registeredJobs.length} job(s) to Cloud Scheduler.`);
   } catch (err) {
-    console.error('[scheduler] Failed to sync jobs to Cloud Scheduler:', err);
+    console.error(JSON.stringify({ event: 'scheduler_sync_error', ...safeErrorInfo(err) }));
   }
 }
 

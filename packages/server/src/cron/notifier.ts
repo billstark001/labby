@@ -11,6 +11,7 @@ import type { Mailer } from '../lib/mailer.js';
 import type { CronScheduler } from './scheduler.js';
 import type { LabbyStore } from '../store/index.js';
 import { resolveScheduleTimezone } from '../lib/email-task-timezone.js';
+import { safeErrorInfo } from '../lib/logging.js';
 
 export interface ScheduleNotifierOptions {
   scheduler: CronScheduler;
@@ -56,7 +57,7 @@ export class ScheduleNotifier {
           handler: () => this.sendNotification(config, timezone),
         });
       } catch (err) {
-        console.warn(`[notify] Could not register job for config ${config.id}:`, err);
+        console.warn(JSON.stringify({ event: 'notify_register_error', configId: config.id, ...safeErrorInfo(err) }));
       }
     }
 
@@ -99,9 +100,9 @@ export class ScheduleNotifier {
 
     try {
       await mailer.send({ to: recipients, subject, text });
-      console.info(`[notify] Sent reminder for config ${config.id} to ${recipients.join(', ')}`);
+      console.info(JSON.stringify({ event: 'notify_sent', configId: config.id, recipientCount: recipients.length }));
     } catch (err) {
-      console.error(`[notify] Failed to send reminder for config ${config.id}:`, err);
+      console.error(JSON.stringify({ event: 'notify_send_error', configId: config.id, ...safeErrorInfo(err) }));
     }
   }
 }
