@@ -165,7 +165,7 @@ export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | 
       {state.quality && <div class={s.formGroup}>
         <strong>{t('scheduleQuality')}</strong>
         <div>{t('reciprocalPairs')}: {state.quality.reciprocalPairs} · {t('hardViolations')}: {state.quality.hardViolations}</div>
-        <p class={s.textMuted}>{t('qualityHelp')}</p>
+        <p class={s.textMuted}>{t('qualityHelp', String(Math.round(state.quality.shortGapRatio * 100)))}</p>
         <ResponsiveDataView
           items={qualityPersons}
           getKey={person => person.personId}

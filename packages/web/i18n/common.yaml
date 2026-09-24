@@ -164,9 +164,38 @@ metricLowerBetter:
   ja-JP: 以下は重み付きペナルティで、割合ではありません。低いほど良好です。公開前に各人の間隔も確認してください。
 
 qualityHelp:
-  en: Target gap reflects each person's frequency weight. Short-gap rate counts gaps shorter than 75% of that target; a dash means there are too few presentations to calculate it.
-  zh-CN: 目标间隔已考虑每个人的发表频率权重。过短间隔占比统计短于目标间隔 75% 的次数；破折号表示发表次数不足，无法计算。
-  ja-JP: 目標間隔は各人の発表頻度の重みを反映します。短間隔率は目標の 75% 未満の間隔の割合です。ダッシュは発表回数不足で計算できないことを示します。
+  en: Target gap evenly divides the schedule around this person's assigned presentations. Short-gap rate counts consecutive gaps below {0}% of that target; a dash means there are too few presentations.
+  zh-CN: 目标间隔根据此人实际分配的发表次数，将排班时段均分。过短间隔占比统计短于该目标 {0}% 的相邻发表间隔；破折号表示发表次数不足。
+  ja-JP: 目標間隔はこの参加者の割当回数に合わせて期間を均等に分けた値です。短間隔率は目標の {0}% 未満の連続する発表間隔の割合です。ダッシュは発表回数不足を示します。
+
+gapBalanceSettings:
+  en: Gap balance tuning
+  zh-CN: 间隔均衡设置
+  ja-JP: 間隔バランス設定
+gapBalanceHelp:
+  en: Applies to consecutive appearances. A larger weight favors even gaps, but may trade off topic matching or other preferences. Zero disables that extra penalty.
+  zh-CN: 作用于相邻两次参与的间隔。权重越大越倾向均匀间隔，但可能影响主题匹配等偏好；设为零可关闭对应的额外罚分。
+  ja-JP: 連続する担当間隔に適用します。重みを大きくすると間隔が均等になりやすい一方、話題の一致などとの兼ね合いがあります。ゼロで追加ペナルティを無効にできます。
+gapBalancePresenter:
+  en: Presentations
+  zh-CN: 发表
+  ja-JP: 発表
+gapBalanceQuestioner:
+  en: Questions
+  zh-CN: 提问
+  ja-JP: 質問
+gapBalanceShortRatio:
+  en: Short-gap threshold (% of target)
+  zh-CN: 过短间隔阈值（目标的百分比）
+  ja-JP: 短間隔のしきい値（目標に対する%）
+gapBalanceShortWeight:
+  en: Short-gap penalty weight
+  zh-CN: 过短间隔罚分权重
+  ja-JP: 短間隔のペナルティ重み
+gapBalanceSpreadWeight:
+  en: Gap spread penalty weight
+  zh-CN: 间隔离散罚分权重
+  ja-JP: 間隔ばらつきのペナルティ重み
 
 metricUniformity:
   en: Interval unevenness

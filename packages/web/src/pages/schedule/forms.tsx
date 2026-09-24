@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
-import type { PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
-import { SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
+import type { GapBalancePolicy, PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
+import { DEFAULT_GAP_BALANCE, SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
 
 import { personsSignal } from '@/store/index';
 import { displayName } from '@/i18n';
@@ -31,6 +31,10 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   const [presenters, setPresenters] = useState(initial?.presentersPerSession ?? 3);
   const [questioners, setQuestioners] = useState(initial?.questionersPerPresenter ?? 2);
   const [radius, setRadius] = useState(initial?.targetSimilarityRadius ?? 0.5);
+  const [gapBalance, setGapBalance] = useState<Record<'presenter' | 'questioner', GapBalancePolicy>>({
+    presenter: { ...DEFAULT_GAP_BALANCE.presenter, ...initial?.gapBalance?.presenter },
+    questioner: { ...DEFAULT_GAP_BALANCE.questioner, ...initial?.gapBalance?.questioner },
+  });
   const [reciprocalPairPreference, setReciprocalPairPreference] = useState<NonNullable<ScheduleConfig['reciprocalPairPreference']>>(
     initial?.reciprocalPairPreference ?? 'neutral',
   );
@@ -58,6 +62,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
       presentersPerSession: presenters,
       questionersPerPresenter: questioners,
       targetSimilarityRadius: radius,
+      gapBalance,
       reciprocalPairPreference,
       startDate,
       endDate,
@@ -77,6 +82,12 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   }
 
   const selectedDayLabels = selectedDays.map((day) => DAY_NAMES[day] ?? String(day)).join(', ');
+  function setGapValue(role: 'presenter' | 'questioner', key: keyof GapBalancePolicy, raw: string, divisor = 1) {
+    const parsed = Number(raw) / divisor;
+    const maximum = key === 'shortGapRatio' ? 1 : key === 'shortGapWeight' ? 100 : 50;
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
+      setGapBalance(previous => ({ ...previous, [role]: { ...previous[role], [key]: parsed } }));
+  }
 
   return (
     <div>
@@ -144,6 +155,28 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           <option value="encourage">{t('reciprocalEncourage')}</option>
         </select>
       </div>
+      <details style={{ marginBottom: '1rem' }}>
+        <summary style={{ cursor: 'pointer' }}>{t('gapBalanceSettings')}</summary>
+        <p class={s.mutedParagraph}>{t('gapBalanceHelp')}</p>
+        {(['presenter', 'questioner'] as const).map(role => <fieldset key={role} style={{ border: 'none', marginBottom: '1rem' }}>
+          <legend class={s.label} style={{ marginBottom: '0.5rem' }}>{t(role === 'presenter' ? 'gapBalancePresenter' : 'gapBalanceQuestioner')}</legend>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('gapBalanceShortRatio')}</label>
+            <input class={s.input} type="number" min={0} max={100} step={1} value={Math.round(gapBalance[role].shortGapRatio * 100)}
+              onInput={event => setGapValue(role, 'shortGapRatio', (event.target as HTMLInputElement).value, 100)} />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('gapBalanceShortWeight')}</label>
+            <input class={s.input} type="number" min={0} max={100} step={1} value={gapBalance[role].shortGapWeight}
+              onInput={event => setGapValue(role, 'shortGapWeight', (event.target as HTMLInputElement).value)} />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('gapBalanceSpreadWeight')}</label>
+            <input class={s.input} type="number" min={0} max={50} step={1} value={gapBalance[role].spreadWeight}
+              onInput={event => setGapValue(role, 'spreadWeight', (event.target as HTMLInputElement).value)} />
+          </div>
+        </fieldset>)}
+      </details>
       <div class={s.flexGapSm}>
         <Button variant="primary" busy={saving} onClick={() => void handleSave()}>{t('save')}</Button>
         <Button variant="secondary" disabled={saving} onClick={onCancel}>{t('cancel')}</Button>
