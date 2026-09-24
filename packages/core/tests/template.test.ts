@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { parseTemplate, renderTemplate } from '../src/template/index.js';
+import { buildEmailTemplateScheduleVariables, parseTemplate, renderTemplate } from '../src/template/index.js';
 
 describe('template parser', () => {
   test('parses plain text', () => {
@@ -78,4 +78,23 @@ describe('template renderer', () => {
     expect(rendered.errors).toHaveLength(1);
     expect(rendered.output).toBe('A ');
   });
+});
+
+test('next-session time uses 24-hour clock in all template languages', () => {
+  for (const locale of ['en', 'zh-CN', 'ja-JP']) {
+    const variables = buildEmailTemplateScheduleVariables({
+      plan: {
+        id: 'plan', configId: 'config', createdAt: Date.UTC(2026, 0, 1),
+        sessions: [{ date: '2026-01-02', presentations: [] }],
+      },
+      config: {
+        id: 'config', daysOfWeek: [5], timeRange: ['00:30', '13:05'],
+        presentersPerSession: 1, questionersPerPresenter: 1,
+        targetSimilarityRadius: 0.5, startDate: '2026-01-01', endDate: '2026-01-31', metadata: {},
+      },
+      locale,
+      anchorDate: '2026-01-01',
+    });
+    expect(variables.scheduleNextSessionTimeText).toBe('00:30 - 13:05');
+  }
 });

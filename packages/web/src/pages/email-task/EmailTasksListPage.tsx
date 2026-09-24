@@ -7,6 +7,7 @@ import { i18n } from '@/i18n';
 import { setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
+import { formatLocalDateTime24 } from '@/lib/date-time';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { useAsyncResource } from '@/lib/use-async-resource';
@@ -135,7 +136,7 @@ export function EmailTasksListPage() {
                 </td>
                 <td class={s.td}>{summarizeCadence(task)}</td>
                 <td class={s.td}>{summarizeEmails(task)}</td>
-                <td class={s.td}>{task.modifiedAt ? new Date(task.modifiedAt).toLocaleString() : '—'}</td>
+                <td class={s.td}>{task.modifiedAt ? formatLocalDateTime24(task.modifiedAt) : '—'}</td>
               </>
             )}
             renderMobileCard={(task) => (
@@ -143,7 +144,7 @@ export function EmailTasksListPage() {
                 <div class={dataStyles.mobileHeader}>
                   <div>
                     <div class={dataStyles.mobileTitle}>{findConfigLabel(task.configId)}</div>
-                    <div class={dataStyles.mobileSubtitle}>{task.modifiedAt ? new Date(task.modifiedAt).toLocaleString() : '—'}</div>
+                    <div class={dataStyles.mobileSubtitle}>{task.modifiedAt ? formatLocalDateTime24(task.modifiedAt) : '—'}</div>
                   </div>
                   {task.disabled && <span class={s.badgeDisabled}>{t('disabled')}</span>}
                 </div>

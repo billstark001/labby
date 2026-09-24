@@ -245,6 +245,19 @@ export const formGroup = style({
   marginBottom: vars.space.md,
 });
 
+export const checkboxRow = style({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  gap: vars.space.sm,
+  marginBottom: vars.space.md,
+});
+
+export const checkboxRowInput = style({
+  flexShrink: 0,
+  margin: 0,
+});
+
 export const label = style({
   fontSize: vars.font.size.sm,
   fontWeight: vars.font.weight.medium,

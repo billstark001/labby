@@ -278,7 +278,7 @@ export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: U
   return (
     <div>
       <p class={s.mutedParagraph}>{t('unavailInclusiveHelp')}</p>
-      <label class={`${s.flexGapSm} ${s.formGroup}`}><input type="checkbox" checked={allPeople}
+      <label class={s.checkboxRow}><input class={s.checkboxRowInput} type="checkbox" checked={allPeople}
         onChange={event => { setAllPeople(event.currentTarget.checked); if (event.currentTarget.checked) { setPersonIds([]); setTagIds([]); } }} /> {t('unavailEveryone')}</label>
       <div class={s.formGroup}>
         <label class={s.label}>{t('unavailPerson')}</label>

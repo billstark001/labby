@@ -5,6 +5,7 @@ import { KeywordForm } from './KeywordForm';
 import { displayName } from '@/i18n';
 import { buildKeywordReferenceCount, listKeywordsPage, readAllPaginated, readKeywordForeignKeys, useDatabase } from '../db/index';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { formatLocalDateTime24 } from '@/lib/date-time';
 import { changedMemberships } from '@/lib/person-membership';
 import * as s from '../styles/components.css';
 import {
@@ -139,7 +140,7 @@ export function KeywordList() {
               {kw.notes && <span class={s.textMuted}>{kw.notes}</span>}
             </td>
             <td class={s.td}>{kw.disabled ? t('disabled') : '—'}</td>
-            <td class={s.td}>{kw.modifiedAt ? new Date(kw.modifiedAt!).toLocaleString() : '—'}</td>
+            <td class={s.td}>{kw.modifiedAt ? formatLocalDateTime24(kw.modifiedAt) : '—'}</td>
           </>
         )}
         renderMobileCard={kw => (

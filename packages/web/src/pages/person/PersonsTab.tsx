@@ -4,6 +4,7 @@ import type { EntityListSortBy, Keyword, ListSortDirection, Person, PersonTag } 
 import { fallbackEntityId, displayName, i18n } from '@/i18n';
 import { buildPersonReferenceCount, listPersonsPage, readAllPaginated, readPersonForeignKeys, useDatabase } from '@/db';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { formatLocalDateTime24 } from '@/lib/date-time';
 import * as s from '@/styles/components.css';
 import {
   Button,
@@ -328,7 +329,7 @@ export function PersonsTab() {
               {person.notes && <span class={s.textMuted}>{person.notes}</span>}
             </td>
             <td class={s.td}>{person.disabled ? t('disabled') : '—'}</td>
-            <td class={s.td}>{person.modifiedAt ? new Date(person.modifiedAt!).toLocaleString() : '—'}</td>
+            <td class={s.td}>{person.modifiedAt ? formatLocalDateTime24(person.modifiedAt) : '—'}</td>
           </>
         )}
         renderMobileCard={(person) => (

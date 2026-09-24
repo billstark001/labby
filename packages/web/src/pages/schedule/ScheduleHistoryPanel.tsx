@@ -2,6 +2,7 @@ import type { SchedulePlan } from '@labby/core';
 
 import { X } from 'lucide-preact';
 import { i18n } from '@/i18n';
+import { formatLocalDateTime24 } from '@/lib/date-time';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import { Menu, MenuTrigger, MenuContent, MenuItem, MenuSeparator } from '@/components/ui/Menu';
@@ -78,7 +79,7 @@ export function ScheduleHistoryPanel({
                     class={`${s.badgeButton} ${currentSchedule?.id === p.id ? '' : s.badgeButtonDimmed}`}
                     onClick={() => onSelectHistory(p)}
                   >
-                    {new Date(p.createdAt).toLocaleString()}
+                    {formatLocalDateTime24(p.createdAt)}
                     {p.notes && <span class={`${s.text12} ${s.textMuted}`}> — {p.notes}</span>}
                   </button>
                 </MenuTrigger>

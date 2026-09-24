@@ -158,6 +158,7 @@ function formatTimeLabel(timeStr: string, locale: string): string {
     timeZone: 'UTC',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 

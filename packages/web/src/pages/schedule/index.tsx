@@ -16,6 +16,7 @@ import {
   unavailabilitiesSignal,
 } from '@/store/index';
 import { displayName } from '@/i18n';
+import { formatLocalDateTime24 } from '@/lib/date-time';
 import {
   readAllPaginated,
   readScheduleForeignKeys,
@@ -477,7 +478,7 @@ export function SchedulePage() {
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return;
     const { metrics, explanations } = await backend.computeMetricsForPlan(plan, config, solverCtx(config.id));
-    openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, metrics, explanations, plan.solverDiagnostics, plan);
+    openMetricsDialog(`${t('historyTitle')} · ${formatLocalDateTime24(plan.createdAt)}`, metrics, explanations, plan.solverDiagnostics, plan);
   }
 
   async function showMetricsForSession(plan: SchedulePlan, sessionDate: string): Promise<void> {

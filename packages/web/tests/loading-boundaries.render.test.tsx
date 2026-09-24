@@ -90,6 +90,19 @@ it('shows a retryable read error instead of claiming the task was deleted', asyn
   expect(container.textContent).toContain(i18n.t('emailTaskNotFound'));
 });
 
+it('previews the same public ICS URL as the copy-link action', async () => {
+  source.taskGet = async () => ({
+    id: 'task-1', configId: 'config-1', daysOfWeek: [1], emails: [], recentTimes: 0,
+    templateText: '{{ scheduleIcsUrl }}', metadata: { serveScheduleIcs: true },
+  });
+  const container = mount();
+  await act(() => render(<EmailTaskEditPage taskId="task-1" />, container));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  expect(container.textContent).toContain(`${window.location.origin}/public/email-tasks/task-1/schedule.ics`);
+  expect(container.textContent).not.toContain('example.com/public/email-tasks');
+});
+
 it('waits for person relations before publishing a person row', async () => {
   const person = { id: 'p1', name: 'Person', names: { en: 'Person' }, keywordIds: ['kw1'], tagIds: [], metadata: {} };
   source.personsList = async () => ({ items: [person], total: 1 });
