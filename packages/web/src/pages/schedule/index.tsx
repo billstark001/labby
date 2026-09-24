@@ -21,7 +21,7 @@ import {
   readScheduleForeignKeys,
   useDatabase,
 } from '@/db/index';
-import { computeScheduleMetrics, explainScheduleMetrics, solveConstrained } from '@labby/core';
+import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, explainScheduleMetrics, noOverlapForbidden, solveConstrained } from '@labby/core';
 import type {
   IncrementalSolveMode,
   MetricExplanation,
@@ -29,6 +29,7 @@ import type {
   ScheduleConfig,
   ScheduleMetrics,
   SchedulePlan,
+  SolverDiagnostics,
 } from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button, ContentSkeleton } from '@/components/ui/index';
@@ -40,8 +41,9 @@ import {
   downloadScheduleHtml,
   downloadScheduleIcs,
 } from '@/lib/scheduleExport';
-import { confirmDialog } from '@/components/ui/Dialog';
+import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
+import { usePendingAction } from '@/lib/use-pending-action';
 import { i18n } from '@/i18n';
 import { ConfigPanel } from './ConfigPanel';
 import { ScheduleHistoryPanel } from './ScheduleHistoryPanel';
@@ -91,6 +93,7 @@ export function SchedulePage() {
   const isComputing = isComputingSignal.value;
   const unavailabilities = unavailabilitiesSignal.value;
   const db = useDatabase();
+  const action = usePendingAction();
 
   // States passed to child components remain as useState.
   const [showConfigForm, setShowConfigForm] = useState(false);
@@ -111,8 +114,10 @@ export function SchedulePage() {
   const [insertSessionIndex, setInsertSessionIndex] = useState<number | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
-  const [highlightPersonId, setHighlightPersonId] = useState('');
-  const [highlightTagId, setHighlightTagId] = useState('');
+  const [highlightPersonIds, setHighlightPersonIds] = useState<string[]>([]);
+  const [highlightTagIds, setHighlightTagIds] = useState<string[]>([]);
+  const [highlightOnly, setHighlightOnly] = useState(false);
+  const [highlightDialogOpen, setHighlightDialogOpen] = useState(false);
   const [baseStatus, setBaseStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [baseError, setBaseError] = useState<unknown>();
   const [baseRevision, setBaseRevision] = useState(0);
@@ -145,9 +150,19 @@ export function SchedulePage() {
   const readOnlyDraft = useMemo(() => current ? createScheduleDraft(current) : null, [current]);
   const visibleDraft = manualEditMode ? draftSchedule : readOnlyDraft;
   const highlightedPersonIds = useMemo(() => new Set([
-    ...(highlightPersonId ? [highlightPersonId] : []),
-    ...persons.filter(person => highlightTagId && person.tagIds?.includes(highlightTagId)).map(person => person.id),
-  ]), [highlightPersonId, highlightTagId, persons]);
+    ...highlightPersonIds,
+    ...persons.filter(person => person.tagIds?.some(id => highlightTagIds.includes(id))).map(person => person.id),
+  ]), [highlightPersonIds, highlightTagIds, persons]);
+
+  function highlightPerson(personId: string, mode: 'toggle' | 'only') {
+    if (mode === 'only') {
+      setHighlightPersonIds([personId]);
+      setHighlightTagIds([]);
+      setHighlightOnly(true);
+    } else {
+      setHighlightPersonIds(previous => previous.includes(personId) ? previous.filter(id => id !== personId) : [...previous, personId]);
+    }
+  }
 
   // #region Effects
 
@@ -318,12 +333,13 @@ export function SchedulePage() {
       if (unavailable) return false;
       if (presentation.presenter.kind === 'fixed') {
         const presenterId = presentation.presenter.personId;
-        return !constraintsSignal.value.some(constraint =>
-          constraint.type === 'no-overlap'
-          && (!constraint.configId || constraint.configId === draft.configId)
-          && constraint.personIds.includes(personId)
-          && constraint.personIds.includes(presenterId),
-        );
+        const config = configs.find(item => item.id === draft.configId);
+        if (!config) return false;
+        const guidance = buildConstraintGuidance(buildCostContext({
+          config, persons, similarities: similarityLookupSignal.value,
+          constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === draft.configId),
+        }));
+        return !noOverlapForbidden(presenterId, personId, guidance);
       }
       return true;
     }
@@ -392,13 +408,16 @@ export function SchedulePage() {
     return { metrics, explanations: explainScheduleMetrics(metrics) };
   }
 
-  function openMetricsDialog(title: string, metrics: ScheduleMetrics, explanations: MetricExplanation[]) {
-    setMetricsDialog({ title, metrics, explanations });
+  function openMetricsDialog(title: string, metrics: ScheduleMetrics, explanations: MetricExplanation[], diagnostics?: SolverDiagnostics, plan?: SchedulePlan) {
+    const config = plan ? configs.find(item => item.id === plan.configId) : undefined;
+    const quality = plan && config ? computeScheduleQuality(plan, { config, ...solverCtx(config.id) }) : undefined;
+    const personNames = Object.fromEntries(persons.map(person => [person.id, displayName(person)]));
+    setMetricsDialog({ title, metrics, explanations, diagnostics, quality, personNames });
   }
 
   function maybeShowLocalMetrics(plan: SchedulePlan, title: string) {
     const local = localMetricsForPlan(plan);
-    if (local) openMetricsDialog(title, local.metrics, local.explanations);
+    if (local) openMetricsDialog(title, local.metrics, local.explanations, plan.solverDiagnostics, plan);
   }
 
   async function refreshScheduleScopedData(configId: string): Promise<boolean> {
@@ -427,7 +446,7 @@ export function SchedulePage() {
       currentScheduleSignal.value = { ...planWithMeta, modifiedAt: Date.now() };
     }
     if (normalized.metrics && normalized.explanations) {
-      openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations);
+      openMetricsDialog(t('metricsAfterComputeTitle'), normalized.metrics, normalized.explanations, planWithMeta.solverDiagnostics, planWithMeta);
     } else {
       maybeShowLocalMetrics(planWithMeta, t('metricsAfterComputeTitle'));
     }
@@ -442,7 +461,7 @@ export function SchedulePage() {
     const config = configs.find(c => c.id === plan.configId);
     if (!config) return;
     const { metrics, explanations } = await backend.computeMetricsForPlan(plan, config, solverCtx(config.id));
-    openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, metrics, explanations);
+    openMetricsDialog(`${t('historyTitle')} · ${new Date(plan.createdAt).toLocaleString()}`, metrics, explanations, plan.solverDiagnostics, plan);
   }
 
   async function showMetricsForSession(plan: SchedulePlan, sessionDate: string): Promise<void> {
@@ -743,7 +762,7 @@ export function SchedulePage() {
               <Button variant="ghost" onClick={redoDraft} disabled={redoStack.length === 0} title={t('redo')}>
                 <Redo2 size={14} />
               </Button>
-              <Button variant="primary" onClick={() => void commitManualEdit()}>
+              <Button variant="primary" busy={action.pendingKey === 'manual'} onClick={() => void action.run('manual', commitManualEdit)}>
                 {t('commitManualEdits')}
               </Button>
               <Button variant="secondary" onClick={cancelManualEdit}>
@@ -802,6 +821,7 @@ export function SchedulePage() {
         <Button
           variant="primary"
           onClick={handleGenerate}
+          busy={isComputing}
           disabled={isComputing || !selectedConfigId || configs.length === 0 || activePersonCount === 0}
           title={activePersonCount === 0 ? t('notEnoughPersons') : undefined}
         >
@@ -829,7 +849,7 @@ export function SchedulePage() {
               <option value="full">{t('incrementalModeFull')}</option>
               <option value="questioners-only">{t('incrementalModeQuestionersOnly')}</option>
             </select>
-            <Button variant="secondary" onClick={handleIncremental} disabled={isComputing || !changeDate}>
+            <Button variant="secondary" busy={isComputing} onClick={handleIncremental} disabled={isComputing || !changeDate}>
               {t('incrementalReschedule')}
             </Button>
           </>
@@ -839,9 +859,9 @@ export function SchedulePage() {
       {/* Copy / Export row */}
       {current && (
         <div class={`${s.toolbar} ${s.mb24}`}>
-          <Button variant="secondary" onClick={handleCopyTsv}>{copiedTsv.value ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}</Button>
-          <Button variant="secondary" onClick={handleCopyHtml}>{copiedHtml.value ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}</Button>
-          <Button variant="secondary" onClick={handleCopyCsv}>{copiedCsv.value ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}</Button>
+          <Button variant="secondary" busy={action.pendingKey === 'copyTsv'} onClick={() => void action.run('copyTsv', handleCopyTsv)}>{copiedTsv.value ? `✓ ${t('copyToClipboard')}` : t('copyToClipboard')}</Button>
+          <Button variant="secondary" busy={action.pendingKey === 'copyHtml'} onClick={() => void action.run('copyHtml', handleCopyHtml)}>{copiedHtml.value ? `✓ ${t('copyAsHtml')}` : t('copyAsHtml')}</Button>
+          <Button variant="secondary" busy={action.pendingKey === 'copyCsv'} onClick={() => void action.run('copyCsv', handleCopyCsv)}>{copiedCsv.value ? `✓ ${t('copyAsCsv')}` : t('copyAsCsv')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleHtml(current, personMap, displayName)}>{t('exportHtml')}</Button>
           <Button variant="secondary" onClick={() => downloadScheduleCsv(current, personMap, displayName)}>{t('exportCsv')}</Button>
           <Button variant="secondary" onClick={handleExportIcs}>{t('exportIcs')}</Button>
@@ -855,7 +875,7 @@ export function SchedulePage() {
           selectedHistoryIds={selectedHistoryIds}
           currentSchedule={current}
           onSelectHistory={plan => { cancelManualEdit(); currentScheduleSignal.value = plan; }}
-          onDuplicateHistory={(plan) => void handleDuplicateHistory(plan)}
+          onDuplicateHistory={(plan) => void action.run(`duplicate:${plan.id}`, () => handleDuplicateHistory(plan))}
           onToggleHistory={toggleHistorySelection}
           onSelectAll={() => setSelectedHistoryIds(new Set(sortedHistoryPlans.map(p => p.id)))}
           onClearSelection={() => setSelectedHistoryIds(new Set())}
@@ -863,12 +883,13 @@ export function SchedulePage() {
           onDeleteHistory={handleDeleteHistory}
           onDeleteSelected={() => void handleDeleteSelectedHistories()}
           onEditNotes={setEditingNotes}
-          onShowMetrics={plan => void showMetricsForPlan(plan)}
+          onShowMetrics={plan => void action.run(`metrics:${plan.id}`, () => showMetricsForPlan(plan))}
           editingNotes={editingNotes}
-          onSaveNotes={(plan, notes) => void handleSaveHistoryNotes(plan, notes)}
+          onSaveNotes={handleSaveHistoryNotes}
           onCloseNotes={() => setEditingNotes(null)}
         />
       )}
+      {action.pendingKey && <p role="status" aria-live="polite" class={s.mutedParagraph}>{t('computing')}</p>}
 
       {/* Dialogs */}
       <MetricsDialog state={metricsDialog} onClose={() => setMetricsDialog(null)} />
@@ -884,25 +905,36 @@ export function SchedulePage() {
 
       {/* Direct schedule tape */}
       <div class={s.toolbar}>
-        <label class={s.label}>{t('highlightPerson')}
-          <select class={s.input} value={highlightPersonId} onChange={event => setHighlightPersonId((event.target as HTMLSelectElement).value)}>
-            <option value="">{t('none')}</option>
-            {persons.map(person => <option key={person.id} value={person.id}>{displayName(person)}</option>)}
-          </select>
-        </label>
-        <label class={s.label}>{t('highlightPersonTag')}
-          <select class={s.input} value={highlightTagId} onChange={event => setHighlightTagId((event.target as HTMLSelectElement).value)}>
-            <option value="">{t('none')}</option>
-            {personTagsSignal.value.map(tag => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-          </select>
-        </label>
+        <Button variant="secondary" onClick={() => setHighlightDialogOpen(true)}>{t('highlightSelection')} ({highlightedPersonIds.size})</Button>
       </div>
+      <Dialog open={highlightDialogOpen} onClose={() => setHighlightDialogOpen(false)} title={t('highlightSelection')}>
+        <div class={s.flexGapSm}>
+          <Button variant="secondary" onClick={() => { setHighlightPersonIds(persons.map(person => person.id)); setHighlightTagIds(personTagsSignal.value.map(tag => tag.id)); }}>{t('selectAll')}</Button>
+          <Button variant="secondary" onClick={() => { setHighlightPersonIds([]); setHighlightTagIds([]); }}>{t('clearSelection')}</Button>
+        </div>
+        <label class={s.label}><input type="checkbox" checked={highlightOnly} onChange={event => setHighlightOnly((event.target as HTMLInputElement).checked)} /> {t('onlyHighlight')}</label>
+        <div class={s.formGroup}>
+          <p class={s.label}>{t('highlightPerson')}</p>
+          <div class={s.tagList}>{persons.map(person => <label key={person.id} class={s.badge}>
+            <input type="checkbox" checked={highlightPersonIds.includes(person.id)} onChange={() => setHighlightPersonIds(previous => previous.includes(person.id) ? previous.filter(id => id !== person.id) : [...previous, person.id])} /> {displayName(person)}
+          </label>)}</div>
+        </div>
+        <div class={s.formGroup}>
+          <p class={s.label}>{t('highlightPersonTag')}</p>
+          <div class={s.tagList}>{personTagsSignal.value.map(tag => <label key={tag.id} class={s.badge} style={{ borderColor: tag.color }}>
+            <input type="checkbox" checked={highlightTagIds.includes(tag.id)} onChange={() => setHighlightTagIds(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])} /> {tag.name}
+          </label>)}</div>
+        </div>
+        <Button onClick={() => setHighlightDialogOpen(false)}>{t('done')}</Button>
+      </Dialog>
       <ScheduleView
         draft={visibleDraft}
         personMap={personMap}
         similarities={similarityLookupSignal.value}
         manualEditMode={manualEditMode}
         highlightPersonIds={highlightedPersonIds}
+        highlightOnly={highlightOnly}
+        onHighlightPerson={highlightPerson}
         onInsertPresentation={(sessionIndex, presentationIndex) => {
           if (!selectedConfig) return;
           updateDraft(draft => insertPresentation(draft, sessionIndex, presentationIndex, selectedConfig.questionersPerPresenter));
@@ -925,7 +957,7 @@ export function SchedulePage() {
         onDeleteSession={handleDeleteSession}
         onShowMetricsForSession={date => {
           if (!manualEditMode && current) {
-            void showMetricsForSession(current, date);
+            void action.run(`sessionMetrics:${date}`, () => showMetricsForSession(current, date));
             return;
           }
           if (!draftSchedule || !selectedConfig) return;

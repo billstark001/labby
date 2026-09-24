@@ -7,7 +7,7 @@ const source = vi.hoisted(() => ({
   taskGet: (_id: string): Promise<unknown> => Promise.resolve(undefined),
   personsList: (_query: unknown): Promise<unknown> => Promise.resolve({ items: [], total: 0 }),
   personBundle: (_ids: string[]): Promise<unknown> => Promise.resolve({
-    keywords: [], personTags: [], schedules: [], constraints: [], unavailabilities: [],
+    keywords: [], personTags: [], referencedPersonIds: [],
   }),
   settingsGet: (): Promise<unknown> => Promise.resolve({ timezone: 'UTC' }),
   keywords: [] as unknown[],
@@ -53,7 +53,7 @@ afterEach(async () => {
   }
   source.taskGet = async () => undefined;
   source.personsList = async () => ({ items: [], total: 0 });
-  source.personBundle = async () => ({ keywords: [], personTags: [], schedules: [], constraints: [], unavailabilities: [] });
+  source.personBundle = async () => ({ keywords: [], personTags: [], referencedPersonIds: [] });
   source.keywords = [];
   source.settingsGet = async () => ({ timezone: 'UTC' });
 });
@@ -103,7 +103,7 @@ it('waits for person relations before publishing a person row', async () => {
   expect(container.textContent).not.toContain('kw1');
 
   await act(async () => {
-    finish({ keywords: source.keywords, personTags: [], schedules: [], constraints: [], unavailabilities: [] });
+    finish({ keywords: source.keywords, personTags: [], referencedPersonIds: [] });
     await new Promise(resolve => setTimeout(resolve, 0));
   });
   expect(container.textContent).toContain('Research');

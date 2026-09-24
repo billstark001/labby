@@ -22,6 +22,8 @@ interface ScheduleViewProps {
   similarities: SimilarityLookup;
   manualEditMode: boolean;
   highlightPersonIds: ReadonlySet<string>;
+  highlightOnly: boolean;
+  onHighlightPerson: (personId: string, mode: 'toggle' | 'only') => void;
   onInsertPresentation: (sessionIndex: number, presentationIndex: number) => void;
   onDeletePresentation: (presentationId: string) => void;
   onReplacePresenter: (presentationId: string, personId: string | null) => void;
@@ -51,6 +53,8 @@ export function ScheduleView({
   similarities,
   manualEditMode,
   highlightPersonIds,
+  highlightOnly,
+  onHighlightPerson,
   onInsertPresentation,
   onDeletePresentation,
   onReplacePresenter,
@@ -104,8 +108,15 @@ export function ScheduleView({
     }
   }
 
-  const presenterMenu = (presentation: DraftPresentation) => (
+  const presenterMenu = (presentation: DraftPresentation) => {
+    const presenterPersonId = presentation.presenter.kind === 'fixed' ? presentation.presenter.personId : null;
+    return (
     <>
+      {presenterPersonId && <>
+        <MenuItem onSelect={() => onHighlightPerson(presenterPersonId, 'toggle')}>{t('toggleHighlight')}</MenuItem>
+        <MenuItem onSelect={() => onHighlightPerson(presenterPersonId, 'only')}>{t('onlyHighlight')}</MenuItem>
+      </>}
+      {manualEditMode && <>
       <MenuItem onSelect={() => onReplacePresenter(presentation.id, null)}>{t('setAutoPresenter')}</MenuItem>
       <MenuSeparator />
       <MenuItem onSelect={() => setPersonSelection({ kind: 'presenter', presentationId: presentation.id })}>
@@ -113,11 +124,18 @@ export function ScheduleView({
       </MenuItem>
       <MenuSeparator />
       <MenuItem danger onSelect={() => onDeletePresentation(presentation.id)}>{t('deletePresentation')}</MenuItem>
+      </>}
     </>
   );
+  };
 
   const questionerMenu = (presentation: DraftPresentation, slot: DraftPersonSlot) => (
     <>
+      {slot.kind === 'fixed' && <>
+        <MenuItem onSelect={() => onHighlightPerson(slot.personId, 'toggle')}>{t('toggleHighlight')}</MenuItem>
+        <MenuItem onSelect={() => onHighlightPerson(slot.personId, 'only')}>{t('onlyHighlight')}</MenuItem>
+      </>}
+      {manualEditMode && <>
       <MenuItem onSelect={() => onReplaceQuestioner(presentation.id, slot.id, null)}>{t('autoQuestioner')}</MenuItem>
       <MenuSeparator />
       <MenuItem onSelect={() => setPersonSelection({ kind: 'questioner-replace', presentationId: presentation.id, slotId: slot.id })}>
@@ -125,6 +143,7 @@ export function ScheduleView({
       </MenuItem>
       <MenuSeparator />
       <MenuItem danger onSelect={() => onDeleteQuestioner(presentation.id, slot.id)}>{t('deleteQuestioner')}</MenuItem>
+      </>}
     </>
   );
 
@@ -167,6 +186,7 @@ export function ScheduleView({
             dndManager={dndManager}
             manualEditMode={manualEditMode}
             highlightPersonIds={highlightPersonIds}
+            highlightOnly={highlightOnly}
             presenterMenu={presenterMenu}
             questionerMenu={questionerMenu}
             onAddQuestioner={onAddQuestioner}
@@ -223,6 +243,7 @@ export function ScheduleView({
                 dndManager={dndManager}
                 manualEditMode={manualEditMode}
                 highlightPersonIds={highlightPersonIds}
+                highlightOnly={highlightOnly}
                 presenterMenu={presenterMenu}
                 questionerMenu={questionerMenu}
                 onAddQuestioner={onAddQuestioner}
@@ -308,6 +329,7 @@ interface PresentationRowProps {
   dndManager: DragDropManager;
   manualEditMode: boolean;
   highlightPersonIds: ReadonlySet<string>;
+  highlightOnly: boolean;
   presenterMenu: (presentation: DraftPresentation) => preact.ComponentChildren;
   questionerMenu: (presentation: DraftPresentation, slot: DraftPersonSlot) => preact.ComponentChildren;
   onAddQuestioner: (presentationId: string, personId: string | null) => void;
@@ -320,6 +342,7 @@ function PresentationRow({
   dndManager,
   manualEditMode,
   highlightPersonIds,
+  highlightOnly,
   presenterMenu,
   questionerMenu,
   onAddQuestioner,
@@ -357,23 +380,17 @@ function PresentationRow({
     >
       <div class={css.presenterCell}>
         {manualEditMode && <span ref={presentationDrag.handleRef} class={css.rowGrip}><GripVertical size={15} /></span>}
-        {manualEditMode ? (
-          <Menu mode="context">
-            <MenuTrigger>
-              <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''}`}>
-                {slotLabel(presentation.presenter, personMap, t('autoPresenter'))}
-              </span>
-            </MenuTrigger>
-            <MenuContent>{presenterMenu(presentation)}</MenuContent>
-          </Menu>
-        ) : (
-          <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''}`}>
-            {slotLabel(presentation.presenter, personMap, t('autoPresenter'))}
-          </span>
-        )}
-        {manualEditMode && (
+        <Menu mode="context">
+          <MenuTrigger>
+            <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''} ${highlightOnly && !highlightPersonIds.has(presentation.presenter.personId) ? css.dimmedPerson : ''}`}>
+              {slotLabel(presentation.presenter, personMap, t('autoPresenter'))}
+            </span>
+          </MenuTrigger>
+          <MenuContent>{presenterMenu(presentation)}</MenuContent>
+        </Menu>
+        {presentation.presenter.kind === 'fixed' && (
           <Menu>
-            <MenuTrigger><button type="button" class={css.rowMenuButton}><MoreHorizontal size={14} /></button></MenuTrigger>
+            <MenuTrigger><button type="button" class={css.rowMenuButton} aria-label={`${t('scheduleActions')}: ${slotLabel(presentation.presenter, personMap, t('autoPresenter'))}`}><MoreHorizontal size={14} /></button></MenuTrigger>
             <MenuContent>{presenterMenu(presentation)}</MenuContent>
           </Menu>
         )}
@@ -389,6 +406,7 @@ function PresentationRow({
             label={slotLabel(slot, personMap, t('autoQuestioner'))}
             manualEditMode={manualEditMode}
             highlighted={slot.kind === 'fixed' && highlightPersonIds.has(slot.personId)}
+            dimmed={slot.kind === 'fixed' && highlightOnly && !highlightPersonIds.has(slot.personId)}
             menu={questionerMenu(presentation, slot)}
           />
         ))}
@@ -410,7 +428,7 @@ function PresentationRow({
   );
 }
 
-function QuestionerToken({ dndManager, presentation, slot, index, label, manualEditMode, highlighted, menu }: { dndManager: DragDropManager; presentation: DraftPresentation; slot: DraftPersonSlot; index: number; label: string; manualEditMode: boolean; highlighted: boolean; menu: preact.ComponentChildren }) {
+function QuestionerToken({ dndManager, presentation, slot, index, label, manualEditMode, highlighted, dimmed, menu }: { dndManager: DragDropManager; presentation: DraftPresentation; slot: DraftPersonSlot; index: number; label: string; manualEditMode: boolean; highlighted: boolean; dimmed: boolean; menu: preact.ComponentChildren }) {
   const drag = useScheduleDraggable(dndManager, {
     id: `schedule-questioner:${presentation.id}:${slot.id}`,
     type: scheduleDragType.questioner,
@@ -431,11 +449,17 @@ function QuestionerToken({ dndManager, presentation, slot, index, label, manualE
     drop(element);
   }, [drag.elementRef, drag.handleRef, drop]);
   return (
+    <span class={css.questionerWithMenu}>
     <Menu mode="context">
       <MenuTrigger>
-        <span ref={setTokenRef} class={slot.kind === 'auto' ? css.autoSlot : `${css.questionerToken} ${highlighted ? css.highlightedPerson : ''}`}>{label}</span>
+        <span ref={setTokenRef} class={slot.kind === 'auto' ? css.autoSlot : `${css.questionerToken} ${highlighted ? css.highlightedPerson : ''} ${dimmed ? css.dimmedPerson : ''}`}>{label}</span>
       </MenuTrigger>
-      {manualEditMode && <MenuContent>{menu}</MenuContent>}
+      <MenuContent>{menu}</MenuContent>
     </Menu>
+    {slot.kind === 'fixed' && <Menu>
+      <MenuTrigger><button type="button" class={css.rowMenuButton} aria-label={`${i18n.t('scheduleActions')}: ${label}`}><MoreHorizontal size={14} /></button></MenuTrigger>
+      <MenuContent>{menu}</MenuContent>
+    </Menu>}
+    </span>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { getPersonSimilarity } from '@labby/core';
-import type { MetricExplanation, Person, ScheduleMetrics, SimilarityLookup } from '@labby/core';
+import type { MetricExplanation, Person, ScheduleMetrics, SimilarityLookup, SolverDiagnostics, ScheduleQualityReport } from '@labby/core';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
 import { Dialog } from '@/components/ui/Dialog';
@@ -112,12 +112,22 @@ export interface MetricsDialogState {
   title: string;
   metrics: ScheduleMetrics;
   explanations: MetricExplanation[];
+  diagnostics?: SolverDiagnostics;
+  quality?: ScheduleQualityReport;
+  personNames?: Record<string, string>;
 }
 
 export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | null; onClose: () => void }) {
   if (!state) return null;
+  const { t } = i18n;
   return (
     <Dialog open={true} onClose={onClose} title={state.title}>
+      {state.diagnostics && <div class={s.formGroup}>
+        <strong>{t('solverSearchDiagnostics')}</strong>
+        <div>{t('solverCostChange')}: {state.diagnostics.initialCost.toFixed(2)} → {state.diagnostics.finalCost.toFixed(2)}</div>
+        <div>{t('solverIterations')}: {state.diagnostics.iterations} · {t('solverAccepted')}: {state.diagnostics.accepted} · {t('solverRestarts')}: {state.diagnostics.restarts}</div>
+        <div>{t('solverInvalidNeighbors')}: {state.diagnostics.invalidNeighbors} · {t('solverUnchangedNeighbors')}: {state.diagnostics.unchangedNeighbors} · {state.diagnostics.durationMs} ms</div>
+      </div>}
       <div class={s.formGroup}>
         {state.explanations.map(item => (
           <div key={item.key} class={`${s.text14} ${s.mb8}`}>
@@ -126,6 +136,24 @@ export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | 
           </div>
         ))}
       </div>
+      {state.quality && <div class={s.formGroup}>
+        <strong>{t('scheduleQuality')}</strong>
+        <div>{t('reciprocalPairs')}: {state.quality.reciprocalPairs} · {t('hardViolations')}: {state.quality.hardViolations}</div>
+        <div style={{ overflowX: 'auto', maxHeight: '35vh' }}>
+          <table class={s.table}>
+            <thead><tr><th class={s.th}>{t('name')}</th><th class={s.th}>{t('presentations')}</th><th class={s.th}>{t('minGapDays')}</th><th class={s.th}>{t('maxGapDays')}</th><th class={s.th}>{t('gapVariation')}</th><th class={s.th}>{t('shortGapRate')}</th><th class={s.th}>{t('boundaryWaitDays')}</th></tr></thead>
+            <tbody>{state.quality.persons.map(person => <tr key={person.personId}>
+              <td class={s.td}>{state.personNames?.[person.personId] ?? person.personId}</td>
+              <td class={s.td}>{person.presentations}</td>
+              <td class={s.td}>{person.minGapDays?.toFixed(1) ?? '—'}</td>
+              <td class={s.td}>{person.maxGapDays?.toFixed(1) ?? '—'}</td>
+              <td class={s.td}>{person.gapCoefficientOfVariation?.toFixed(2) ?? '—'}</td>
+              <td class={s.td}>{person.shortGapRate === null ? '—' : `${Math.round(person.shortGapRate * 100)}%`}</td>
+              <td class={s.td}>{person.firstWaitDays?.toFixed(1) ?? '—'} / {person.lastWaitDays?.toFixed(1) ?? '—'}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </div>}
     </Dialog>
   );
 }

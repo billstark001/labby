@@ -1,5 +1,6 @@
 import {
   computeScheduleMetrics,
+  createSolverDiagnostics,
   explainScheduleMetrics,
   solveFull,
   solveIncremental,
@@ -125,6 +126,7 @@ export interface ISolverBackend {
 
 export class LocalSolverBackend implements ISolverBackend {
   async runFull(config: ScheduleConfig, ctx: SolverContext): Promise<unknown> {
+    const diagnostics = createSolverDiagnostics();
     return {
       plan: {
         id: crypto.randomUUID(),
@@ -136,7 +138,9 @@ export class LocalSolverBackend implements ISolverBackend {
           config,
           unavailabilities: ctx.unavailabilities,
           constraints: ctx.constraints,
+          diagnostics,
         }),
+        solverDiagnostics: diagnostics,
       } satisfies SchedulePlan,
     };
   }
@@ -148,6 +152,7 @@ export class LocalSolverBackend implements ISolverBackend {
     ctx: SolverContext,
     mode: IncrementalSolveMode = 'full',
   ): Promise<unknown> {
+    const diagnostics = createSolverDiagnostics();
     return {
       plan: {
         id: crypto.randomUUID(),
@@ -163,7 +168,9 @@ export class LocalSolverBackend implements ISolverBackend {
           mode,
           unavailabilities: ctx.unavailabilities,
           constraints: ctx.constraints,
+          diagnostics,
         }),
+        solverDiagnostics: diagnostics,
         sessionMutations: currentPlan.sessionMutations,
       } satisfies SchedulePlan,
     };

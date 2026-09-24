@@ -33,6 +33,7 @@ import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { usePendingAction } from '@/lib/use-pending-action';
 import * as s from '@/styles/components.css';
 import { AttachmentSettingsDialog, type EmailAttachmentType } from './AttachmentSettingsDialog';
 
@@ -158,6 +159,7 @@ type EmailTaskEditorProps = EmailTaskEditPageProps & {
 function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTimezone: initialSystemTimezone }: EmailTaskEditorProps) {
   const { t } = i18n;
   const db = useDatabase();
+  const action = usePendingAction();
   const capability = getEmailTaskCapability();
   const [currentTask, setCurrentTask] = useState(task);
   const [ready, setReady] = useState(false);
@@ -180,6 +182,10 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
   const [notes, setNotes] = useState('');
   const [serveScheduleIcs, setServeScheduleIcs] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  const [sendNowOpen, setSendNowOpen] = useState(false);
+  const [sendRecipientsText, setSendRecipientsText] = useState('');
+  const [sendingNow, setSendingNow] = useState(false);
+  const [sendNowError, setSendNowError] = useState('');
   const [showDaysDialog, setShowDaysDialog] = useState(false);
   const [showVarDialog, setShowVarDialog] = useState(false);
   const [showAttachmentDialog, setShowAttachmentDialog] = useState(false);
@@ -436,6 +442,7 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
 
   async function copyNextEmail(): Promise<void> {
     await navigator.clipboard.writeText(previewResult.html);
+    toast.success(t('emailTaskPreviewCopied'));
   }
 
   async function copyPublicIcsLink(): Promise<void> {
@@ -445,13 +452,23 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
   }
 
   async function triggerSendNow(): Promise<void> {
-    if (!selectedTaskId || !capability.canAutoSend) return;
+    if (!selectedTaskId || !capability.canAutoSend || sendingNow) return;
+    const recipients = [...new Set(parseEmails(sendRecipientsText))];
+    if (recipients.length === 0 || recipients.some(address => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))) {
+      setSendNowError(t('emailTaskInvalidRecipients'));
+      return;
+    }
+    setSendingNow(true);
+    setSendNowError('');
     try {
-      await sendEmailTaskNow(selectedTaskId);
-      setCurrentTask(await db.emailTasks.get(selectedTaskId));
-      toast.success(t('emailTaskSendNowSuccess'));
+      const result = await sendEmailTaskNow(selectedTaskId, recipients);
+      toast.success(t('emailTaskSendNowSuccessCount', String(result.sent)));
+      if (result.failed > 0) toast.warning(t('emailTaskSendNowPartial', String(result.failed)));
+      setSendNowOpen(false);
     } catch (err) {
-      toast.error(`${t('emailTaskSendNowFailed')}: ${String(err)}`);
+      setSendNowError(`${t('emailTaskSendNowFailed')}: ${String(err)}`);
+    } finally {
+      setSendingNow(false);
     }
   }
 
@@ -522,12 +539,12 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         <h2 class={s.sectionTitle}>{t('emailTaskEditorTitle')}</h2>
         <div class={s.flexGapSm}>
           {selectedTaskId && (
-            <Button variant="ghost" onClick={() => void toggleDisabled()}>
+            <Button variant="ghost" busy={action.pendingKey === 'disable'} disabled={action.pendingKey !== null} onClick={() => void action.run('disable', toggleDisabled)}>
               {currentTask?.disabled ? t('enable') : t('disable')}
             </Button>
           )}
           <Button variant="ghost" onClick={() => navigate('/email-tasks')}>{t('backToList')}</Button>
-          {selectedTaskId && <Button variant="danger" onClick={() => void removeTask()}>{t('delete')}</Button>}
+          {selectedTaskId && <Button variant="danger" disabled={action.pendingKey !== null} onClick={() => confirmDialog(t('confirmDelete'), t('deleteHistory'), removeTask)}>{t('delete')}</Button>}
         </div>
       </div>
 
@@ -539,7 +556,7 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
             <Button variant="secondary" onClick={() => setShowPreviewDialog(true)}>
               {t('openNextEmailPreview')}
             </Button>
-            <Button variant="secondary" onClick={() => void copyNextEmail()}>
+            <Button variant="secondary" busy={action.pendingKey === 'copy'} onClick={() => void action.run('copy', copyNextEmail)}>
               {t('copyNextEmailManually')}
             </Button>
           </div>
@@ -712,7 +729,7 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
             <span class={`${s.text12} ${s.textMuted}`}>{t('emailTaskServeScheduleIcsHint')}</span>
           </label>
           <div class={s.flexGapSm}>
-            <Button variant="secondary" disabled={!selectedTaskId || !serveScheduleIcs || !capability.canAutoSend} onClick={() => void copyPublicIcsLink()}>
+            <Button variant="secondary" busy={action.pendingKey === 'copy-ics'} disabled={!selectedTaskId || !serveScheduleIcs || !capability.canAutoSend} onClick={() => void action.run('copy-ics', copyPublicIcsLink)}>
               {t('emailTaskCopyIcsLink')}
             </Button>
             <Button variant="ghost" onClick={insertIcsLinkSnippet}>
@@ -767,12 +784,16 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         </div>
 
         <div class={s.flexGapSm}>
-          <Button variant="primary" onClick={() => void saveTask()}>{t('save')}</Button>
+          <Button variant="primary" busy={action.pendingKey === 'save'} disabled={action.pendingKey !== null} onClick={() => void action.run('save', saveTask)}>{t('save')}</Button>
           <Button variant="secondary" onClick={() => currentTask ? applyTaskToForm(currentTask) : resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
           {capability.canAutoSend && selectedTaskId && (
             <>
-              <Button variant="secondary" onClick={() => void triggerSendNow()}>{t('emailTaskSendNow')}</Button>
-              <Button variant="ghost" onClick={() => void toggleSkipNext()}>
+              <Button variant="secondary" onClick={() => {
+                setSendRecipientsText((currentTask?.emails ?? []).join(', '));
+                setSendNowError('');
+                setSendNowOpen(true);
+              }}>{t('emailTaskSendNow')}</Button>
+              <Button variant="ghost" busy={action.pendingKey === 'skip'} disabled={action.pendingKey !== null} onClick={() => void action.run('skip', toggleSkipNext)}>
                 {currentTask?.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
               </Button>
             </>
@@ -781,6 +802,25 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         </div>
       </div>
 
+      {sendNowOpen && <Dialog
+        open
+        onClose={() => { if (!sendingNow) setSendNowOpen(false); }}
+        closeOnOverlayClick={!sendingNow}
+        title={t('emailTaskSendNow')}
+        actions={<>
+          <Button busy={sendingNow} onClick={() => void triggerSendNow()}>
+            {sendingNow ? t('emailTaskSending') : t('confirm')}
+          </Button>
+          <Button variant="secondary" disabled={sendingNow} onClick={() => setSendNowOpen(false)}>{t('cancel')}</Button>
+        </>}
+      >
+        <p>{t('emailTaskOneOffRecipientsHint')}</p>
+        <label class={s.label} for="send-now-recipients">{t('emailTaskEmails')}</label>
+        <textarea id="send-now-recipients" class={s.input} rows={3} value={sendRecipientsText}
+          disabled={sendingNow} onInput={event => setSendRecipientsText((event.target as HTMLTextAreaElement).value)} />
+        {sendNowError && <p role="alert" class={s.textDanger}>{sendNowError}</p>}
+      </Dialog>}
+
       {showPreviewDialog && (
         <Dialog open={true} onClose={() => setShowPreviewDialog(false)} title={t('openNextEmailPreview')}>
           <div class={s.formGroup}>
@@ -788,7 +828,7 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
               <div dangerouslySetInnerHTML={{ __html: previewResult.html }} />
             </div>
             <div class={s.flexGapSm}>
-              <Button variant="secondary" onClick={() => void copyNextEmail()}>{t('copyNextEmailManually')}</Button>
+              <Button variant="secondary" busy={action.pendingKey === 'copy'} onClick={() => void action.run('copy', copyNextEmail)}>{t('copyNextEmailManually')}</Button>
               <Button variant="ghost" onClick={() => setShowPreviewDialog(false)}>{t('close')}</Button>
             </div>
           </div>

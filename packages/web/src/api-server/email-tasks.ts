@@ -1,8 +1,9 @@
 import { apiClient } from '@/lib/api';
 
-export async function sendEmailTaskNow(taskId: string): Promise<void> {
-  await apiClient.request(`/db/email-tasks/${encodeURIComponent(taskId)}/send-now`, {
+export async function sendEmailTaskNow(taskId: string, recipients: string[]): Promise<{ sent: number; failed: number }> {
+  return apiClient.request(`/db/email-tasks/${encodeURIComponent(taskId)}/send-now`, {
     method: 'POST',
+    body: JSON.stringify({ recipients }),
   });
 }
 

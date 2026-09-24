@@ -22,7 +22,7 @@ interface ScheduleHistoryPanelProps {
   onEditNotes: (plan: SchedulePlan) => void;
   onShowMetrics: (plan: SchedulePlan) => void;
   editingNotes: SchedulePlan | null;
-  onSaveNotes: (plan: SchedulePlan, notes: string) => void;
+  onSaveNotes: (plan: SchedulePlan, notes: string) => Promise<void>;
   onCloseNotes: () => void;
 }
 

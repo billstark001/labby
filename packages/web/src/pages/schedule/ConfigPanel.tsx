@@ -28,10 +28,10 @@ interface ConfigPanelProps {
   showUnavailForm: boolean;
   editingUnavail: PersonUnavailability | null;
   onCloseUnavailForm: () => void;
-  onSaveUnavail: (u: PersonUnavailability) => void;
+  onSaveUnavail: (u: PersonUnavailability) => Promise<void>;
   showConfigForm: boolean;
   onCloseConfigForm: () => void;
-  onSaveConfig: (c: ScheduleConfig) => void;
+  onSaveConfig: (c: ScheduleConfig) => Promise<void>;
   editingConfig: ScheduleConfig | null;
 }
 

@@ -15,7 +15,7 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface ConfigFormProps {
   initial?: ScheduleConfig;
-  onSave: (c: ScheduleConfig) => void;
+  onSave: (c: ScheduleConfig) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -31,11 +31,16 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   const [presenters, setPresenters] = useState(initial?.presentersPerSession ?? 3);
   const [questioners, setQuestioners] = useState(initial?.questionersPerPresenter ?? 2);
   const [radius, setRadius] = useState(initial?.targetSimilarityRadius ?? 0.5);
+  const [reciprocalPairPreference, setReciprocalPairPreference] = useState<NonNullable<ScheduleConfig['reciprocalPairPreference']>>(
+    initial?.reciprocalPairPreference ?? 'neutral',
+  );
   const [startDate, setStartDate] = useState(initial?.startDate ?? '');
   const [endDate, setEndDate] = useState(initial?.endDate ?? '');
   const [timezone, setTimezone] = useState(initial?.timezone ?? SYSTEM_DEFAULT_TIMEZONE);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSave() {
+  async function handleSave() {
     if (!startDate || !endDate) return;
     if (selectedDays.length === 0) return;
     const nextMetadata: Record<string, unknown> = { ...(initial?.metadata ?? {}) };
@@ -44,18 +49,22 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
     } else {
       delete nextMetadata.title;
     }
-    onSave({
+    setSaving(true);
+    setError(null);
+    try { await onSave({
       id: initial?.id ?? crypto.randomUUID(),
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
       timeRange: [startTime, endTime],
       presentersPerSession: presenters,
       questionersPerPresenter: questioners,
       targetSimilarityRadius: radius,
+      reciprocalPairPreference,
       startDate,
       endDate,
       timezone: timezone === SYSTEM_DEFAULT_TIMEZONE ? undefined : timezone,
       metadata: Object.keys(nextMetadata).length > 0 ? nextMetadata : undefined,
-    });
+    }); } catch (cause) { setError(String(cause)); }
+    finally { setSaving(false); }
   }
 
   function toggleDay(day: number) {
@@ -125,10 +134,21 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <label class={s.label}>{t('configRadius')}</label>
         <input class={s.input} type="number" step={0.05} min={0} max={1} value={radius} onInput={e => setRadius(parseFloat((e.target as HTMLInputElement).value))} />
       </div>
-      <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={handleSave}>{t('save')}</Button>
-        <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
+      <div class={s.formGroup}>
+        <label class={s.label}>{t('reciprocalPairPreference')}</label>
+        <select class={s.input} value={reciprocalPairPreference} onChange={event =>
+          setReciprocalPairPreference((event.target as HTMLSelectElement).value as NonNullable<ScheduleConfig['reciprocalPairPreference']>)}>
+          <option value="forbid">{t('reciprocalForbid')}</option>
+          <option value="discourage">{t('reciprocalDiscourage')}</option>
+          <option value="neutral">{t('reciprocalNeutral')}</option>
+          <option value="encourage">{t('reciprocalEncourage')}</option>
+        </select>
       </div>
+      <div class={s.flexGapSm}>
+        <Button variant="primary" busy={saving} onClick={() => void handleSave()}>{t('save')}</Button>
+        <Button variant="secondary" disabled={saving} onClick={onCancel}>{t('cancel')}</Button>
+      </div>
+      {error && <p role="alert" class={s.textDanger}>{error}</p>}
       {showDayDialog && (
         <Dialog open={true} onClose={() => setShowDayDialog(false)} title={t('selectWeekdays')}>
           <div class={s.formGroup}>
@@ -160,7 +180,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
 interface UnavailFormProps {
   configId: string;
   initial?: PersonUnavailability;
-  onSave: (u: PersonUnavailability) => void;
+  onSave: (u: PersonUnavailability) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -178,17 +198,22 @@ export function UnavailForm({ configId, initial, onSave, onCancel }: UnavailForm
   });
   const [startDate, setStartDate] = useState(initial?.startDate ?? '');
   const [endDate, setEndDate] = useState(initial?.endDate ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSave() {
+  async function handleSave() {
     if (personIds.length === 0 || !startDate || !endDate) return;
-    onSave({
+    setSaving(true);
+    setError(null);
+    try { await onSave({
       id: initial?.id ?? crypto.randomUUID(),
       personId: personIds[0],
       personIds,
       configId,
       startDate,
       endDate,
-    });
+    }); } catch (cause) { setError(String(cause)); }
+    finally { setSaving(false); }
   }
 
   function togglePerson(personId: string) {
@@ -229,22 +254,32 @@ export function UnavailForm({ configId, initial, onSave, onCancel }: UnavailForm
         <input class={s.input} type="date" value={endDate} onInput={e => setEndDate((e.target as HTMLInputElement).value)} />
       </div>
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={handleSave}>{t('save')}</Button>
-        <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
+        <Button variant="primary" busy={saving} onClick={() => void handleSave()}>{t('save')}</Button>
+        <Button variant="secondary" disabled={saving} onClick={onCancel}>{t('cancel')}</Button>
       </div>
+      {error && <p role="alert" class={s.textDanger}>{error}</p>}
     </div>
   );
 }
 
 interface HistoryNotesDialogProps {
   plan: SchedulePlan;
-  onSave: (notes: string) => void;
+  onSave: (notes: string) => Promise<void>;
   onClose: () => void;
 }
 
 export function HistoryNotesDialog({ plan, onSave, onClose }: HistoryNotesDialogProps) {
   const { t } = i18n;
   const [notes, setNotes] = useState(plan.notes ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function saveNotes() {
+    setSaving(true);
+    setError(null);
+    try { await onSave(notes); onClose(); }
+    catch (cause) { setError(String(cause)); }
+    finally { setSaving(false); }
+  }
   return (
     <Dialog open={true} onClose={onClose} title={t('historyNotes')}>
       <div class={s.formGroup}>
@@ -256,9 +291,10 @@ export function HistoryNotesDialog({ plan, onSave, onClose }: HistoryNotesDialog
         />
       </div>
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={() => { onSave(notes); onClose(); }}>{t('save')}</Button>
-        <Button variant="secondary" onClick={onClose}>{t('cancel')}</Button>
+        <Button variant="primary" busy={saving} onClick={() => void saveNotes()}>{t('save')}</Button>
+        <Button variant="secondary" disabled={saving} onClick={onClose}>{t('cancel')}</Button>
       </div>
+      {error && <p role="alert" class={s.textDanger}>{error}</p>}
     </Dialog>
   );
 }
