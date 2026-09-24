@@ -1,7 +1,11 @@
 import { decode, encode } from '@msgpack/msgpack';
 
 import type { CronScheduler } from '../cron/scheduler.js';
-import { fetchGoogleAccessToken, loadGoogleOAuthClientFromFile } from '../lib/google.js';
+import {
+  fetchGoogleAccessToken,
+  resolveGoogleOAuthCredentials,
+  type GoogleOAuthCredentials,
+} from '../lib/google.js';
 import type { Mailer } from '../lib/mailer.js';
 import type { DatabaseBackupSnapshot, LabbyStore } from '../store/index.js';
 
@@ -30,8 +34,7 @@ interface BackupConfig {
   target: BackupTarget | null;
   filenamePrefix: string;
   emailRecipients: string[];
-  googleOAuthJsonPath?: string;
-  googleOAuthRefreshToken?: string;
+  googleOAuthCredentials: GoogleOAuthCredentials | null;
   googleDriveFolderId?: string;
   onedriveClientId?: string;
   onedriveClientSecret?: string;
@@ -89,21 +92,16 @@ function isFullSnapshotPayload(value: unknown): boolean {
 }
 
 async function uploadToGoogleDrive(config: BackupConfig, artifact: BackupArtifact): Promise<void> {
-  const googleClient = config.googleOAuthJsonPath
-    ? loadGoogleOAuthClientFromFile(config.googleOAuthJsonPath)
-    : null;
-  const clientId = googleClient?.clientId;
-  const clientSecret = googleClient?.clientSecret;
-  const refreshToken = config.googleOAuthRefreshToken;
+  const credentials = config.googleOAuthCredentials;
 
-  if (!clientId || !clientSecret || !refreshToken) {
+  if (!credentials) {
     throw new Error('Google Drive backup requires OAuth client credentials and a refresh token');
   }
 
   const accessToken = await fetchGoogleAccessToken({
-    clientId,
-    clientSecret,
-    refreshToken,
+    clientId: credentials.clientId,
+    clientSecret: credentials.clientSecret,
+    refreshToken: credentials.refreshToken,
   });
 
   const metadata: Record<string, unknown> = { name: artifact.filename };
@@ -208,10 +206,6 @@ export class BackupService {
   }
 
   getCapabilities(): BackupCapabilities {
-    const googleClient = this.config.googleOAuthJsonPath
-      ? loadGoogleOAuthClientFromFile(this.config.googleOAuthJsonPath)
-      : null;
-
     return {
       scheduleEnabled: Boolean(this.config.cronExpression && this.config.target),
       scheduleConfigured: Boolean(this.config.cronExpression),
@@ -219,11 +213,7 @@ export class BackupService {
       configuredFormat: 'msgpack',
       targets: {
         email: this.options.mailer !== null,
-        'google-drive': Boolean(
-          googleClient?.clientId
-          && googleClient?.clientSecret
-          && this.config.googleOAuthRefreshToken,
-        ),
+        'google-drive': this.config.googleOAuthCredentials !== null,
         onedrive: Boolean(
           this.config.onedriveClientId
           && this.config.onedriveClientSecret
@@ -318,8 +308,7 @@ export function createBackupServiceFromEnv(options: CreateBackupServiceOptions):
     target,
     filenamePrefix: process.env.BACKUP_FILENAME_PREFIX?.trim() || 'labby-backup',
     emailRecipients: splitCsv(process.env.BACKUP_EMAIL_RECIPIENTS || process.env.NOTIFY_RECIPIENTS),
-    googleOAuthJsonPath: process.env.GOOGLE_OAUTH_JSON_PATH?.trim(),
-    googleOAuthRefreshToken: process.env.GOOGLE_OAUTH_REFRESH_TOKEN?.trim(),
+    googleOAuthCredentials: resolveGoogleOAuthCredentials(),
     googleDriveFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID?.trim(),
     onedriveClientId: process.env.ONEDRIVE_CLIENT_ID?.trim(),
     onedriveClientSecret: process.env.ONEDRIVE_CLIENT_SECRET?.trim(),
