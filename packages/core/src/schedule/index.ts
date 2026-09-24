@@ -38,7 +38,7 @@ export {
   mutatePresentations,
 } from './mutation.js';
 
-export { COST_WEIGHTS } from './constraints.js';
+export { COST_WEIGHTS, DEFAULT_GAP_BALANCE } from './constraints.js';
 export { buildCostContext, buildConstraintGuidance, noOverlapForbidden, validateScheduleAssignments } from './constraints.js';
 export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing.js';
 export { solveConstrained } from './constrained.js';
@@ -109,16 +109,12 @@ export function computeScheduleQuality(
   const last = ordered.length ? ordered[ordered.length - 1]! + nominal / 2 : 0;
   const span = Math.max(0, last - first);
   const ctx = buildCostContext(input);
-  const guidance = buildConstraintGuidance(ctx);
-  const weights = [...ctx.personKeywords.keys()].map(id => guidance.presenterWeights.get(id) ?? 1);
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  const slots = all.reduce((sum, session) => sum + session.presentations.length, 0);
-  const persons = [...ctx.personKeywords.keys()].map((personId, index) => {
+  const shortGapRatio = ctx.gapBalance.presenter.shortGapRatio;
+  const persons = [...ctx.personKeywords.keys()].map(personId => {
     const dates = all.flatMap((session, sessionIndex) => session.presentations
       .filter(presentation => presentation.presenterId === personId).map(() => days[sessionIndex]!)).sort((a, b) => a - b);
     const gaps = dates.slice(1).map((day, gapIndex) => day - dates[gapIndex]!);
-    const targetCount = totalWeight > 0 ? slots * weights[index]! / totalWeight : 0;
-    const targetGapDays = span / (targetCount + 1);
+    const targetGapDays = span / (dates.length + 1);
     const mean = gaps.length ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 0;
     const variance = gaps.length ? gaps.reduce((sum, gap) => sum + (gap - mean) ** 2, 0) / gaps.length : 0;
     return {
@@ -126,7 +122,7 @@ export function computeScheduleQuality(
       minGapDays: gaps.length ? Math.min(...gaps) : null,
       maxGapDays: gaps.length ? Math.max(...gaps) : null,
       gapCoefficientOfVariation: gaps.length >= 2 && mean > 0 ? Math.sqrt(variance) / mean : null,
-      shortGapRate: gaps.length ? gaps.filter(gap => gap < 0.75 * targetGapDays).length / gaps.length : null,
+      shortGapRate: gaps.length ? gaps.filter(gap => gap < shortGapRatio * targetGapDays).length / gaps.length : null,
       firstWaitDays: dates.length ? dates[0]! - first : null,
       lastWaitDays: dates.length ? last - dates[dates.length - 1]! : null,
     };
@@ -139,7 +135,7 @@ export function computeScheduleQuality(
       if (a! < b! && pairs.has(`${b}|${a}`)) reciprocalPairs++;
     }
   }
-  return { reciprocalPairs, hardViolations: validateScheduleAssignments(plan.sessions, input).length, persons };
+  return { reciprocalPairs, hardViolations: validateScheduleAssignments(plan.sessions, input).length, shortGapRatio, persons };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { Person, ScheduleConfig, Session, SolverInput } from '../src/types';
 import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, validateScheduleAssignments } from '../src/schedule/index';
-import { affinityPairWeight, noOverlapForbidden } from '../src/schedule/constraints';
+import { affinityPairWeight, noOverlapForbidden, personGapCost } from '../src/schedule/constraints';
 
 const config: ScheduleConfig = {
   id: 'config', daysOfWeek: [1], timeRange: ['10:00', '11:00'],
@@ -26,6 +26,22 @@ describe('schedule quality objective and tag selectors', () => {
     const report = computeScheduleQuality({ id: 'plan', configId: config.id, createdAt: 0, sessions: close }, base);
     expect(report.persons.find(person => person.personId === 'a')?.minGapDays).toBe(7);
     expect(report.persons.find(person => person.personId === 'd')?.minGapDays).toBeNull();
+  });
+
+  test('configurable gap policy penalizes clustered appearances and reports its threshold', () => {
+    const uneven = [session('2026-01-05', [['a', 'c']]), session('2026-01-12', [['a', 'd']]), session('2026-02-23', [['a', 'c']])];
+    const relaxed: SolverInput = { ...base, config: { ...config, gapBalance: { presenter: { shortGapRatio: 0.2, shortGapWeight: 0, spreadWeight: 0 } } } };
+    expect(metrics(uneven).uniformityPenalty).toBeGreaterThan(metrics(uneven, relaxed).uniformityPenalty);
+    const report = computeScheduleQuality({ id: 'plan', configId: config.id, createdAt: 0, sessions: uneven }, relaxed);
+    expect(report.shortGapRatio).toBe(0.2);
+    expect(report.persons.find(person => person.personId === 'a')?.shortGapRate).toBe(0);
+    expect(computeScheduleQuality({ id: 'plan', configId: config.id, createdAt: 0, sessions: uneven }, base)
+      .persons.find(person => person.personId === 'a')?.shortGapRate).toBeGreaterThan(0);
+    const clustered = personGapCost([0, 7, 56], -3.5, 59.5, buildCostContext(base).gapBalance.presenter);
+    const balanced = personGapCost([0, 28, 56], -3.5, 59.5, buildCostContext(base).gapBalance.presenter);
+    expect(clustered).toBeGreaterThan(balanced);
+    expect(buildCostContext({ ...base, config: { ...config, gapBalance: { presenter: { shortGapRatio: 2, shortGapWeight: Number.NaN, spreadWeight: -4 } } } }).gapBalance.presenter)
+      .toEqual({ shortGapRatio: 1, shortGapWeight: 20, spreadWeight: 0 });
   });
 
   test('reciprocal preference changes cost direction and forbid validates', () => {

@@ -11,6 +11,7 @@ import type {
   SolverInput,
   ScheduleConstraint,
   SimilarityLookup,
+  GapBalancePolicy,
 } from '../types.js';
 import { buildUnavailMap } from './utils.js';
 
@@ -40,6 +41,21 @@ export const COST_WEIGHTS = {
   constraint: 1,
 };
 
+export const DEFAULT_GAP_BALANCE = {
+  presenter: { shortGapRatio: 0.8, shortGapWeight: 20, spreadWeight: 4 },
+  questioner: { shortGapRatio: 0.75, shortGapWeight: 16, spreadWeight: 2 },
+} satisfies Record<'presenter' | 'questioner', GapBalancePolicy>;
+
+function resolveGapBalance(configured: Partial<GapBalancePolicy> | undefined, defaults: GapBalancePolicy): GapBalancePolicy {
+  const bounded = (value: number | undefined, fallback: number, min: number, max: number) =>
+    value !== undefined && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+  return {
+    shortGapRatio: bounded(configured?.shortGapRatio, defaults.shortGapRatio, 0, 1),
+    shortGapWeight: bounded(configured?.shortGapWeight, defaults.shortGapWeight, 0, 100),
+    spreadWeight: bounded(configured?.spreadWeight, defaults.spreadWeight, 0, 50),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -52,6 +68,7 @@ export interface CostContext {
   r: number;
   reciprocalPreference: 'forbid' | 'discourage' | 'neutral' | 'encourage';
   constraints?: ScheduleConstraint[];
+  gapBalance: Record<'presenter' | 'questioner', GapBalancePolicy>;
 }
 
 export interface CostBreakdown {
@@ -276,8 +293,29 @@ function buildAllCounts(indicesByPerson: Map<string, number[]>, weights: Map<str
   return allCounts;
 }
 
+/** Score one person's gaps; boundary waits guide placement while consecutive gaps determine spread. */
+export function personGapCost(occurrences: number[], first: number, last: number, policy: GapBalancePolicy): number {
+  if (!occurrences.length) return 0;
+  const ordered = [...occurrences].sort((a, b) => a - b);
+  const target = (last - first) / (ordered.length + 1);
+  if (target <= 0) return 0;
+  const internalGaps = ordered.slice(1).map((date, i) => date - ordered[i]!);
+  const gaps = [ordered[0]! - first, ...internalGaps, last - ordered[ordered.length - 1]!];
+  let penalty = 0;
+  for (const gap of gaps) {
+    const deviation = (gap - target) / target;
+    penalty += deviation * deviation;
+  }
+  for (const gap of internalGaps) penalty += policy.shortGapWeight * Math.max(0, policy.shortGapRatio - gap / target) ** 2;
+  if (internalGaps.length > 1) {
+    const mean = internalGaps.reduce((sum, gap) => sum + gap, 0) / internalGaps.length;
+    penalty += policy.spreadWeight * internalGaps.reduce((sum, gap) => sum + ((gap - mean) / target) ** 2, 0) / internalGaps.length;
+  }
+  return penalty;
+}
+
 /** Each person's own calendar gaps, including half-session padding at both ends. */
-function perPersonGapPenalty(indicesByPerson: Map<string, number[]>, dates: number[], personIds: string[]): number {
+function perPersonGapPenalty(indicesByPerson: Map<string, number[]>, dates: number[], personIds: string[], policy: GapBalancePolicy): number {
   if (dates.length < 2) return 0;
   const ordered = [...dates].sort((a, b) => a - b);
   const spacings = ordered.slice(1).map((date, i) => date - ordered[i]!);
@@ -287,15 +325,7 @@ function perPersonGapPenalty(indicesByPerson: Map<string, number[]>, dates: numb
   const last = ordered[ordered.length - 1]! + nominal / 2;
   let penalty = 0;
   for (const id of personIds) {
-    const occurrences = (indicesByPerson.get(id) ?? []).map(index => dates[index]!).sort((a, b) => a - b);
-    if (occurrences.length === 0) continue;
-    const target = (last - first) / (occurrences.length + 1);
-    if (target <= 0) continue;
-    const gaps = [occurrences[0]! - first, ...occurrences.slice(1).map((date, i) => date - occurrences[i]!), last - occurrences[occurrences.length - 1]!];
-    for (const gap of gaps) {
-      const deviation = (gap - target) / target;
-      penalty += deviation * deviation + 8 * Math.max(0, 0.75 - gap / target) ** 2;
-    }
+    penalty += personGapCost((indicesByPerson.get(id) ?? []).map(index => dates[index]!), first, last, policy);
   }
   return penalty;
 }
@@ -377,9 +407,9 @@ export function computeCostBreakdown(
   const questionerAllCounts = buildAllCounts(questionerIndices, guidance.questionerWeights, personIds);
 
   // 3. Uniformity penalty
-  const uniformityPenaltyValue = perPersonGapPenalty(presenterIndices, dateDays, personIds);
+  const uniformityPenaltyValue = perPersonGapPenalty(presenterIndices, dateDays, personIds, ctx.gapBalance.presenter);
   const presenterLoadPenalty = uniformityPenalty(presenterAllCounts);
-  const questionerLoadPenalty = uniformityPenalty(questionerAllCounts) + perPersonGapPenalty(questionerIndices, dateDays, personIds);
+  const questionerLoadPenalty = uniformityPenalty(questionerAllCounts) + perPersonGapPenalty(questionerIndices, dateDays, personIds, ctx.gapBalance.questioner);
 
   // 4. Domain relevance – |sim(q, presenter) − r|
   let relevancePenalty = 0;
@@ -451,6 +481,10 @@ export function buildCostContext(input: SolverInput): CostContext {
     r: input.config.targetSimilarityRadius,
     reciprocalPreference: input.config.reciprocalPairPreference ?? 'neutral',
     constraints: input.constraints ?? [],
+    gapBalance: {
+      presenter: resolveGapBalance(input.config.gapBalance?.presenter, DEFAULT_GAP_BALANCE.presenter),
+      questioner: resolveGapBalance(input.config.gapBalance?.questioner, DEFAULT_GAP_BALANCE.questioner),
+    },
   };
 }
 

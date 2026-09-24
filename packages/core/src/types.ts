@@ -68,6 +68,11 @@ export interface ScheduleConfig {
   questionersPerPresenter: number; // default 2
   targetSimilarityRadius: number; // desired similarity r ≈ 0.5
   reciprocalPairPreference?: 'forbid' | 'discourage' | 'neutral' | 'encourage';
+  /** Optional tuning of real consecutive role gaps. Missing values use solver defaults. */
+  gapBalance?: {
+    presenter?: Partial<GapBalancePolicy>;
+    questioner?: Partial<GapBalancePolicy>;
+  };
   startDate: string; // ISO date, first possible session
   endDate: string; // ISO date, last possible session
   /**
@@ -82,6 +87,15 @@ export interface ScheduleConfig {
   /** Arbitrary extension metadata. */
   metadata?: Record<string, unknown>;
   modifiedAt?: number;
+}
+
+export interface GapBalancePolicy {
+  /** Gap below this fraction of a person's own target receives an extra penalty. */
+  shortGapRatio: number;
+  /** Extra squared penalty for each gap below shortGapRatio. */
+  shortGapWeight: number;
+  /** Penalty for variation among actual consecutive gaps. */
+  spreadWeight: number;
 }
 
 /** User-configurable scheduled email task. */
@@ -167,6 +181,7 @@ export interface PersonScheduleQuality {
 export interface ScheduleQualityReport {
   reciprocalPairs: number;
   hardViolations: number;
+  shortGapRatio: number;
   persons: PersonScheduleQuality[];
 }
 

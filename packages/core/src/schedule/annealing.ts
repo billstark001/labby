@@ -15,6 +15,7 @@ import {
   buildConstraintGuidance,
   ConstraintGuidance,
   noOverlapForbidden,
+  personGapCost,
   validateScheduleAssignments,
   validateAssignmentsWithContext,
 } from './constraints.js';
@@ -35,7 +36,7 @@ import { drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './
  */
 export const MUTATION_WEIGHTS = {
   /** Swap presenter slots between two random sessions. */
-  swapPresenters: 0.15,
+  swapPresenters: 0.20,
   /** Reassign questioners for a random presentation. */
   reassignQuestioners: 0.15,
   /**
@@ -48,8 +49,8 @@ export const MUTATION_WEIGHTS = {
    * inserting or removing them from a presentation slot.
    */
   frequencyTargeted: 0.15,
-  /** Replace one appearance in the shortest presenter interval. */
-  gapTargeted: 0.15,
+  /** Swap a clustered presenter appearance without changing either person's load. */
+  gapTargeted: 0.10,
   /** Break a same-day reciprocal pair by changing one questioner. */
   reciprocalTargeted: 0.10,
   /** Fully rebuild all presenter and questioner assignments for one session. */
@@ -58,7 +59,7 @@ export const MUTATION_WEIGHTS = {
 
 /** Simulated annealing hyperparameters. */
 export const ANNEALING_CONFIG = {
-  maxIter: 1200,
+  maxIter: 1000,
   /** Stop once the best score has not improved for this many iterations. */
   maxStagnantIter: 400,
   initialTemp: 1.0,
@@ -531,33 +532,79 @@ export function mutate(
 
     case 'gapTargeted': {
       const dates = allSessions.map(session => Date.parse(`${session.date}T00:00:00Z`) / 86400000);
-      const span = dates.length ? Math.max(1, Math.max(...dates) - Math.min(...dates)) : 1;
-      let worst: { session: Session; index: number; ratio: number } | null = null;
+      if (dates.length < 2) break;
+      const orderedDates = [...dates].sort((a, b) => a - b);
+      const spacings = orderedDates.slice(1).map((date, index) => date - orderedDates[index]!).sort((a, b) => a - b);
+      const nominal = spacings[Math.floor(spacings.length / 2)] ?? 7;
+      const first = orderedDates[0]! - nominal / 2;
+      const last = orderedDates[orderedDates.length - 1]! + nominal / 2;
+      const appearancesByPerson = new Map<string, number[]>();
+      const slotsByPerson = new Map(personIds.map(id => [id, [] as Array<{ session: Session; index: number; day: number }>]));
+      const mutableSessions = new Set(clone);
+      allSessions.forEach((session, sessionIndex) => session.presentations.forEach((presentation, index) => {
+        slotsByPerson.get(presentation.presenterId)?.push({ session, index, day: dates[sessionIndex]! });
+      }));
+      const clustered: Array<{ session: Session; index: number; id: string; ratio: number }> = [];
       for (const id of personIds) {
-        const appearances = allSessions.flatMap((session, sessionIndex) => session.presentations
-          .map((presentation, index) => presentation.presenterId === id ? { session, sessionIndex, index } : null)
-          .filter((item): item is { session: Session; sessionIndex: number; index: number } => item !== null));
-        const target = span / (appearances.length + 1);
+        const appearances = slotsByPerson.get(id)!.sort((a, b) => a.day - b.day);
+        appearancesByPerson.set(id, appearances.map(item => item.day));
+        const target = (last - first) / (appearances.length + 1);
         for (let index = 1; index < appearances.length; index++) {
           const later = appearances[index]!;
-          if (!clone.includes(later.session)) continue;
-          const ratio = (dates[later.sessionIndex]! - dates[appearances[index - 1]!.sessionIndex]!) / Math.max(1, target);
-          if (!worst || ratio < worst.ratio) worst = { session: later.session, index: later.index, ratio };
+          if (!mutableSessions.has(later.session)) continue;
+          const ratio = (later.day - appearances[index - 1]!.day) / Math.max(1, target);
+          if (ratio < Math.max(0.9, ctx.gapBalance.presenter.shortGapRatio))
+            clustered.push({ session: later.session, index: later.index, id, ratio });
         }
       }
-      if (!worst || worst.ratio >= 0.9) break;
-      const { session, index } = worst;
-      const occupied = new Set(session.presentations.map(presentation => presentation.presenterId));
-      const unavailable = unavailMap.get(session.date) ?? new Set<string>();
-      const counts = rawPresenterCounts();
-      const candidates = personIds.filter(id => !occupied.has(id) && !unavailable.has(id));
+      if (!clustered.length) break;
+      clustered.sort((a, b) => a.ratio - b.ratio);
+      const source = clustered[Math.floor(Math.random() * Math.min(3, clustered.length))]!;
+      const sourceDate = Date.parse(`${source.session.date}T00:00:00Z`) / 86400000;
+      const sourceDates = appearancesByPerson.get(source.id)!;
+      const beforeSource = personGapCost(sourceDates, first, last, ctx.gapBalance.presenter);
+      const replaceDate = (values: number[], from: number, to: number) => {
+        const next = [...values];
+        const index = next.indexOf(from);
+        if (index < 0) return next;
+        next[index] = to;
+        return next;
+      };
+      const candidates: Array<{ session: Session; index: number; gain: number }> = [];
+      const sourceOccupied = new Set(source.session.presentations.map(presentation => presentation.presenterId));
+      const beforeByPerson = new Map<string, number>();
+      for (const session of clone) {
+        if (session === source.session || unavailMap.get(session.date)?.has(source.id)) continue;
+        if (session.presentations.some(presentation => presentation.presenterId === source.id)) continue;
+        const candidateDate = Date.parse(`${session.date}T00:00:00Z`) / 86400000;
+        const sourceAfter = personGapCost(replaceDate(sourceDates, sourceDate, candidateDate), first, last, ctx.gapBalance.presenter);
+        for (let index = 0; index < session.presentations.length; index++) {
+          const otherId = session.presentations[index]!.presenterId;
+          if (sourceOccupied.has(otherId) || unavailMap.get(source.session.date)?.has(otherId)) continue;
+          const otherDates = appearancesByPerson.get(otherId);
+          if (!otherDates) continue;
+          let beforeOther = beforeByPerson.get(otherId);
+          if (beforeOther === undefined) {
+            beforeOther = personGapCost(otherDates, first, last, ctx.gapBalance.presenter);
+            beforeByPerson.set(otherId, beforeOther);
+          }
+          const gain = beforeSource + beforeOther - sourceAfter
+            - personGapCost(replaceDate(otherDates, candidateDate, sourceDate), first, last, ctx.gapBalance.presenter);
+          if (gain > 0.001) candidates.push({ session, index, gain });
+        }
+      }
       if (!candidates.length) break;
-      candidates.sort((a, b) => (counts.get(a) ?? 0) - (counts.get(b) ?? 0));
-      const replacement = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))]!;
-      const presentation = session.presentations[index]!;
-      presentation.presenterId = replacement;
-      presentation.questionerIds = pickQuestioners(replacement, session.date,
-        presentation.questionerIds.length || config.questionersPerPresenter);
+      candidates.sort((a, b) => b.gain - a.gain);
+      const chosen = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))]!;
+      const sourcePresentation = source.session.presentations[source.index]!;
+      const otherPresentation = chosen.session.presentations[chosen.index]!;
+      const otherId = otherPresentation.presenterId;
+      sourcePresentation.presenterId = otherId;
+      otherPresentation.presenterId = source.id;
+      sourcePresentation.questionerIds = pickQuestioners(otherId, source.session.date,
+        sourcePresentation.questionerIds.length || config.questionersPerPresenter);
+      otherPresentation.questionerIds = pickQuestioners(source.id, chosen.session.date,
+        otherPresentation.questionerIds.length || config.questionersPerPresenter);
       break;
     }
 
