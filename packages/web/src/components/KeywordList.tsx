@@ -17,6 +17,7 @@ import {
 import { Dialog, confirmDialog } from './ui/Dialog';
 import type { EntityListSortBy, Keyword, ListSortDirection } from '@labby/core';
 import { i18n } from '@/i18n';
+import { usePendingAction } from '@/lib/use-pending-action';
 
 export function KeywordList() {
   const db = useDatabase();
@@ -26,6 +27,7 @@ export function KeywordList() {
   const [pageSize, setPageSize] = useState(20);
   const [sortBy, setSortBy] = useState<EntityListSortBy>('modifiedAt');
   const [sortDirection, setSortDirection] = useState<ListSortDirection>('desc');
+  const action = usePendingAction();
   const query = useAsyncResource(async () => {
     const result = await listKeywordsPage(db, {
       offset: (page - 1) * pageSize, limit: pageSize, sortBy, sortDirection,
@@ -64,8 +66,10 @@ export function KeywordList() {
       ? `${t('deleteReferencedWarning')}\n\n${t('deleteHistory')}`
       : t('deleteHistory');
     confirmDialog(t('confirmDelete'), message, async () => {
-      await db.keywords.delete(k.id);
-      await Promise.all([query.refetch(), syncGraph(db)]);
+      await action.run(`delete:${k.id}`, async () => {
+        await db.keywords.delete(k.id);
+        await Promise.all([query.refetch(), syncGraph(db)]);
+      });
     });
   }
 
@@ -94,10 +98,10 @@ export function KeywordList() {
       {query.isInitialLoading ? <ContentSkeleton rows={5} /> : query.error && !query.data ? (
         <div role="alert" class={s.card}>
           <p class={s.textDanger}>{String(query.error)}</p>
-          <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button>
+          <Button variant="secondary" busy={query.isPending} onClick={() => void query.refetch()}>{t('retry')}</Button>
         </div>
       ) : <div aria-busy={query.isRefetching}>
-      {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
+      {query.error && <p role="alert" class={s.textDanger}>{String(query.error)} <Button variant="secondary" busy={query.isPending} onClick={() => void query.refetch()}>{t('retry')}</Button></p>}
       <ResponsiveDataView
         sorting={{
           key: sortBy, direction: sortDirection,
@@ -155,10 +159,10 @@ export function KeywordList() {
             <Button variant="ghost" onClick={() => setEditing(kw)}>
               {t('edit')}
             </Button>
-            <Button variant="ghost" onClick={() => handleDisableToggle(kw)}>
+            <Button variant="ghost" busy={action.pendingKey === `toggle:${kw.id}`} disabled={action.pendingKey !== null} onClick={() => void action.run(`toggle:${kw.id}`, () => handleDisableToggle(kw))}>
               {kw.disabled ? t('enable') : t('disable')}
             </Button>
-            <Button variant="danger" onClick={() => handleDelete(kw)}>
+            <Button variant="danger" disabled={action.pendingKey !== null} onClick={() => void handleDelete(kw)}>
               {t('delete')}
             </Button>
           </>

@@ -10,6 +10,7 @@ import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { usePendingAction } from '@/lib/use-pending-action';
 import * as s from '@/styles/components.css';
 
 const DAY_OPTIONS = [
@@ -43,6 +44,7 @@ export function EmailTasksListPage() {
   const { t } = i18n;
   const db = useDatabase();
   const capability = getEmailTaskCapability();
+  const action = usePendingAction();
   const [sort, setSort] = useState<{key:string;direction:'asc'|'desc'}>({key:'modifiedAt',direction:'desc'});
   const query = useAsyncResource(async () => {
     const [tasks, configs] = await Promise.all([
@@ -60,30 +62,28 @@ export function EmailTasksListPage() {
   }
 
   async function toggleDisabled(task: EmailTask): Promise<void> {
-    await db.emailTasks.put({
-      ...task,
-      disabled: !task.disabled,
-      modifiedAt: Date.now(),
+    await action.run(`disabled:${task.id}`, async () => {
+      await db.emailTasks.put({ ...task, disabled: !task.disabled, modifiedAt: Date.now() });
+      await query.refetch();
     });
-    await query.refetch();
   }
 
   async function toggleSkipNext(task: EmailTask): Promise<void> {
     if (!capability.canAutoSend) return;
     const nextSkip = !(task.skipNextRun ?? false);
-    try {
+    await action.run(`skip:${task.id}`, async () => {
       await setEmailTaskSkipNext(task.id, nextSkip);
       await query.refetch();
       toast.success(nextSkip ? t('emailTaskSkipNextEnabled') : t('emailTaskSkipNextDisabled'));
-    } catch (err) {
-      toast.error(`${t('emailTaskSkipNextFailed')}: ${String(err)}`);
-    }
+    });
   }
 
   async function copyIcsLink(task: EmailTask): Promise<void> {
     if (!capability.canAutoSend) return;
-    await navigator.clipboard.writeText(getPublicEmailTaskIcsUrl(task.id));
-    toast.success(t('emailTaskIcsLinkCopied'));
+    await action.run(`copy:${task.id}`, async () => {
+      await navigator.clipboard.writeText(getPublicEmailTaskIcsUrl(task.id));
+      toast.success(t('emailTaskIcsLinkCopied'));
+    });
   }
 
   return (
@@ -156,17 +156,17 @@ export function EmailTasksListPage() {
             renderActions={(task) => (
               <>
                 <Button variant="ghost" onClick={() => navigate(`/email-tasks/edit/${task.id}`)}>{t('edit')}</Button>
-                <Button variant="ghost" onClick={() => void toggleDisabled(task)}>
+                <Button variant="ghost" busy={action.pendingKey === `disabled:${task.id}`} disabled={action.pendingKey !== null} onClick={() => void toggleDisabled(task)}>
                   {task.disabled ? t('enable') : t('disable')}
                 </Button>
                 {capability.canAutoSend && (
                   <>
                     {(task.metadata?.serveScheduleIcs as boolean | undefined) === true && (
-                      <Button variant="ghost" onClick={() => void copyIcsLink(task)}>
+                      <Button variant="ghost" busy={action.pendingKey === `copy:${task.id}`} disabled={action.pendingKey !== null} onClick={() => void copyIcsLink(task)}>
                         {t('emailTaskCopyIcsLink')}
                       </Button>
                     )}
-                    <Button variant="ghost" onClick={() => void toggleSkipNext(task)}>
+                    <Button variant="ghost" busy={action.pendingKey === `skip:${task.id}`} disabled={action.pendingKey !== null} onClick={() => void toggleSkipNext(task)}>
                       {task.skipNextRun ? t('emailTaskSkipNextCancel') : t('emailTaskSkipNext')}
                     </Button>
                   </>

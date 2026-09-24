@@ -44,6 +44,7 @@ export function App() {
   const theme = themeSignal.value;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const authed = useComputed(() => isAuthenticated.value);
 
   useEffect(() => {
@@ -89,8 +90,10 @@ export function App() {
   };
 
   const handleLogout = async () => {
-    await logout();
-    navigate('/login');
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try { await logout(); navigate('/login'); }
+    finally { setLoggingOut(false); }
   };
 
   return (
@@ -146,6 +149,8 @@ export function App() {
             class={s.navIconButtonDesktop}
             onClick={handleLogout}
             title={t('logout')}
+            disabled={loggingOut}
+            aria-busy={loggingOut}
           >
             <LogOut size={16} />
             <span class={s.hideOnMobile}>{t('logout')}</span>

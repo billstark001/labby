@@ -8,6 +8,21 @@ personTags:
   zh-CN: 人物标签
   ja-JP: 人物タグ
 
+tagMembers:
+  en: Members
+  zh-CN: 成员
+  ja-JP: メンバー
+
+search:
+  en: Search
+  zh-CN: 搜索
+  ja-JP: 検索
+
+sortBy:
+  en: Sort by
+  zh-CN: 排序依据
+  ja-JP: 並び替え
+
 managePersonTags:
   en: Manage person tags
   zh-CN: 管理人物标签
@@ -42,6 +57,106 @@ highlightPersonTag:
   en: Highlight tag
   zh-CN: 高亮标签
   ja-JP: タグを強調
+
+highlightSelection:
+  en: Highlight people and tags
+  zh-CN: 高亮人员和标签
+  ja-JP: 人物とタグを強調
+
+solverSearchDiagnostics:
+  en: Search diagnostics
+  zh-CN: 搜索诊断
+  ja-JP: 探索診断
+
+solverCostChange:
+  en: Objective
+  zh-CN: 目标值
+  ja-JP: 目的値
+
+solverIterations:
+  en: Iterations
+  zh-CN: 迭代次数
+  ja-JP: 反復回数
+
+solverAccepted:
+  en: Accepted
+  zh-CN: 接受邻居
+  ja-JP: 採用
+
+solverRestarts:
+  en: Restarts
+  zh-CN: 重启次数
+  ja-JP: 再開始
+
+solverInvalidNeighbors:
+  en: Invalid neighbors
+  zh-CN: 无效邻居
+  ja-JP: 無効な近傍
+
+solverUnchangedNeighbors:
+  en: Unchanged neighbors
+  zh-CN: 未变化邻居
+  ja-JP: 変化のない近傍
+
+scheduleQuality:
+  en: Per-person schedule quality
+  zh-CN: 逐人排班质量
+  ja-JP: 人物別の予定品質
+
+reciprocalPairs:
+  en: Reciprocal pairs
+  zh-CN: 互换角色对数
+  ja-JP: 相互質問ペア
+
+hardViolations:
+  en: Hard-rule violations
+  zh-CN: 硬约束违规数
+  ja-JP: 必須ルール違反
+
+presentations:
+  en: Presentations
+  zh-CN: 发表次数
+  ja-JP: 発表回数
+
+minGapDays:
+  en: Min gap (days)
+  zh-CN: 最短间隔（天）
+  ja-JP: 最短間隔（日）
+
+maxGapDays:
+  en: Max gap (days)
+  zh-CN: 最长间隔（天）
+  ja-JP: 最長間隔（日）
+
+gapVariation:
+  en: Gap variation
+  zh-CN: 间隔变异系数
+  ja-JP: 間隔変動係数
+
+shortGapRate:
+  en: Short-gap rate
+  zh-CN: 过短间隔占比
+  ja-JP: 短間隔の割合
+
+boundaryWaitDays:
+  en: First / last wait (days)
+  zh-CN: 首次／末次等待（天）
+  ja-JP: 初回／最終待機（日）
+
+toggleHighlight:
+  en: Toggle highlight
+  zh-CN: 切换高亮
+  ja-JP: 強調を切り替え
+
+onlyHighlight:
+  en: Only highlight selected people
+  zh-CN: 仅高亮所选人员
+  ja-JP: 選択した人物だけを強調
+
+done:
+  en: Done
+  zh-CN: 完成
+  ja-JP: 完了
 
 rankingIncludeDisabled:
   en: Include disabled keywords in suggestions
@@ -488,6 +603,16 @@ unavailable:
   zh-CN: 不可用
   ja-JP: 利用不可
 
+serviceTemporarilyUnavailable:
+  en: Service temporarily unavailable ({0})
+  zh-CN: 服务暂时不可用（{0}）
+  ja-JP: サービスが一時的に利用できません（{0}）
+
+insufficientPermissions:
+  en: Insufficient permissions
+  zh-CN: 权限不足
+  ja-JP: 権限がありません
+
 permissionsReadOnly:
   en: Your current account can inspect backup availability but cannot trigger server backups.
   zh-CN: 你当前的账号可以查看备份可用性，但不能触发服务端备份。
@@ -583,6 +708,31 @@ configRadius:
   en: Target Similarity
   zh-CN: 目标相似度
   ja-JP: 目標類似度
+
+reciprocalPairPreference:
+  en: Same-day reciprocal questioning
+  zh-CN: 同日互换发表与提问
+  ja-JP: 同日の相互質問
+
+reciprocalForbid:
+  en: Forbid
+  zh-CN: 禁止
+  ja-JP: 禁止
+
+reciprocalDiscourage:
+  en: Discourage
+  zh-CN: 抑制
+  ja-JP: 抑制
+
+reciprocalNeutral:
+  en: Neutral
+  zh-CN: 中性
+  ja-JP: 中立
+
+reciprocalEncourage:
+  en: Encourage
+  zh-CN: 鼓励
+  ja-JP: 奨励
 
 configStart:
   en: Start Date
@@ -990,6 +1140,11 @@ copyNextEmailManually:
   zh-CN: 手动复制下一封邮件
   ja-JP: 次のメールを手動コピー
 
+emailTaskPreviewCopied:
+  en: Email preview copied
+  zh-CN: 邮件预览已复制
+  ja-JP: メールプレビューをコピーしました
+
 emailTaskSendNow:
   en: Send Now
   zh-CN: 立即发送
@@ -1004,6 +1159,31 @@ emailTaskSendNowFailed:
   en: Failed to send email task
   zh-CN: 邮件任务发送失败
   ja-JP: メールタスクの送信に失敗しました
+
+emailTaskSendNowSuccessCount:
+  en: Sent to {0} recipient(s)
+  zh-CN: 已向 {0} 个地址发送
+  ja-JP: "{0} 件の宛先に送信しました"
+
+emailTaskSendNowPartial:
+  en: Delivery failed for {0} recipient(s)
+  zh-CN: "{0} 个地址发送失败"
+  ja-JP: "{0} 件の宛先への送信に失敗しました"
+
+emailTaskOneOffRecipientsHint:
+  en: Review the recipients for this send. Changing them here does not change the scheduled task.
+  zh-CN: 请确认本次收件地址；此处修改不会改变定时任务。
+  ja-JP: 今回の宛先を確認してください。ここでの変更は定期タスクに反映されません。
+
+emailTaskInvalidRecipients:
+  en: Enter at least one valid email address, separated by commas.
+  zh-CN: 请填写至少一个有效邮箱地址，并用逗号分隔。
+  ja-JP: 有効なメールアドレスを1件以上、カンマ区切りで入力してください。
+
+emailTaskSending:
+  en: Sending…
+  zh-CN: 发送中…
+  ja-JP: 送信中…
 
 emailTaskSkipNext:
   en: Skip Next Run
@@ -1454,6 +1634,26 @@ constraintPersons:
   en: Persons
   zh-CN: 约束人员
   ja-JP: 対象者
+
+constraintTargets:
+  en: People or tags
+  zh-CN: 人员或标签
+  ja-JP: 対象者またはタグ
+
+constraintUseOtherGroup:
+  en: Target pairs between two groups
+  zh-CN: 只约束两个组之间的配对
+  ja-JP: 2つのグループ間の組み合わせを対象にする
+
+constraintOtherTargets:
+  en: Second group
+  zh-CN: 第二组
+  ja-JP: 第2グループ
+
+constraintHardRule:
+  en: Hard rule
+  zh-CN: 硬性约束
+  ja-JP: 必須条件
 
 constraintWeight:
   en: Weight

@@ -9,7 +9,7 @@ import { DataPanel } from '../components/DataPanel';
 import { TimezoneSelect } from '../components/TimezoneSelect';
 import { useDatabase } from '../db';
 import { deploymentMode } from '../lib/runtime';
-import { ContentSkeleton, toast } from '../components/ui';
+import { Button, ContentSkeleton, toast } from '../components/ui';
 import {
   changePassword,
   confirmEmailChange,
@@ -21,6 +21,7 @@ import {
 } from '../lib/auth';
 import clsx from 'clsx';
 import { useAsyncResource } from '../lib/use-async-resource';
+import { usePendingAction } from '../lib/use-pending-action';
 
 const locales: Locale[] = ['en', 'zh-CN', 'ja-JP'];
 const localeLabels: Record<Locale, string> = {
@@ -32,6 +33,7 @@ const localeLabels: Record<Locale, string> = {
 export function SettingsPage() {
   const { t, lang, setLang } = i18n.useTranslation();
   const db = useDatabase();
+  const action = usePendingAction();
   const profileQuery = useAsyncResource<AuthAccountProfile | null>(
     () => deploymentMode === 'server' ? getAccountProfile() : Promise.resolve(null),
   );
@@ -156,7 +158,7 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div class={clsx(s.card, s.sectionStack)}>
+      <div class={clsx(s.card, s.sectionStack)} aria-busy={systemSettingsQuery.isRefetching}>
         <h3 class={clsx(s.text15, s.fontMedium)}>{t('systemTimezoneTitle')}</h3>
         {systemSettingsQuery.isInitialLoading || systemSettingsQuery.status === 'success' && systemTimezone === undefined
           ? <ContentSkeleton rows={2} />
@@ -174,7 +176,7 @@ export function SettingsPage() {
           />
         </div>
         <div class={s.flexGapSm}>
-          <button class={s.btnVariants.primary} onClick={() => void handleSaveSystemSettings()}>{t('save')}</button>
+          <Button busy={action.pendingKey === 'settings'} onClick={() => void action.run('settings', handleSaveSystemSettings)}>{t('save')}</Button>
         </div></>}
       </div>
 
@@ -208,8 +210,8 @@ export function SettingsPage() {
             <label class={s.label}>{t('verificationCode')}</label>
             <input class={s.input} value={emailCode} disabled={isRoot} onInput={(e) => setEmailCode((e.target as HTMLInputElement).value)} />
             <div class={s.flexGapSm}>
-              <button class={s.btnVariants.secondary} disabled={isRoot} onClick={() => void handleRequestVerifyEmail()}>{t('requestEmailVerification')}</button>
-              <button class={s.btnVariants.secondary} disabled={isRoot} onClick={() => void handleConfirmVerifyEmail()}>{t('confirmEmailVerification')}</button>
+              <Button variant="secondary" busy={action.pendingKey === 'verify-request'} disabled={isRoot || action.pendingKey !== null} onClick={() => void action.run('verify-request', handleRequestVerifyEmail)}>{t('requestEmailVerification')}</Button>
+              <Button variant="secondary" busy={action.pendingKey === 'verify-confirm'} disabled={isRoot || action.pendingKey !== null} onClick={() => void action.run('verify-confirm', handleConfirmVerifyEmail)}>{t('confirmEmailVerification')}</Button>
             </div>
           </div>
 
@@ -218,10 +220,10 @@ export function SettingsPage() {
             <input class={s.input} type="email" disabled={isRoot} value={newEmail} onInput={(e) => setNewEmail((e.target as HTMLInputElement).value)} />
             <label class={s.label}>{t('currentPassword')}</label>
             <input class={s.input} type="password" disabled={isRoot} value={emailChangePassword} onInput={(e) => setEmailChangePassword((e.target as HTMLInputElement).value)} />
-            <button class={s.btnVariants.secondary} disabled={isRoot} onClick={() => void handleRequestChangeEmail()}>{t('requestEmailChange')}</button>
+            <Button variant="secondary" busy={action.pendingKey === 'email-request'} disabled={isRoot || action.pendingKey !== null} onClick={() => void action.run('email-request', handleRequestChangeEmail)}>{t('requestEmailChange')}</Button>
             <label class={s.label}>{t('verificationCode')}</label>
             <input class={s.input} value={emailChangeCode} disabled={isRoot} onInput={(e) => setEmailChangeCode((e.target as HTMLInputElement).value)} />
-            <button class={s.btnVariants.secondary} disabled={isRoot} onClick={() => void handleConfirmChangeEmail()}>{t('confirmEmailChange')}</button>
+            <Button variant="secondary" busy={action.pendingKey === 'email-confirm'} disabled={isRoot || action.pendingKey !== null} onClick={() => void action.run('email-confirm', handleConfirmChangeEmail)}>{t('confirmEmailChange')}</Button>
           </div>
 
           <div class={s.formGroup}>
@@ -229,7 +231,7 @@ export function SettingsPage() {
             <input class={s.input} type="password" disabled={isRoot} value={currentPassword} onInput={(e) => setCurrentPassword((e.target as HTMLInputElement).value)} />
             <label class={s.label}>{t('newPassword')}</label>
             <input class={s.input} type="password" disabled={isRoot} value={newPassword} onInput={(e) => setNewPassword((e.target as HTMLInputElement).value)} />
-            <button class={s.btnVariants.secondary} disabled={isRoot} onClick={() => void handleChangePassword()}>{t('changePasswordAction')}</button>
+            <Button variant="secondary" busy={action.pendingKey === 'password'} disabled={isRoot || action.pendingKey !== null} onClick={() => void action.run('password', handleChangePassword)}>{t('changePasswordAction')}</Button>
           </div>
 
           {securityMessage && <p class={s.text12}>{securityMessage}</p>}

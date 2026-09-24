@@ -76,10 +76,10 @@ export function KeywordForm({ initial, onSave, onCancel }: KeywordFormProps) {
         />
       </div>
       <div class={s.flexGapSm}>
-        <Button variant="primary" disabled={saving || !nameEn.trim()} onClick={handleSave}>
+        <Button variant="primary" busy={saving} disabled={saving || !nameEn.trim()} onClick={handleSave}>
           {t('save')}
         </Button>
-        <Button variant="secondary" onClick={onCancel}>
+        <Button variant="secondary" disabled={saving} onClick={onCancel}>
           {t('cancel')}
         </Button>
       </div>

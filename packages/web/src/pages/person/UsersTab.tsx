@@ -6,6 +6,7 @@ import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
 import { createUser, deleteUser, fetchUsers, SafeUser, updateUser, USER_ROLE_ADMIN, USER_ROLE_ROOT, USER_ROLE_USER, UserRoleWithoutRoot } from '@/api-server/users';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { usePendingAction } from '@/lib/use-pending-action';
 
 interface UsersTabProps {
   canManageUsers: boolean;
@@ -25,19 +26,18 @@ interface CreateUserFormProps {
 
 function CreateUserForm({ onSave, onCancel }: CreateUserFormProps) {
   const { t } = i18n;
+  const action = usePendingAction();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRoleWithoutRoot>(USER_ROLE_USER);
 
   async function handleSubmit() {
-    try {
+    await action.run('save', async () => {
       await createUser(username, email, password, role);
       toast.success(t('createUser'));
-      onSave();
-    } catch (err) {
-      toast.error(String(err));
-    }
+      await onSave();
+    });
   }
 
   return (
@@ -62,8 +62,8 @@ function CreateUserForm({ onSave, onCancel }: CreateUserFormProps) {
         </select>
       </div>
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={() => void handleSubmit()}>{t('save')}</Button>
-        <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
+        <Button variant="primary" busy={action.pendingKey === 'save'} onClick={() => void handleSubmit()}>{t('save')}</Button>
+        <Button variant="secondary" disabled={action.pendingKey !== null} onClick={onCancel}>{t('cancel')}</Button>
       </div>
     </div>
   );
@@ -77,17 +77,16 @@ interface EditUserFormProps {
 
 function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
   const { t } = i18n;
+  const action = usePendingAction();
   const [role, setRole] = useState<UserRoleWithoutRoot>(user.role as UserRoleWithoutRoot);
   const [disabled, setDisabled] = useState(user.disabled);
 
   async function handleSubmit() {
-    try {
+    await action.run('save', async () => {
       await updateUser(user.id, { role, disabled });
       toast.success(t('editUser'));
-      onSave();
-    } catch (err) {
-      toast.error(String(err));
-    }
+      await onSave();
+    });
   }
 
   return (
@@ -114,8 +113,8 @@ function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
         </label>
       </div>
       <div class={s.flexGapSm}>
-        <Button variant="primary" onClick={() => void handleSubmit()}>{t('save')}</Button>
-        <Button variant="secondary" onClick={onCancel}>{t('cancel')}</Button>
+        <Button variant="primary" busy={action.pendingKey === 'save'} onClick={() => void handleSubmit()}>{t('save')}</Button>
+        <Button variant="secondary" disabled={action.pendingKey !== null} onClick={onCancel}>{t('cancel')}</Button>
       </div>
     </div>
   );
@@ -123,6 +122,7 @@ function EditUserForm({ user, onSave, onCancel }: EditUserFormProps) {
 
 export function UsersTab({ canManageUsers }: UsersTabProps) {
   const { t } = i18n;
+  const action = usePendingAction();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingUser, setEditingUser] = useState<SafeUser | null>(null);
   const usersQuery = useAsyncResource(fetchUsers);
@@ -130,12 +130,10 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
 
   function handleDelete(user: SafeUser) {
     confirmDialog(t('deleteUser'), t('deleteUserWarning'), async () => {
-      try {
+      await action.run(`delete:${user.id}`, async () => {
         await deleteUser(user.id);
         await usersQuery.refetch();
-      } catch (err) {
-        toast.error(String(err));
-      }
+      });
     });
   }
 
@@ -184,7 +182,7 @@ export function UsersTab({ canManageUsers }: UsersTabProps) {
                     </Button>
                   )}
                   {canManageUsers && user.role < USER_ROLE_ROOT && (
-                    <Button variant="danger" onClick={() => handleDelete(user)}>
+                    <Button variant="danger" busy={action.pendingKey === `delete:${user.id}`} disabled={action.pendingKey !== null} onClick={() => handleDelete(user)}>
                       {t('deleteUser')}
                     </Button>
                   )}

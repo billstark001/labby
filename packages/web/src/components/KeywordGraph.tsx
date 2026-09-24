@@ -70,8 +70,8 @@ function GraphLoadingStatus() {
     <p role="status" aria-live="polite" class={s.mutedParagraph}>
       {streamStatus.loading ? t('graphLoading', String(streamStatus.count)) : refreshing ? t('graphSyncing') : t('graphUpToDate')}
     </p>
-    {streamStatus.error && <button title={streamStatus.error} onClick={() => { void syncGraph(db).catch(() => {}); }}>{t('graphLoadFailed')}</button>}
-    <Button variant="ghost" disabled={refreshing || streamStatus.loading} onClick={async () => {
+    {streamStatus.error && <Button variant="secondary" title={streamStatus.error} busy={refreshing} onClick={() => { setRefreshing(true); void syncGraph(db).catch(() => {}).finally(() => setRefreshing(false)); }}>{t('graphLoadFailed')}</Button>}
+    <Button variant="ghost" busy={refreshing} disabled={refreshing || streamStatus.loading} onClick={async () => {
       setRefreshing(true);
       try { await syncGraph(db); } catch { /* Stream status exposes the error. */ }
       finally { setRefreshing(false); }
@@ -442,7 +442,7 @@ export function KeywordGraph() {
             await db.keywords.put(keyword);
             setEditing(null);
             await syncGraph(db);
-          } catch (error) { toast.error(String(error)); }
+          } catch (error) { toast.error(String(error)); throw error; }
         }} />
       </Dialog>}
       <div class={s.graphLayout}>

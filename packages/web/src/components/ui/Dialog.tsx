@@ -1,6 +1,6 @@
 /** Business-layer Dialog wrapper and utilities. */
 import { type ComponentChildren } from 'preact';
-import { useId } from 'preact/hooks';
+import { useId, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import {
   Dialog as PrimitiveDialog,
@@ -13,6 +13,7 @@ import {
 } from '../../primitives/Dialog';
 import * as s from './Dialog.css';
 import * as btnStyles from '../../styles/components.css';
+import { Button } from './common';
 import { i18n } from '@/i18n';
 import { X } from 'lucide-preact';
 
@@ -73,7 +74,7 @@ type ConfirmDialogState = {
   title: string;
   message: string;
   confirmLabel?: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onCancel?: () => void;
 } | null;
 
@@ -93,7 +94,7 @@ const confirmDialogState = signal<ConfirmDialogState>(null);
 export function confirmDialog(
   title: string,
   message: string,
-  onConfirm: () => void,
+  onConfirm: () => void | Promise<void>,
   onCancel?: () => void,
   confirmLabel?: string,
 ): void {
@@ -135,16 +136,29 @@ export function closeConfirmDialog(): void {
 export function ConfirmDialogComponent() {
   const { t } = i18n;
   const state = confirmDialogState.value;
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!state || !state.isOpen) return null;
 
-  const handleConfirm = () => {
-    state.onConfirm();
-    closeConfirmDialog();
+  const handleConfirm = async () => {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      await state.onConfirm();
+      closeConfirmDialog();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setPending(false);
+    }
   };
 
   const handleCancel = () => {
+    if (pending) return;
     state.onCancel?.();
+    setError(null);
     closeConfirmDialog();
   };
 
@@ -154,14 +168,15 @@ export function ConfirmDialogComponent() {
       onClose={handleCancel}
       title={state.title}
       description={state.message}
+      children={error && <p role="alert" class={btnStyles.textDanger}>{error}</p>}
       actions={
         <>
-          <button class={btnStyles.btnVariants.secondary} onClick={handleCancel}>
+          <Button variant="secondary" disabled={pending} onClick={handleCancel}>
             {t('cancel')}
-          </button>
-          <button class={btnStyles.btnVariants.danger} onClick={handleConfirm}>
+          </Button>
+          <Button variant="danger" busy={pending} onClick={() => void handleConfirm()}>
             {state.confirmLabel ?? t('delete')}
-          </button>
+          </Button>
         </>
       }
     />

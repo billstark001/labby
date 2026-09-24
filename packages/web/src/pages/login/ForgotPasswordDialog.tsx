@@ -4,6 +4,7 @@ import { Button, Dialog } from '@/components/ui';
 import { i18n } from '@/i18n';
 import { confirmPasswordReset, requestPasswordReset } from '@/lib/auth';
 import * as s from '@/styles/components.css';
+import { usePendingAction } from '@/lib/use-pending-action';
 
 interface ForgotPasswordDialogProps {
   open: boolean;
@@ -17,6 +18,7 @@ export function ForgotPasswordDialog({ open, onClose }: ForgotPasswordDialogProp
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const action = usePendingAction();
 
   async function handleRequestReset(): Promise<void> {
     setError(null);
@@ -58,7 +60,7 @@ export function ForgotPasswordDialog({ open, onClose }: ForgotPasswordDialogProp
           placeholder={t('passwordResetIdentity')}
         />
         <div class={s.flexGapSm}>
-          <Button variant="secondary" disabled={!resetIdentity.trim()} onClick={() => void handleRequestReset()}>
+          <Button variant="secondary" busy={action.pendingKey === 'request'} disabled={action.pendingKey !== null || !resetIdentity.trim()} onClick={() => void action.run('request', handleRequestReset)}>
             {t('requestPasswordReset')}
           </Button>
         </div>
@@ -82,8 +84,9 @@ export function ForgotPasswordDialog({ open, onClose }: ForgotPasswordDialogProp
         />
         <Button
           variant="secondary"
-          disabled={!resetIdentity.trim() || !resetCode.trim() || !resetNewPassword.trim()}
-          onClick={() => void handleConfirmReset()}
+          busy={action.pendingKey === 'confirm'}
+          disabled={action.pendingKey !== null || !resetIdentity.trim() || !resetCode.trim() || !resetNewPassword.trim()}
+          onClick={() => void action.run('confirm', handleConfirmReset)}
         >
           {t('confirmPasswordReset')}
         </Button>
@@ -93,7 +96,7 @@ export function ForgotPasswordDialog({ open, onClose }: ForgotPasswordDialogProp
       {message && <p class={s.text12}>{message}</p>}
 
       <div class={s.flexGapSm}>
-        <Button variant="ghost" onClick={onClose}>{t('close')}</Button>
+        <Button variant="ghost" disabled={action.pendingKey !== null} onClick={onClose}>{t('close')}</Button>
       </div>
     </Dialog>
   );

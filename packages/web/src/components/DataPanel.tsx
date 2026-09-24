@@ -17,6 +17,7 @@ import { deploymentMode, isFrontendOnlyDeployment, isServerDeployment } from '@/
 import clsx from 'clsx';
 import { confirmDialog } from './ui/Dialog';
 import { useAsyncResource } from '@/lib/use-async-resource';
+import { usePendingAction } from '@/lib/use-pending-action';
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -30,6 +31,7 @@ function triggerDownload(blob: Blob, filename: string) {
 export function DataPanel() {
   const { t } = i18n;
   const dbInstance = useDatabase();
+  const action = usePendingAction();
   const capabilitiesQuery = useAsyncResource<SystemCapabilities | null>(
     () => isServerDeployment ? fetchSystemCapabilities({ force: true }) : Promise.resolve(null),
   );
@@ -108,10 +110,10 @@ export function DataPanel() {
       const file = input.files?.[0];
       if (!file) return;
       if (isServerDeployment) {
-        await importServerBackup(file);
+        await action.run('import', () => importServerBackup(file));
         return;
       }
-      await importLocalBackup(file);
+      await action.run('import', () => importLocalBackup(file));
     };
     input.click();
   }
@@ -179,16 +181,17 @@ export function DataPanel() {
           {isFrontendOnlyDeployment ? t('localBackupHint') : t('deploymentModeServerHint')}
         </p>
         <div class={s.toolbar}>
-          <Button variant="primary" onClick={handleExportBackup}>
+          <Button variant="primary" busy={action.pendingKey === 'exportBackup'} disabled={action.pendingKey !== null} onClick={() => void action.run('exportBackup', handleExportBackup)}>
             {t('exportBackupLabby')}
           </Button>
-          <Button variant="secondary" onClick={handleExportJson}>
+          <Button variant="secondary" busy={action.pendingKey === 'exportJson'} disabled={action.pendingKey !== null} onClick={() => void action.run('exportJson', handleExportJson)}>
             {t('exportBackupJson')}
           </Button>
           <Button
             variant="secondary"
             onClick={handleImportBackup}
-            disabled={isServerDeployment && !canManageServerBackups}
+            busy={action.pendingKey === 'import'}
+            disabled={action.pendingKey !== null || (isServerDeployment && !canManageServerBackups)}
           >
             {t('importBackup')}
           </Button>
@@ -214,7 +217,7 @@ export function DataPanel() {
         {isServerDeployment && capabilitiesQuery.error && (
           <div role="alert" class={s.formGroup}>
             <p class={s.textDanger}>{t('serverCapabilitiesError')}: {String(capabilitiesQuery.error)}</p>
-            <Button variant="secondary" onClick={() => void capabilitiesQuery.refetch()}>{t('retry')}</Button>
+            <Button variant="secondary" busy={capabilitiesQuery.isPending} onClick={() => void capabilitiesQuery.refetch()}>{t('retry')}</Button>
           </div>
         )}
 
@@ -282,15 +285,17 @@ export function DataPanel() {
             <div class={s.toolbar}>
               <Button
                 variant="primary"
-                onClick={() => handleDownloadServerBackup('msgpack')}
-                disabled={!canManageServerBackups}
+                onClick={() => void action.run('download', () => handleDownloadServerBackup('msgpack'))}
+                busy={action.pendingKey === 'download'}
+                disabled={action.pendingKey !== null || !canManageServerBackups}
               >
                 {t('downloadServerBackupMsgpack')}
               </Button>
               <Button
                 variant="secondary"
-                onClick={() => handleRunServerBackup()}
-                disabled={!canManageServerBackups || !backupCapabilities.configuredTarget}
+                onClick={() => void action.run('configured', () => handleRunServerBackup())}
+                busy={action.pendingKey === 'configured'}
+                disabled={action.pendingKey !== null || !canManageServerBackups || !backupCapabilities.configuredTarget}
               >
                 {t('runConfiguredBackup')}
               </Button>
@@ -299,22 +304,25 @@ export function DataPanel() {
             <div class={clsx(s.toolbar, s.mt12)}>
               <Button
                 variant="secondary"
-                onClick={() => handleRunServerBackup('email')}
-                disabled={!canManageServerBackups || !backupCapabilities.targets.email}
+                onClick={() => void action.run('email', () => handleRunServerBackup('email'))}
+                busy={action.pendingKey === 'email'}
+                disabled={action.pendingKey !== null || !canManageServerBackups || !backupCapabilities.targets.email}
               >
                 {t('sendBackupToEmail')}
               </Button>
               <Button
                 variant="secondary"
-                onClick={() => handleRunServerBackup('google-drive')}
-                disabled={!canManageServerBackups || !backupCapabilities.targets['google-drive']}
+                onClick={() => void action.run('google-drive', () => handleRunServerBackup('google-drive'))}
+                busy={action.pendingKey === 'google-drive'}
+                disabled={action.pendingKey !== null || !canManageServerBackups || !backupCapabilities.targets['google-drive']}
               >
                 {t('uploadBackupToGoogleDrive')}
               </Button>
               <Button
                 variant="secondary"
-                onClick={() => handleRunServerBackup('onedrive')}
-                disabled={!canManageServerBackups || !backupCapabilities.targets.onedrive}
+                onClick={() => void action.run('onedrive', () => handleRunServerBackup('onedrive'))}
+                busy={action.pendingKey === 'onedrive'}
+                disabled={action.pendingKey !== null || !canManageServerBackups || !backupCapabilities.targets.onedrive}
               >
                 {t('uploadBackupToOneDrive')}
               </Button>

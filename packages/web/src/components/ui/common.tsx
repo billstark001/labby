@@ -1,6 +1,8 @@
 /** Shared UI building blocks. */
 import { h } from 'preact';
+import { LoaderCircle } from 'lucide-preact';
 import * as s from '../../styles/components.css';
+import { spin } from './Toast.css';
 
 export { Pagination } from './Pagination';
 export type { PaginationProps } from './Pagination';
@@ -10,14 +12,17 @@ export type { ResponsiveDataColumn, DataSorting } from './ResponsiveData';
 interface ButtonProps extends h.JSX.HTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
   disabled?: boolean;
+  busy?: boolean;
 }
 
-export function Button({ variant = 'primary', class: cls, ...rest }: ButtonProps) {
+export function Button({ variant = 'primary', class: cls, busy = false, children, disabled, ...rest }: ButtonProps) {
   return (
     <button
       class={[s.btnVariants[variant], cls].filter(Boolean).join(' ')}
+      disabled={disabled || busy}
+      aria-busy={busy}
       {...rest}
-    />
+    >{busy && <LoaderCircle size={14} style={{ animation: `${spin} 1s linear infinite` }} />}{busy ? ' ' : null}{children}</button>
   );
 }
 

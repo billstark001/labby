@@ -46,7 +46,7 @@ export function RankingEditor({ query, onSaved }: { query: RankingQuery; onSaved
       <option value={1}>{t('rankingConfident')}</option><option value={0.5}>{t('rankingTentative')}</option>
     </select>
     {valid && <p class={s.mutedParagraph}>{groups.map(group => group.map(id => names.get(id) ?? id).join(' = ')).join(' → ')}</p>}
-    <Button onClick={() => void submit()} disabled={busy || saved || !valid}>{busy ? t('rankingSaving') : t('rankingSubmit')}</Button>
+    <Button busy={busy} onClick={() => void submit()} disabled={busy || saved || !valid}>{busy ? t('rankingSaving') : t('rankingSubmit')}</Button>
     {feedback && <p role="status" class={s.mutedParagraph}>{feedback}</p>}
   </div>;
 }
@@ -96,7 +96,7 @@ export function RankingCard() {
       {' '}{t('rankingIncludeDisabled')}
     </label>
     {resource.isInitialLoading ? <ContentSkeleton rows={3} /> : <>
-      {errorMessage && <p role="alert" class={s.textDanger}>{errorMessage} <Button variant="secondary" onClick={() => void resource.refetch()}>{t('retry')}</Button></p>}
+      {errorMessage && <p role="alert" class={s.textDanger}>{errorMessage} <Button variant="secondary" busy={resource.isPending} onClick={() => void resource.refetch()}>{t('retry')}</Button></p>}
       {resource.data && (query ? <><RankingEditor key={query.key} query={query} onSaved={() => next(true)} />
         <Button variant="ghost" onClick={() => next(false)}>{t('rankingSkip')}</Button></>
       : <p>{keywords.length < 3 ? t('rankingNeedKeywords') : t('rankingNoQuestions')}</p>)}
@@ -109,7 +109,7 @@ export function RankingCard() {
         const name = (id: string) => { const k = keywords.find(k => k.id === id); return k ? displayName(k) : id; };
         return <div key={j.id} class={s.formGroup}>
           <p>{name(j.anchorId)}: {j.groups.map(g => g.map(name).join(' = ')).join(' → ')}</p>
-          <Button variant="ghost" disabled={resource.isPending || mutationPending} onClick={() => void forget(j.id)}>{t('rankingForget')}</Button>
+          <Button variant="ghost" busy={mutationPending} disabled={resource.isPending || mutationPending} onClick={() => void forget(j.id)}>{t('rankingForget')}</Button>
         </div>;
       })}
     </details>

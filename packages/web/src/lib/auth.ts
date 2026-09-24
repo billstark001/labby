@@ -113,6 +113,7 @@ let _activeRole: AuthRole | null = null;
 // #region Internal refresh scheduling
 
 let _refreshTimer: ReturnType<typeof setTimeout> | undefined;
+let _refreshPromise: Promise<AuthResponse> | null = null;
 
 type RefreshFn = () => Promise<AuthResponse>;
 
@@ -122,9 +123,19 @@ function scheduleRefresh(token: string, refreshFn: RefreshFn): void {
   // client. Fall back to a fixed 12-minute interval (access TTL is 15 min).
   void token;
   const delay = 12 * 60 * 1000;
-  _refreshTimer = setTimeout(async () => {
-    try { await refreshFn(); } catch { /* session expired — caller handles 401 */ }
-  }, delay);
+  _refreshTimer = setTimeout(() => void runScheduledRefresh(refreshFn), delay);
+}
+
+async function runScheduledRefresh(refreshFn: RefreshFn): Promise<void> {
+  try { await refreshFn(); }
+  catch (error) {
+    if (error instanceof AuthRefreshError && error.status === 401) return;
+    notifyHttpError(error instanceof AuthRefreshError ? error.status ?? 503 : 503, 'Authentication service unavailable');
+    if (refreshToken.value) {
+      clearTimeout(_refreshTimer);
+      _refreshTimer = setTimeout(() => void runScheduledRefresh(refreshFn), 60_000);
+    }
+  }
 }
 
 // #endregion
@@ -312,20 +323,44 @@ export async function login(email: string, password: string): Promise<AuthRespon
   return data;
 }
 
-/** Silently refresh user tokens (rotation). Throws on failure. */
-export async function silentRefresh(): Promise<AuthResponse> {
+export class AuthRefreshError extends Error {
+  constructor(message: string, readonly status: number | null) {
+    super(message);
+  }
+}
+
+/** Refresh once for all concurrent requests; only a confirmed 401 ends the session. */
+export function silentRefresh(): Promise<AuthResponse> {
+  if (_refreshPromise) return _refreshPromise;
+  const pending = refreshOnce();
+  _refreshPromise = pending;
+  void pending.finally(() => {
+    if (_refreshPromise === pending) _refreshPromise = null;
+  }).catch(() => {});
+  return pending;
+}
+
+async function refreshOnce(): Promise<AuthResponse> {
   const rt = refreshToken.value;
-  if (!rt) throw new Error('No refresh token');
-  const res = await fetch(`${BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ refresh_token: rt }),
-  });
+  if (!rt) throw new AuthRefreshError('No refresh token', 401);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: withRequestHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+  } catch {
+    throw new AuthRefreshError('Authentication service unavailable', null);
+  }
   if (!res.ok) {
-    _invalidateSession(_activeSessionKey, _activeRole, 'refresh_401');
-    throw new Error(await parseErrorMessage(res, 'Session expired'));
+    if (res.status === 401 && refreshToken.value === rt) {
+      _invalidateSession(_activeSessionKey, _activeRole, 'refresh_401');
+    }
+    throw new AuthRefreshError(await parseErrorMessage(res, 'Authentication service unavailable'), res.status);
   }
   const data = await res.json() as AuthResponse;
+  if (refreshToken.value !== rt) throw new AuthRefreshError('Session changed during refresh', 401);
   _setTokens(data.access_token, data.refresh_token);
   scheduleRefresh(data.access_token, () => silentRefresh());
   return data;
@@ -484,8 +519,9 @@ export async function apiFetch(
       await silentRefresh();
       headers.set('Authorization', `Bearer ${accessToken.value!}`);
       res = await fetch(url, { ...options, headers });
-    } catch {
-      // refresh failed — return the 401 to the caller
+    } catch (error) {
+      if (!(error instanceof AuthRefreshError) || error.status !== 401) throw error;
+      // A confirmed refresh 401 ends the session. Return the original 401.
     }
   } else if (res.status === 401) {
     _invalidateSession(_activeSessionKey, _activeRole, 'refresh_401');
