@@ -42,6 +42,7 @@ import {
   downloadScheduleIcs,
 } from '@/lib/scheduleExport';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
+import { tagColorStyle } from '@/components/PersonTagBadge';
 import { toast } from '@/components/ui/Toast';
 import { usePendingAction } from '@/lib/use-pending-action';
 import { i18n } from '@/i18n';
@@ -693,7 +694,7 @@ export function SchedulePage() {
   }
 
   function handleDeleteSession(sessionId: string): void {
-    updateDraft((draft) => {
+    confirmDialog(t('confirmDelete'), t('deleteSession'), () => updateDraft((draft) => {
       const session = draft.sessions.find(item => item.id === sessionId);
       if (!session) return draft;
       const next = deleteSession(draft, sessionId);
@@ -703,7 +704,7 @@ export function SchedulePage() {
         : [...existing.filter(mutation => mutation.date !== session.date), { date: session.date, action: 'delete' as const, createdAt: Date.now() }]
           .sort((left, right) => left.date.localeCompare(right.date));
       return next;
-    });
+    }));
   }
 
   // #endregion
@@ -912,18 +913,22 @@ export function SchedulePage() {
           <Button variant="secondary" onClick={() => { setHighlightPersonIds(persons.map(person => person.id)); setHighlightTagIds(personTagsSignal.value.map(tag => tag.id)); }}>{t('selectAll')}</Button>
           <Button variant="secondary" onClick={() => { setHighlightPersonIds([]); setHighlightTagIds([]); }}>{t('clearSelection')}</Button>
         </div>
-        <label class={s.label}><input type="checkbox" checked={highlightOnly} onChange={event => setHighlightOnly((event.target as HTMLInputElement).checked)} /> {t('onlyHighlight')}</label>
+        <button type="button" class={`${s.badgeSelectable} ${highlightOnly ? s.badgeSelectableActive : ''}`} aria-pressed={highlightOnly} onClick={() => setHighlightOnly(value => !value)}>{t('onlyHighlight')}</button>
         <div class={s.formGroup}>
           <p class={s.label}>{t('highlightPerson')}</p>
-          <div class={s.tagList}>{persons.map(person => <label key={person.id} class={s.badge}>
-            <input type="checkbox" checked={highlightPersonIds.includes(person.id)} onChange={() => setHighlightPersonIds(previous => previous.includes(person.id) ? previous.filter(id => id !== person.id) : [...previous, person.id])} /> {displayName(person)}
-          </label>)}</div>
+          <div class={s.tagList}>{[...persons].sort((a,b) => displayName(a).localeCompare(displayName(b), i18n.lang.value) || a.id.localeCompare(b.id)).map(person => <button type="button" key={person.id}
+            class={`${s.badgeSelectable} ${highlightPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
+            aria-pressed={highlightPersonIds.includes(person.id)}
+            onClick={() => setHighlightPersonIds(previous => previous.includes(person.id) ? previous.filter(id => id !== person.id) : [...previous, person.id])}>{displayName(person)}</button>)}</div>
         </div>
         <div class={s.formGroup}>
           <p class={s.label}>{t('highlightPersonTag')}</p>
-          <div class={s.tagList}>{personTagsSignal.value.map(tag => <label key={tag.id} class={s.badge} style={{ borderColor: tag.color }}>
-            <input type="checkbox" checked={highlightTagIds.includes(tag.id)} onChange={() => setHighlightTagIds(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])} /> {tag.name}
-          </label>)}</div>
+          <div class={s.tagList}>{[...personTagsSignal.value].sort((a,b) => displayName(a).localeCompare(displayName(b), i18n.lang.value) || a.id.localeCompare(b.id)).map(tag => <button type="button" key={tag.id}
+            class={`${s.badgeSelectable} ${highlightTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
+            style={tagColorStyle(tag)} aria-pressed={highlightTagIds.includes(tag.id)}
+            onClick={() => setHighlightTagIds(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])}>
+            <span aria-hidden="true" style={{ color: tag.color }}>●</span> {displayName(tag)}
+          </button>)}</div>
         </div>
         <Button onClick={() => setHighlightDialogOpen(false)}>{t('done')}</Button>
       </Dialog>
@@ -939,11 +944,11 @@ export function SchedulePage() {
           if (!selectedConfig) return;
           updateDraft(draft => insertPresentation(draft, sessionIndex, presentationIndex, selectedConfig.questionersPerPresenter));
         }}
-        onDeletePresentation={presentationId => updateDraft(draft => deletePresentation(draft, presentationId))}
+        onDeletePresentation={presentationId => confirmDialog(t('confirmDelete'), t('deletePresentation'), () => updateDraft(draft => deletePresentation(draft, presentationId)))}
         onReplacePresenter={(presentationId, personId) => updateDraft(draft => replacePresenter(draft, presentationId, personId))}
         onAddQuestioner={(presentationId, personId) => updateDraft(draft => addQuestioner(draft, presentationId, personId))}
         onReplaceQuestioner={(presentationId, slotId, personId) => updateDraft(draft => replaceQuestioner(draft, presentationId, slotId, personId))}
-        onDeleteQuestioner={(presentationId, slotId) => updateDraft(draft => deleteQuestioner(draft, presentationId, slotId))}
+        onDeleteQuestioner={(presentationId, slotId) => confirmDialog(t('confirmDelete'), t('deleteQuestioner'), () => updateDraft(draft => deleteQuestioner(draft, presentationId, slotId)))}
         onMoveQuestioner={handleMoveQuestioner}
         onReorderPresentations={(sourceId, targetId, placement) => updateDraft(draft => reorderPresentations(draft, sourceId, targetId, placement))}
         onMovePresentationTo={(sourceId, targetSessionIndex, targetPresentationIndex) => updateDraft(draft => movePresentationTo(draft, sourceId, targetSessionIndex, targetPresentationIndex))}

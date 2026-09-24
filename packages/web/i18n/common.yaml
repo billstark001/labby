@@ -5,8 +5,8 @@ appTitle:
 
 personTags:
   en: Person tags
-  zh-CN: 人物标签
-  ja-JP: 人物タグ
+  zh-CN: 人员标签
+  ja-JP: 参加者タグ
 
 tagMembers:
   en: Members
@@ -25,8 +25,8 @@ sortBy:
 
 managePersonTags:
   en: Manage person tags
-  zh-CN: 管理人物标签
-  ja-JP: 人物タグを管理
+  zh-CN: 管理人员标签
+  ja-JP: 参加者タグを管理
 
 addPersonTag:
   en: Add tag
@@ -35,8 +35,8 @@ addPersonTag:
 
 deletePersonTagWarning:
   en: Delete this tag? It will also be removed from every person.
-  zh-CN: 删除此标签？该标签也会从所有人物上移除。
-  ja-JP: このタグを削除しますか？すべての人物からも外されます。
+  zh-CN: 删除此标签？该标签也会从所有人员上移除。
+  ja-JP: このタグを削除しますか？すべての参加者からも外されます。
 
 color:
   en: Color
@@ -142,6 +142,112 @@ boundaryWaitDays:
   en: First / last wait (days)
   zh-CN: 首次／末次等待（天）
   ja-JP: 初回／最終待機（日）
+
+firstWaitDays:
+  en: First wait (days)
+  zh-CN: 首次等待（天）
+  ja-JP: 初回待機（日）
+
+lastWaitDays:
+  en: Last wait (days)
+  zh-CN: 末次等待（天）
+  ja-JP: 最終待機（日）
+
+targetGapDays:
+  en: Target gap (days)
+  zh-CN: 目标间隔（天）
+  ja-JP: 目標間隔（日）
+
+metricLowerBetter:
+  en: These are weighted penalty points, not percentages. Lower is better; compare the person-level gaps below before publishing.
+  zh-CN: 下列数值是加权罚分，不是百分比；越低越好。发布前还应查看下方每个人的间隔。
+  ja-JP: 以下は重み付きペナルティで、割合ではありません。低いほど良好です。公開前に各人の間隔も確認してください。
+
+qualityHelp:
+  en: Target gap reflects each person's frequency weight. Short-gap rate counts gaps shorter than 75% of that target; a dash means there are too few presentations to calculate it.
+  zh-CN: 目标间隔已考虑每个人的发表频率权重。过短间隔占比统计短于目标间隔 75% 的次数；破折号表示发表次数不足，无法计算。
+  ja-JP: 目標間隔は各人の発表頻度の重みを反映します。短間隔率は目標の 75% 未満の間隔の割合です。ダッシュは発表回数不足で計算できないことを示します。
+
+metricUniformity:
+  en: Interval unevenness
+  zh-CN: 间隔不均匀
+  ja-JP: 間隔のばらつき
+metricUniformityHelp:
+  en: Presentations and questions clustered too close together or too far apart.
+  zh-CN: 同一人员的发表或提问过于集中，或间隔过长。
+  ja-JP: 同じ参加者の発表や質問が近すぎる、または離れすぎています。
+metricReciprocal:
+  en: Reciprocal roles
+  zh-CN: 同日互换角色
+  ja-JP: 同日の役割交換
+metricReciprocalHelp:
+  en: Two people present and question each other in the same session.
+  zh-CN: 同一天两人互相担任对方的发表者与提问者。
+  ja-JP: 同じ回で二人が互いに発表者と質問者になります。
+metricQuestionerPair:
+  en: Repeated questioner pairs
+  zh-CN: 提问搭配重复
+  ja-JP: 質問者の組み合わせの重複
+metricQuestionerPairHelp:
+  en: The same person repeatedly questions the same presenter.
+  zh-CN: 同一人员多次提问同一发表者。
+  ja-JP: 同じ参加者が同じ発表者に繰り返し質問します。
+metricRelevance:
+  en: Topic mismatch
+  zh-CN: 主题不匹配
+  ja-JP: 話題の不一致
+metricRelevanceHelp:
+  en: Presenter and questioner topics differ from the configured similarity target.
+  zh-CN: 发表者与提问者的研究主题偏离设定的相似度目标。
+  ja-JP: 発表者と質問者の研究テーマが設定した類似度目標から外れています。
+metricPresenterLoad:
+  en: Presentation count imbalance
+  zh-CN: 发表次数不均
+  ja-JP: 発表回数の偏り
+metricPresenterLoadHelp:
+  en: Presentation counts differ from frequency-weighted targets.
+  zh-CN: 各人发表次数偏离按频率权重计算的目标。
+  ja-JP: 発表回数が頻度の重みを考慮した目標から外れています。
+metricQuestionerLoad:
+  en: Question count imbalance
+  zh-CN: 提问次数不均
+  ja-JP: 質問回数の偏り
+metricQuestionerLoadHelp:
+  en: Question counts are uneven across people.
+  zh-CN: 各人的提问次数分配不均。
+  ja-JP: 参加者ごとの質問回数に偏りがあります。
+metricTotalRole:
+  en: Combined role imbalance
+  zh-CN: 总参与次数不均
+  ja-JP: 全役割の偏り
+metricTotalRoleHelp:
+  en: Combined presentation and question counts are uneven.
+  zh-CN: 发表和提问合计的参与次数分配不均。
+  ja-JP: 発表と質問を合わせた参加回数に偏りがあります。
+metricInvalidAssignment:
+  en: Hard-rule violations
+  zh-CN: 硬规则违规
+  ja-JP: 必須ルール違反
+metricInvalidAssignmentHelp:
+  en: Assignments break availability or other mandatory rules; this should be zero.
+  zh-CN: 分配违反不可用日期等必须遵守的规则；应为零。
+  ja-JP: 不在日など必須ルールに反した割り当てです。ゼロであるべきです。
+metricConstraint:
+  en: Preference constraints
+  zh-CN: 偏好约束
+  ja-JP: 希望条件
+metricConstraintHelp:
+  en: Enabled soft constraints are not fully satisfied.
+  zh-CN: 已启用的软约束未被完全满足。
+  ja-JP: 有効なソフト制約が完全には満たされていません。
+metricTotalCost:
+  en: Total penalty
+  zh-CN: 总罚分
+  ja-JP: 合計ペナルティ
+metricTotalCostHelp:
+  en: Sum of the weighted penalties above; use person-level results to judge fairness.
+  zh-CN: 上述加权罚分之和；公平性还需结合逐人结果判断。
+  ja-JP: 上記の重み付きペナルティの合計です。公平性は各人の結果も見て判断してください。
 
 toggleHighlight:
   en: Toggle highlight
@@ -1174,6 +1280,11 @@ emailTaskOneOffRecipientsHint:
   en: Review the recipients for this send. Changing them here does not change the scheduled task.
   zh-CN: 请确认本次收件地址；此处修改不会改变定时任务。
   ja-JP: 今回の宛先を確認してください。ここでの変更は定期タスクに反映されません。
+
+emailTaskRecipientSeparatorHint:
+  en: Separate multiple addresses with commas or new lines.
+  zh-CN: 多个地址可用逗号或换行分隔。
+  ja-JP: 複数の宛先はカンマまたは改行で区切ってください。
 
 emailTaskInvalidRecipients:
   en: Enter at least one valid email address, separated by commas.

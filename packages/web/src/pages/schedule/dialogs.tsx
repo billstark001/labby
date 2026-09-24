@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { getPersonSimilarity } from '@labby/core';
 import type { MetricExplanation, Person, ScheduleMetrics, SimilarityLookup, SolverDiagnostics, ScheduleQualityReport } from '@labby/core';
 import * as s from '@/styles/components.css';
-import { Button } from '@/components/ui/index';
+import { Button, ResponsiveDataField, ResponsiveDataView, responsiveDataStyles as dataStyles } from '@/components/ui/index';
 import { Dialog } from '@/components/ui/Dialog';
 import { i18n } from '@/i18n';
 import { displayName } from '@/i18n';
@@ -117,11 +117,36 @@ export interface MetricsDialogState {
   personNames?: Record<string, string>;
 }
 
+const metricCopy: Record<string, [string, string]> = {
+  uniformityPenalty: ['metricUniformity', 'metricUniformityHelp'],
+  reciprocalPenalty: ['metricReciprocal', 'metricReciprocalHelp'],
+  questionerPenalty: ['metricQuestionerPair', 'metricQuestionerPairHelp'],
+  relevancePenalty: ['metricRelevance', 'metricRelevanceHelp'],
+  presenterLoadPenalty: ['metricPresenterLoad', 'metricPresenterLoadHelp'],
+  questionerLoadPenalty: ['metricQuestionerLoad', 'metricQuestionerLoadHelp'],
+  totalRolePenalty: ['metricTotalRole', 'metricTotalRoleHelp'],
+  invalidAssignmentPenalty: ['metricInvalidAssignment', 'metricInvalidAssignmentHelp'],
+  constraintPenalty: ['metricConstraint', 'metricConstraintHelp'],
+  totalCost: ['metricTotalCost', 'metricTotalCostHelp'],
+};
+
+type QualitySortKey = 'name' | 'presentations' | 'targetGapDays' | 'minGapDays' | 'maxGapDays' | 'gapCoefficientOfVariation' | 'shortGapRate' | 'firstWaitDays' | 'lastWaitDays';
+
 export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | null; onClose: () => void }) {
+  const [sortKey, setSortKey] = useState<QualitySortKey>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   if (!state) return null;
   const { t } = i18n;
+  const collator = new Intl.Collator(i18n.lang.value, { sensitivity: 'base', numeric: true });
+  const qualityPersons = [...(state.quality?.persons ?? [])].sort((left, right) => {
+    if (sortKey === 'name') return collator.compare(state.personNames?.[left.personId] ?? left.personId, state.personNames?.[right.personId] ?? right.personId) * (sortDirection === 'asc' ? 1 : -1) || left.personId.localeCompare(right.personId);
+    const a = left[sortKey]; const b = right[sortKey];
+    if (a === null || b === null) return a === b ? left.personId.localeCompare(right.personId) : a === null ? 1 : -1;
+    return (a - b) * (sortDirection === 'asc' ? 1 : -1) || left.personId.localeCompare(right.personId);
+  });
+  const days = (value: number | null) => value === null ? '—' : value.toFixed(1);
   return (
-    <Dialog open={true} onClose={onClose} title={state.title}>
+    <Dialog open={true} onClose={onClose} title={state.title} width="min(1080px, 94vw)">
       {state.diagnostics && <div class={s.formGroup}>
         <strong>{t('solverSearchDiagnostics')}</strong>
         <div>{t('solverCostChange')}: {state.diagnostics.initialCost.toFixed(2)} → {state.diagnostics.finalCost.toFixed(2)}</div>
@@ -129,30 +154,52 @@ export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | 
         <div>{t('solverInvalidNeighbors')}: {state.diagnostics.invalidNeighbors} · {t('solverUnchangedNeighbors')}: {state.diagnostics.unchangedNeighbors} · {state.diagnostics.durationMs} ms</div>
       </div>}
       <div class={s.formGroup}>
+        <p class={s.textMuted}>{t('metricLowerBetter')}</p>
         {state.explanations.map(item => (
           <div key={item.key} class={`${s.text14} ${s.mb8}`}>
-            <strong>{item.label}</strong>: {item.value.toFixed(3)}
-            <div class={s.textMuted}>{item.summary}</div>
+            <strong>{t(metricCopy[item.key]?.[0] ?? item.key)}</strong>: {item.value.toFixed(3)}
+            <div class={s.textMuted}>{t(metricCopy[item.key]?.[1] ?? item.key)}</div>
           </div>
         ))}
       </div>
       {state.quality && <div class={s.formGroup}>
         <strong>{t('scheduleQuality')}</strong>
         <div>{t('reciprocalPairs')}: {state.quality.reciprocalPairs} · {t('hardViolations')}: {state.quality.hardViolations}</div>
-        <div style={{ overflowX: 'auto', maxHeight: '35vh' }}>
-          <table class={s.table}>
-            <thead><tr><th class={s.th}>{t('name')}</th><th class={s.th}>{t('presentations')}</th><th class={s.th}>{t('minGapDays')}</th><th class={s.th}>{t('maxGapDays')}</th><th class={s.th}>{t('gapVariation')}</th><th class={s.th}>{t('shortGapRate')}</th><th class={s.th}>{t('boundaryWaitDays')}</th></tr></thead>
-            <tbody>{state.quality.persons.map(person => <tr key={person.personId}>
-              <td class={s.td}>{state.personNames?.[person.personId] ?? person.personId}</td>
-              <td class={s.td}>{person.presentations}</td>
-              <td class={s.td}>{person.minGapDays?.toFixed(1) ?? '—'}</td>
-              <td class={s.td}>{person.maxGapDays?.toFixed(1) ?? '—'}</td>
-              <td class={s.td}>{person.gapCoefficientOfVariation?.toFixed(2) ?? '—'}</td>
-              <td class={s.td}>{person.shortGapRate === null ? '—' : `${Math.round(person.shortGapRate * 100)}%`}</td>
-              <td class={s.td}>{person.firstWaitDays?.toFixed(1) ?? '—'} / {person.lastWaitDays?.toFixed(1) ?? '—'}</td>
-            </tr>)}</tbody>
-          </table>
-        </div>
+        <p class={s.textMuted}>{t('qualityHelp')}</p>
+        <ResponsiveDataView
+          items={qualityPersons}
+          getKey={person => person.personId}
+          sorting={{ key: sortKey, direction: sortDirection, options: [
+            { key: 'name', label: t('name') }, { key: 'presentations', label: t('presentations'), defaultDirection: 'desc' },
+            { key: 'targetGapDays', label: t('targetGapDays') }, { key: 'minGapDays', label: t('minGapDays') },
+            { key: 'maxGapDays', label: t('maxGapDays'), defaultDirection: 'desc' }, { key: 'gapCoefficientOfVariation', label: t('gapVariation'), defaultDirection: 'desc' },
+            { key: 'shortGapRate', label: t('shortGapRate'), defaultDirection: 'desc' }, { key: 'firstWaitDays', label: t('firstWaitDays') }, { key: 'lastWaitDays', label: t('lastWaitDays') },
+          ], onChange: (key, direction) => { setSortKey(key as QualitySortKey); setSortDirection(direction); } }}
+          columns={[
+            { header: t('name'), sortKey: 'name' }, { header: t('presentations'), sortKey: 'presentations' }, { header: t('targetGapDays'), sortKey: 'targetGapDays' },
+            { header: t('minGapDays'), sortKey: 'minGapDays' }, { header: t('maxGapDays'), sortKey: 'maxGapDays' },
+            { header: t('gapVariation'), sortKey: 'gapCoefficientOfVariation' }, { header: t('shortGapRate'), sortKey: 'shortGapRate' },
+            { header: t('firstWaitDays'), sortKey: 'firstWaitDays' }, { header: t('lastWaitDays'), sortKey: 'lastWaitDays' },
+          ]}
+          renderDesktopRow={person => <>
+            <td class={s.td}>{state.personNames?.[person.personId] ?? person.personId}</td>
+            <td class={s.td}>{person.presentations}</td><td class={s.td}>{days(person.targetGapDays)}</td>
+            <td class={s.td}>{days(person.minGapDays)}</td><td class={s.td}>{days(person.maxGapDays)}</td>
+            <td class={s.td}>{person.gapCoefficientOfVariation?.toFixed(2) ?? '—'}</td>
+            <td class={s.td}>{person.shortGapRate === null ? '—' : `${Math.round(person.shortGapRate * 100)}%`}</td>
+            <td class={s.td}>{days(person.firstWaitDays)}</td><td class={s.td}>{days(person.lastWaitDays)}</td>
+          </>}
+          renderMobileCard={person => <><div class={dataStyles.mobileHeader}><div class={dataStyles.mobileTitle}>{state.personNames?.[person.personId] ?? person.personId}</div></div>
+            <div class={dataStyles.mobileFields}>
+              <ResponsiveDataField label={t('presentations')}>{person.presentations}</ResponsiveDataField>
+              <ResponsiveDataField label={t('targetGapDays')}>{days(person.targetGapDays)}</ResponsiveDataField>
+              <ResponsiveDataField label={t('minGapDays')}>{days(person.minGapDays)}</ResponsiveDataField>
+              <ResponsiveDataField label={t('maxGapDays')}>{days(person.maxGapDays)}</ResponsiveDataField>
+              <ResponsiveDataField label={t('gapVariation')}>{person.gapCoefficientOfVariation?.toFixed(2) ?? '—'}</ResponsiveDataField>
+              <ResponsiveDataField label={t('shortGapRate')}>{person.shortGapRate === null ? '—' : `${Math.round(person.shortGapRate * 100)}%`}</ResponsiveDataField>
+              <ResponsiveDataField label={t('boundaryWaitDays')}>{days(person.firstWaitDays)} / {days(person.lastWaitDays)}</ResponsiveDataField>
+            </div></>}
+        />
       </div>}
     </Dialog>
   );
