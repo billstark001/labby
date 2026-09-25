@@ -2,6 +2,8 @@
 
 Labby uses simulated annealing, not a genetic algorithm. The implementation is in `packages/core/src/schedule/`; the reproducible synthetic benchmark is `pnpm --filter @labby/core benchmark:scheduling`.
 
+`annealing.ts` constructs schedules and coordinates full and incremental solves. `annealing-strategies.ts` owns the weighted move registry and the shared annealing loop; `targeted-strategies.ts` owns frequency, presenter-gap, reciprocal, and post-search questioner repair moves. Strategy functions receive their random source and return a new schedule without modifying the input. `strategy-utils.ts` contains shared cloning, count, and distance helpers. The post-search repair is an optional final strategy rather than a separate solver implementation.
+
 ## Inputs and rules
 
 Full scheduling builds the configured calendar dates. Incremental scheduling preserves sessions before `changeDate` and rebuilds the rest; questioner-only mode preserves presenters too. Active people, unavailability, similarity, prior sessions, and optional constraints guide the solve.
@@ -33,6 +35,29 @@ The search uses swaps, replacements, questioner and session rebuilds, frequency 
 Real schedules can give one person a 14-day gap and a 63-day gap while maintaining an acceptable presentation count. A reduced presentation frequency (for example 0.6) can legitimately produce longer gaps. Each person's target is the padded calendar span divided by their number of appearances plus one, so a low frequency changes the expected spacing through its lower assignment count. The solver does not impose a global hard minimum.
 
 Each schedule configuration can tune the presenter and questioner policies independently in **Gap balance tuning**. `shortGapRatio` is a fraction from 0 to 1, `shortGapWeight` is 0–100, and `spreadWeight` is 0–50. Defaults are presenter `(0.80, 20, 4)` and questioner `(0.75, 16, 2)`. Zero disables the corresponding extra penalty. Missing settings in existing configurations use these defaults; no database schema change is required because configurations are JSON payloads. The solver bounds non-finite or out-of-range inputs. Boundary waits retain their ordinary squared deviation but do not count as actual consecutive gaps for the threshold or spread penalties. This policy is soft: it cannot guarantee a minimum gap when availability or other hard rules make one infeasible.
+
+## Questioner tuning and objective weights
+
+The schedule preference editor exposes three independent kinds of tuning. **Initial questioner selection** can prefer less-used directed questioner–presenter pairs and lower normalized question counts, with a 0–100% chance per slot. It applies to full solves, full incremental solves, and the initial rebuild in questioners-only incremental mode; the latter includes the frozen prefix when counting prior pairings and questions. **Targeted questioner repair** tries valid replacements and swaps after annealing. It has an attempt limit and extra weights for pair repetition and count imbalance. Both are off by default, preserving the previous search behavior unless a schedule opts in. Repair keeps presenter assignments and all hard rules; it can take substantially longer on large schedules. Both controls can be enabled in the same schedule: each search start first constructs an initial assignment, then anneals, then repairs its questioners before the solver chooses the best result.
+
+**Objective weights** exposes all ten fields of `COST_WEIGHTS`. That frozen object remains the current model's default and is read directly by the editor. Each row can reset its value to the default; the reset button is disabled when the value already matches. A schedule stores only values that differ from those defaults in its JSON configuration; missing fields resolve to the latest defaults. The questioner pair, question count, and question gap terms are distinct, so they can be traded off independently. Setting a hard-rule weight to zero does not permit hard-rule violations: the assignment validator still rejects them. No database migration is needed because configurations are already stored as JSON payloads.
+
+To compare the controls, run `pnpm --filter @labby/core benchmark:questioner-tuning`. It uses two synthetic 14-person, 31-week scenarios, three fixed seeds per variant, two presenters and two questioners per presentation. The second scenario includes three one-day absences and two people at 0.6 presenter frequency. Every variant begins with the same seed, and metrics are recalculated with the default weights for comparison. The tested settings were assignment chances 85%/85%; repair 30 attempts with extra pair/count weights 8/8; and objective weights pair/count/gap 10/24/4. The combined variant enables assignment and repair on the same configuration. Mean results from 2026-09-25:
+
+| Scenario | Variant | Repeated pair excess | Question count range | Question count penalty | Question gap penalty |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Plain | Default | 24.0 | 5.0 | 3.86 | 50.34 |
+| Plain | Initial selection | 16.0 | 2.67 | 1.62 | 34.00 |
+| Plain | Targeted repair | 5.33 | 2.67 | 1.45 | 40.23 |
+| Plain | Both enabled | 6.0 | 2.33 | 1.14 | 33.24 |
+| Plain | Objective weights | 11.67 | 2.67 | 1.71 | 79.03 |
+| Frequency and leave | Default | 24.67 | 3.33 | 2.61 | 46.13 |
+| Frequency and leave | Initial selection | 12.0 | 3.33 | 2.04 | 32.59 |
+| Frequency and leave | Targeted repair | 9.33 | 2.33 | 0.95 | 42.10 |
+| Frequency and leave | Both enabled | 2.0 | 2.33 | 1.04 | 36.54 |
+| Frequency and leave | Objective weights | 9.33 | 2.67 | 1.54 | 89.83 |
+
+All 30 plans in the main comparison had zero hard-rule violations. The plain combined variant did produce reciprocal pairs in two of three seeds (mean raw reciprocal penalty 6.67) even though the default and assignment-only variants produced none: `discourage` is a soft preference, and repair's extra repeated-pair emphasis can trade against it. Use `forbid` if a reciprocal pair must never appear. The objective-weight variant deliberately reduced the question-gap weight, exposing the tradeoff with pair and count quality. A separate sensitivity run changed only `questionerPair` from 1 to 2 or 4: repeated-pair excess fell only from 24.0 to 23.67 or 21.0 in the plain scenario and from 24.67 to 23.0 or 22.33 with frequency/leave. Question-count range sometimes worsened. Changing only `reciprocal` from 1 to 2 was inconclusive because the baseline solutions already had zero reciprocal pairs. Under `discourage`, each reciprocal pair contributes a raw penalty of 10 before the weight; under `neutral`, the term is zero regardless of weight. The repeated-pair term grows exponentially with each additional reuse, so its raw contribution (about 47–50 in these baseline scenarios) is meaningful even at weight 1. These three-seed synthetic results do not establish a best production setting or reliable latency prediction. The measured wall times varied widely between runs on the same machine, although repair evaluates many more candidates by construction. Use the per-person metrics and a broader workload before changing the defaults.
 
 ## Localized collection ordering
 
