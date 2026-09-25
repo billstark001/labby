@@ -2,9 +2,7 @@
 import { createVar, style, styleVariants } from '@vanilla-extract/css';
 import { breakpoints, vars } from './theme.css';
 
-// ---------------------------------------------------------------------------
-// Layout
-// ---------------------------------------------------------------------------
+// #region Layout
 
 export const appShell = style({
   display: 'flex',
@@ -105,9 +103,9 @@ export const appBrandMobile = style({
   color: vars.color.primary,
 });
 
-// ---------------------------------------------------------------------------
-// Navigation
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Navigation
 
 export const navItem = style({
   display: 'flex',
@@ -166,9 +164,9 @@ export const navMetaButton = style([
   },
 ]);
 
-// ---------------------------------------------------------------------------
-// Buttons
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Buttons
 
 export const btn = style({
   display: 'inline-flex',
@@ -223,9 +221,9 @@ export const btnVariants = styleVariants({
   ],
 });
 
-// ---------------------------------------------------------------------------
-// Cards & surfaces
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Cards & surfaces
 
 export const card = style({
   background: vars.color.surface,
@@ -235,9 +233,9 @@ export const card = style({
   boxShadow: vars.shadow.sm,
 });
 
-// ---------------------------------------------------------------------------
-// Forms
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Forms
 
 export const formGroup = style({
   display: 'flex',
@@ -296,9 +294,9 @@ export const preWrap = style({
   lineHeight: 1.5,
 });
 
-// ---------------------------------------------------------------------------
-// Table
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Table
 
 export const table = style({
   width: '100%',
@@ -329,9 +327,9 @@ export const similarityColors = styleVariants({
   lowest: { color: 'red' },
 });
 
-// ---------------------------------------------------------------------------
-// Badge
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Badge
 
 export const badge = style({
   display: 'inline-block',
@@ -395,9 +393,9 @@ export const historyDeleteButton = style({
   },
 });
 
-// ---------------------------------------------------------------------------
-// Graph canvas
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Graph canvas
 
 export const graphCanvas = style({
   position: 'relative',
@@ -410,9 +408,9 @@ export const graphCanvas = style({
   overflow: 'hidden',
 });
 
-// ---------------------------------------------------------------------------
-// Toolbar row
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Toolbar row
 
 export const toolbar = style({
   display: 'flex',
@@ -422,9 +420,9 @@ export const toolbar = style({
   alignItems: 'center',
 });
 
-// ---------------------------------------------------------------------------
-// Tag list
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Tag list
 
 export const tagList = style({
   display: 'flex',
@@ -433,9 +431,9 @@ export const tagList = style({
 });
 export const scrollableTagList = style({ maxHeight: '12rem', overflowY: 'auto' });
 
-// ---------------------------------------------------------------------------
-// Utility styles for flex and spacing
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Utility styles for flex and spacing
 
 export const flexGapXs = style({
   display: 'flex',
@@ -607,9 +605,9 @@ export const cardNoScheduke = style([
   },
 ]);
 
-// ---------------------------------------------------------------------------
-// Graph sidebar card with max-height matching the canvas
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Graph sidebar card with max-height matching the canvas
 
 export const graphSidebarCard = style([
   card,
@@ -629,9 +627,9 @@ export const rankingHandle = style({ touchAction: 'none', cursor: 'grab', select
 export const rankingName = style({ flex: '1 1 120px' });
 export const rankingSelect = style({ width: 'auto' });
 
-// ---------------------------------------------------------------------------
-// Disabled badge
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Disabled badge
 
 export const badgeDisabled = style({
   display: 'inline-block',
@@ -643,9 +641,9 @@ export const badgeDisabled = style({
   color: vars.color.textMuted,
 });
 
-// ---------------------------------------------------------------------------
-// Notes cell
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Notes cell
 
 export const notesCell = style({
   maxWidth: '200px',
@@ -655,17 +653,17 @@ export const notesCell = style({
   fontSize: vars.font.size.xs,
 });
 
-// ---------------------------------------------------------------------------
-// Danger text
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Danger text
 
 export const textDanger = style({
   color: vars.color.danger,
 });
 
-// ---------------------------------------------------------------------------
-// Hide on mobile
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Hide on mobile
 
 export const hideOnMobile = style({
   '@media': {
@@ -675,10 +673,9 @@ export const hideOnMobile = style({
   },
 });
 
+// #endregion
 
-// ---------------------------------------------------------------------------
-// Editable cell (manual edit mode)
-// ---------------------------------------------------------------------------
+// #region Editable cell (manual edit mode)
 
 export const editableCell = style({
   cursor: 'context-menu',
@@ -693,11 +690,9 @@ export const editableCell = style({
   },
 });
 
+// #endregion
 
-
-// ---------------------------------------------------------------------------
-// Login page
-// ---------------------------------------------------------------------------
+// #region Login page
 
 export const loginShell = style({
   display: 'flex',
@@ -744,3 +739,5 @@ export const loginSubmit = style({
   width: '100%',
   marginTop: vars.space.sm,
 });
+
+// #endregion

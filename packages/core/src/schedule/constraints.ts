@@ -23,9 +23,7 @@ import type {
 } from '../types.js';
 import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 
-// ---------------------------------------------------------------------------
-// Configurable cost weights
-// ---------------------------------------------------------------------------
+// #region Configurable cost weights
 
 const _f = <T>(value: T): Readonly<T> => Object.freeze(value);
 
@@ -99,9 +97,9 @@ function resolveGapBalance(configured: Partial<GapBalancePolicy> | undefined, de
   };
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Types
 
 export interface CostContext {
   personKeywords: Map<string, string[]>;
@@ -129,9 +127,9 @@ export interface CostBreakdown {
   constraintPenalty: number;
 }
 
+// #endregion
 
 // #region Constraint guidance and evaluation
-
 
 export interface NoOverlapGuide {
   memberships: Map<string, { group: number; multiple: boolean }>;
@@ -207,8 +205,6 @@ export function previewConstraintPairs(c: PairConstraint, persons: Person[]): Ar
   }
   return pairs;
 }
-
-// #region Constraint guidance and evaluation
 
 export function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
   const guidance: ConstraintGuidance = {
@@ -413,10 +409,9 @@ function perPersonGapPenalty(indicesByPerson: Map<string, number[]>, dates: numb
   return penalty;
 }
 
+// #endregion
 
-// ---------------------------------------------------------------------------
-// Cost computation
-// ---------------------------------------------------------------------------
+// #region Cost computation
 
 export function computeCostBreakdown(
   sessions: Session[],
@@ -637,3 +632,5 @@ export function validateAssignmentsWithContext(
   }
   return errors;
 }
+
+// #endregion

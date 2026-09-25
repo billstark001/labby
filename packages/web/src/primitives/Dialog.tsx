@@ -126,9 +126,7 @@ export function DialogDescription({ children, class: cls, id }: { children: Comp
   return <p class={cls} id={id}>{children}</p>;
 }
 
-// ---------------------------------------------------------------------------
-// useDialog hook
-// ---------------------------------------------------------------------------
+// #region useDialog hook
 
 export interface DialogHandle {
   isOpen: Signal<boolean>;
@@ -144,3 +142,5 @@ export function useDialog(): DialogHandle {
     close: () => { isOpen.value = false; },
   };
 }
+
+// #endregion

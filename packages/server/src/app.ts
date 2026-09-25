@@ -380,9 +380,7 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return ok(c, { ok: true });
   });
 
-  // ---------------------------------------------------------------------------
-  // Auth routes
-  // ---------------------------------------------------------------------------
+  // #region Auth routes
 
   app.post("/api/v1/auth/login", async (c) => {
     const body = loginBodySchema.parse(await c.req.json());
@@ -485,9 +483,9 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return ok(c, { ok: true });
   });
 
-  // ---------------------------------------------------------------------------
-  // User management routes (admin/root only)
-  // ---------------------------------------------------------------------------
+  // #endregion
+
+  // #region User management routes (admin/root only)
 
   app.post("/api/v1/users", requireMinRole(UserRole.Admin), async (c) => {
     const body = issueUserBodySchema.parse(await c.req.json());
@@ -551,9 +549,9 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return c.body(null, 204);
   });
 
-  // ---------------------------------------------------------------------------
-  // Database CRUD routes
-  // ---------------------------------------------------------------------------
+  // #endregion
+
+  // #region Database CRUD routes
 
   const scheduleForeignKeyQuerySchema = z.object({
     configIds: z.array(z.string().min(1)).min(1),
@@ -778,9 +776,9 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return ok(c, updated);
   });
 
-  // ---------------------------------------------------------------------------
-  // Solver routes (call @labby/core)
-  // ---------------------------------------------------------------------------
+  // #endregion
+
+  // #region Solver routes (call @labby/core)
 
   app.post("/api/v1/solver/run", async (c) => {
     const body = solverInputSchema.parse(await c.req.json());
@@ -959,9 +957,9 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     return ok(c, result);
   });
 
-  // ---------------------------------------------------------------------------
-  // NLP / embedding routes (call @labby/core)
-  // ---------------------------------------------------------------------------
+  // #endregion
+
+  // #region NLP / embedding routes (call @labby/core)
 
   app.post('/api/v1/nlp/recommend-ranking', async (c) => {
     const options = rankingRecommendSchema.parse(await c.req.json());
@@ -984,6 +982,8 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
     }
     return ok(c, await embeddingService.trainRanking(judgment));
   });
+
+  // #endregion
 
   if (webDistDir) {
     app.get('/', async (c) => {

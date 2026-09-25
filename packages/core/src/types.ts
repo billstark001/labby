@@ -371,9 +371,7 @@ export interface TrainingResult {
   maxDistanceDrift: number;
 }
 
-// ---------------------------------------------------------------------------
-// Schedule constraints
-// ---------------------------------------------------------------------------
+// #region Schedule constraints
 
 /**
  * Prevent members of a group from simultaneously being presenter and questioner
@@ -453,3 +451,5 @@ export interface ScheduleSolver {
   solveFull(input: SolverInput): Session[];
   solveIncremental(input: IncrementalSolverInput): Session[];
 }
+
+// #endregion

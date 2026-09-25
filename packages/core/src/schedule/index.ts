@@ -44,13 +44,12 @@ export { buildCostContext, buildConstraintGuidance, noOverlapForbidden, previewC
 export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing-strategies.js';
 export { solveConstrained } from './constrained.js';
 
-// ---------------------------------------------------------------------------
-// Date / ID utilities
-// ---------------------------------------------------------------------------
+// #region Date / ID utilities
 export { generateId, generateSessionDates, isWholeGroupClosure, validateUnavailability } from './utils.js';
-// ---------------------------------------------------------------------------
-// Metrics
-// ---------------------------------------------------------------------------
+
+// #endregion
+
+// #region Metrics
 
 function metricSummary(key: keyof ScheduleMetrics, value: number): string {
   switch (key) {
@@ -141,9 +140,9 @@ export function computeScheduleQuality(
   return { reciprocalPairs, hardViolations: validateScheduleAssignments(plan.sessions, input).length, shortGapRatio, persons };
 }
 
-// ---------------------------------------------------------------------------
-// Public solvers
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Public solvers
 
 const solver = annealingSolver;
 
@@ -164,3 +163,5 @@ export function solveFull(input: SolverInput): Session[] {
 export function solveIncremental(input: IncrementalSolverInput): Session[] {
   return solver.solveIncremental(input);
 }
+
+// #endregion

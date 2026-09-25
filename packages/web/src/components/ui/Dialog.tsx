@@ -66,9 +66,7 @@ export function Dialog({ open, onClose, closeOnOverlayClick = true, title, descr
   );
 }
 
-// ---------------------------------------------------------------------------
-// Confirm Dialog Hook & Factory
-// ---------------------------------------------------------------------------
+// #region Confirm Dialog Hook & Factory
 
 type ConfirmDialogState = {
   isOpen: boolean;
@@ -130,9 +128,9 @@ export function closeConfirmDialog(): void {
   confirmDialogState.value = null;
 }
 
-// ---------------------------------------------------------------------------
-// Confirm Dialog Component
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Confirm Dialog Component
 
 export function ConfirmDialogComponent() {
   const { t } = i18n;
@@ -183,3 +181,5 @@ export function ConfirmDialogComponent() {
     />
   );
 }
+
+// #endregion

@@ -13,9 +13,7 @@ function readPersistedTheme(): 'light' | 'dark' {
   return 'light';
 }
 
-// ---------------------------------------------------------------------------
-// Application state signals
-// ---------------------------------------------------------------------------
+// #region Application state signals
 
 export const themeSignal = signal<'light' | 'dark'>(readPersistedTheme());
 export const personsSignal = signal<Person[]>([]);
@@ -50,9 +48,9 @@ export function resetDataSignals(): void {
 export type NavSection = 'persons' | 'keywords' | 'schedule' | 'graph' | 'settings';
 export const navSignal = signal<NavSection>('schedule');
 
-// ---------------------------------------------------------------------------
-// Derived state
-// ---------------------------------------------------------------------------
+// #endregion
+
+// #region Derived state
 
 /** Person lookup map by ID. */
 export const personMapSignal = computed(() => {
@@ -91,3 +89,5 @@ export const presentationCountSignal = computed(() => {
   }
   return counts;
 });
+
+// #endregion
