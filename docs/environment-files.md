@@ -39,6 +39,17 @@ sync plan, preventing unrelated shell secrets from being copied to a provider. O
 remote value, an explicit empty assignment synchronizes an empty string, and deletion requires
 `--delete-env KEY`.
 
+The API Railway deployment also expands configured credential files after env-lane has selected
+the final values. `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_OAUTH_JSON_PATH`, and
+`GOOGLE_OAUTH_REFRESH_TOKEN_PATH` are local source paths, never Railway runtime paths. A selected
+file path replaces direct fields inherited from an earlier dotenv file. Direct fields in the same
+or a later file take precedence; a complete direct field group skips file reading, while a partial
+group or conflicting values are rejected. Paths are relative to the dotenv file that supplied
+them. The file must be owned by the deployer, regular, mode `0600` or stricter,
+no more than 64 KiB, and not a symlink. The planner sends extracted fields through Railway CLI
+stdin; it does not upload the files or their paths. Cloud Run deployment does not expand these
+paths because its attached identity and secret mounts follow a separate deployment contract.
+
 ## Sorting
 
 Templates define the intended key and comment order. Sorting preserves values and comments; keys

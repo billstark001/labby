@@ -24,14 +24,14 @@ const TARGET_DEPLOY_PATTERNS: Record<RailwayServiceKind, RegExp[]> = {
   cron: [],
 };
 
-function run(command: string, args: string[], options: { capture?: boolean; input?: string } = {}): string {
+function run(command: string, args: string[], options: { capture?: boolean; input?: string; sensitive?: boolean } = {}): string {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     input: options.input,
     stdio: options.capture ? ['pipe', 'pipe', 'pipe'] : 'inherit',
   });
   if (result.status !== 0) {
-    const detail = options.capture ? (result.stderr ?? '').trim() : '';
+    const detail = options.capture && !options.sensitive ? (result.stderr ?? '').trim() : '';
     throw new Error(`${command} ${args.join(' ')} failed with code ${result.status ?? 1}${detail ? `: ${detail}` : ''}`);
   }
   return (result.stdout ?? '').trim();
@@ -91,7 +91,8 @@ export function parseRailwayDeployArguments(args: string[]): { incremental: bool
 
 export function railwayScopeArgs(target: RailwayServiceKind, env: NodeJS.ProcessEnv = process.env): string[] {
   const args: string[] = [];
-  args.push('--service', env.RAILWAY_SERVICE?.trim() || DEFAULT_RAILWAY_SERVICES[target]);
+  const service = env.RAILWAY_SERVICE?.trim() || DEFAULT_RAILWAY_SERVICES[target];
+  args.push('--service', service);
   if (env.RAILWAY_ENVIRONMENT?.trim()) args.push('--environment', env.RAILWAY_ENVIRONMENT.trim());
   if (env.RAILWAY_PROJECT_ID?.trim()) {
     if (!env.RAILWAY_ENVIRONMENT?.trim()) {
@@ -102,15 +103,24 @@ export function railwayScopeArgs(target: RailwayServiceKind, env: NodeJS.Process
   return args;
 }
 
-function syncRailwayEnvironment(
+export function syncRailwayEnvironment(
   railway: string,
   scopeArgs: string[],
   updates: Record<string, string>,
   deletes: readonly string[],
+  expandedKeys: readonly string[],
 ): boolean {
   const currentRaw = run(railway, ['variable', 'list', ...scopeArgs, '--json'], { capture: true });
-  const current = JSON.parse(currentRaw) as Record<string, string>;
+  const current = JSON.parse(currentRaw) as Record<string, string | null>;
+  const sealedExpanded = expandedKeys.filter((key) => current[key] === null || current[key] === '<sealed>');
+  if (sealedExpanded.length > 0) {
+    throw new Error(`File-derived credential variable(s) are sealed and cannot be synchronized by CLI: ${sealedExpanded.join(', ')}. Update them in Railway's Variables tab or omit the local file path.`);
+  }
   const changed = diffDeploymentEnvironment(current, updates, deletes);
+  const sealed = Object.keys(updates).filter((key) => current[key] === null || current[key] === '<sealed>');
+  if (sealed.length > 0) {
+    console.warn(`[railway] Retained ${sealed.length} sealed variable(s); update their values in the Railway dashboard if they changed locally.`);
+  }
 
   for (const key of changed.deletes) {
     run(railway, ['variable', 'delete', key, ...scopeArgs, '--json'], { capture: true });
@@ -119,6 +129,7 @@ function syncRailwayEnvironment(
     run(railway, ['variable', 'set', key, '--stdin', '--skip-deploys', ...scopeArgs, '--json'], {
       capture: true,
       input: value,
+      sensitive: true,
     });
   }
 
@@ -147,9 +158,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       build: parsedEnv.env.build,
       allowedKeys: target === 'cron' ? RAILWAY_CRON_ENV_KEYS : SERVER_RUNTIME_ENV_KEYS,
       deleteKeys: parsedEnv.env.deleteKeys,
+      expandFileCredentials: target === 'server',
     });
     console.info(`[railway] Syncing environment from ${plan.files.join(', ')} (${plan.build}).`);
-    envChanged = syncRailwayEnvironment(railway, scopeArgs, plan.updates, plan.deletes);
+    envChanged = syncRailwayEnvironment(railway, scopeArgs, plan.updates, plan.deletes, plan.expandedKeys);
   }
 
   if (incremental) {

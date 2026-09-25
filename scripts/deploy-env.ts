@@ -1,4 +1,29 @@
 import { resolveInjectedEnv } from 'env-lane';
+import path from 'node:path';
+import {
+  parseGoogleOAuthClient,
+  parseGoogleOAuthRefreshToken,
+  parseGoogleServiceAccount,
+  readPrivateCredentialFile,
+} from './deploy-file-credentials.js';
+
+const FILE_CREDENTIAL_EXPANSIONS = [
+  {
+    pathKey: 'GOOGLE_APPLICATION_CREDENTIALS',
+    directKeys: ['GOOGLE_CLOUD_CLIENT_EMAIL', 'GOOGLE_CLOUD_PRIVATE_KEY'],
+    parse: parseGoogleServiceAccount,
+  },
+  {
+    pathKey: 'GOOGLE_OAUTH_JSON_PATH',
+    directKeys: ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'],
+    parse: parseGoogleOAuthClient,
+  },
+  {
+    pathKey: 'GOOGLE_OAUTH_REFRESH_TOKEN_PATH',
+    directKeys: ['GOOGLE_OAUTH_REFRESH_TOKEN'],
+    parse: parseGoogleOAuthRefreshToken,
+  },
+] as const;
 
 export const SERVER_RUNTIME_ENV_KEYS = [
   'NODE_ENV',
@@ -31,6 +56,8 @@ export const SERVER_RUNTIME_ENV_KEYS = [
   'GOOGLE_OAUTH_JSON_PATH',
   'GOOGLE_OAUTH_REFRESH_TOKEN',
   'GOOGLE_OAUTH_REFRESH_TOKEN_PATH',
+  'GOOGLE_CLOUD_CLIENT_EMAIL',
+  'GOOGLE_CLOUD_PRIVATE_KEY',
   'PUBLIC_BASE_URL',
   'STATIC_SCHEDULER_MODE',
   'DYNAMIC_SCHEDULER_MODE',
@@ -76,6 +103,7 @@ export interface DeploymentEnvPlan {
   values: Record<string, string>;
   updates: Record<string, string>;
   deletes: string[];
+  expandedKeys: string[];
 }
 
 export interface DeploymentEnvDiff {
@@ -146,6 +174,7 @@ export async function buildDeploymentEnvPlan(options: {
   allowedKeys: readonly string[];
   deleteKeys?: readonly string[];
   target?: string;
+  expandFileCredentials?: boolean;
 }): Promise<DeploymentEnvPlan> {
   const allowed = new Set(options.allowedKeys);
   const deletes = [...new Set(options.deleteKeys ?? [])];
@@ -164,27 +193,69 @@ export async function buildDeploymentEnvPlan(options: {
     throw new Error(`No dotenv file found for deployment build '${options.build}'.`);
   }
 
+  const values = { ...resolved.values };
+  const expandedKeys: string[] = [];
+  if (options.expandFileCredentials) {
+    const fileOrders = new Map(resolved.files.map((file) => [path.resolve(options.root, file.path), file.order]));
+    const sourceOrder = (key: string): number => {
+      const sourceFile = resolved.sources[key]?.file;
+      return sourceFile ? (fileOrders.get(path.resolve(options.root, sourceFile)) ?? -1) : -1;
+    };
+    for (const expansion of FILE_CREDENTIAL_EXPANSIONS) {
+      const credentialFile = values[expansion.pathKey]?.trim();
+      const fileOrder = sourceOrder(expansion.pathKey);
+      // A lane-specific file path replaces direct fields inherited from an
+      // earlier dotenv file. Direct fields in the same or a later file win.
+      const effectiveKeys = expansion.directKeys.filter((key) =>
+        !credentialFile || sourceOrder(key) >= fileOrder);
+      const setCount = effectiveKeys.filter((key) => values[key]?.trim()).length;
+      if (setCount > 0 && setCount < expansion.directKeys.length) {
+        throw new Error(`${expansion.directKeys.join(' and ')} must be set together`);
+      }
+      if (setCount === expansion.directKeys.length || !credentialFile) continue;
+      const sourceFile = resolved.sources[expansion.pathKey]?.file;
+      const sourceDirectory = sourceFile
+        ? path.dirname(path.resolve(options.root, sourceFile))
+        : resolved.target.dir;
+      const credentialPath = path.resolve(sourceDirectory, credentialFile);
+      const parsed = expansion.parse(await readPrivateCredentialFile(credentialPath));
+      for (const [key, value] of Object.entries(parsed)) {
+        if (sourceOrder(key) >= fileOrder && values[key]?.trim() && values[key].trim() !== value) {
+          throw new Error(`${key} conflicts with ${expansion.pathKey}`);
+        }
+        values[key] = value;
+        expandedKeys.push(key);
+      }
+    }
+  }
+
   const deleteSet = new Set(deletes);
   const updates = Object.fromEntries(
-    Object.entries(resolved.values).filter(([key]) => allowed.has(key) && !deleteSet.has(key)),
+    Object.entries(values).filter(([key]) => allowed.has(key)
+      && !deleteSet.has(key)
+      && (!options.expandFileCredentials || !FILE_CREDENTIAL_EXPANSIONS.some((entry) => entry.pathKey === key))),
   );
 
   return {
     build: resolved.build,
     files,
-    values: resolved.values,
+    values,
     updates,
     deletes,
+    expandedKeys,
   };
 }
 
 export function diffDeploymentEnvironment(
-  current: Record<string, string>,
+  current: Record<string, string | null>,
   updates: Record<string, string>,
   deletes: readonly string[],
 ): DeploymentEnvDiff {
   return {
-    updates: Object.entries(updates).filter(([key, value]) => current[key] !== value),
+    // Railway reports sealed values as null. Keep them write-only instead of
+    // replacing them with ordinary variables just because they cannot compare.
+    updates: Object.entries(updates).filter(([key, value]) => current[key] !== null
+      && current[key] !== '<sealed>' && current[key] !== value),
     deletes: deletes.filter((key) => Object.hasOwn(current, key)),
   };
 }

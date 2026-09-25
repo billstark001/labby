@@ -18,6 +18,9 @@ run/
 **/.env
 **/.env.*
 
+# Local Google credential material
+**/google-*
+
 # Logs
 *.log
 npm-debug.log*

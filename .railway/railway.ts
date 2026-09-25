@@ -19,11 +19,9 @@ export default defineRailway(() => {
     start: "node packages/server/dist/cron/railway-dispatch.js",
     replicas: { "asia-southeast1-eqsg3a": 1 },
     deploy: { cronSchedule: "17 3 * * *", restartPolicyType: "NEVER" },
-    // Keep existing service variables during the region change; deployment sync
-    // still uses the narrower RAILWAY_CRON_ENV_KEYS allowlist.
+    // Existing variables stay untouched by IaC; Cron deployment sync uses the narrow allowlist.
     env: preserved([...RAILWAY_CRON_ENV_KEYS, ...SERVER_RUNTIME_ENV_KEYS]),
   });
-
   return project("labby", {
     resources: [labbyApi, labbyAuthCleanup],
   });
