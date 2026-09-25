@@ -27,6 +27,7 @@ The monorepo contains:
 
 - `packages/core` – scheduling algorithms, domain types, and the shared TypeScript embedding engine
 - `packages/web` – Vite app with hash routing, login UI, and API/local storage adapters
+- `packages/db` – shared PostgreSQL/PGlite schema, graph queries, and business record SQL
 - `packages/server` – Hono application, PGlite/Postgres store, auth service, cron scheduler, mailer, and backup service
 
 ## Quick Start

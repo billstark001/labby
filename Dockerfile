@@ -12,6 +12,7 @@ WORKDIR /app
 # Copy workspace config and package manifests
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json ./packages/core/
+COPY packages/db/package.json ./packages/db/
 COPY packages/server/package.json ./packages/server/
 COPY packages/web/package.json ./packages/web/
 
@@ -22,6 +23,8 @@ RUN pnpm install --frozen-lockfile
 FROM base AS core-builder
 COPY packages/core ./packages/core
 RUN pnpm --filter @labby/core build
+COPY packages/db ./packages/db
+RUN pnpm --filter @labby/db build
 
 # ---- Build server ----
 FROM core-builder AS server-builder
@@ -48,6 +51,7 @@ WORKDIR /app
 # Copy workspace config and production package manifests
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json ./packages/core/
+COPY packages/db/package.json ./packages/db/
 COPY packages/server/package.json ./packages/server/
 
 # Install production dependencies only
@@ -55,6 +59,9 @@ RUN pnpm install --frozen-lockfile --prod
 
 # Copy built artifacts
 COPY --from=core-builder /app/packages/core/dist ./packages/core/dist
+COPY --from=core-builder /app/packages/db/dist ./packages/db/dist
+COPY --from=core-builder /app/packages/db/current-schema.sql ./packages/db/current-schema.sql
+COPY --from=core-builder /app/packages/db/migrate ./packages/db/migrate
 COPY --from=server-builder /app/packages/server/dist ./packages/server/dist
 COPY --from=web-builder /app/packages/web/dist ./packages/web/dist
 

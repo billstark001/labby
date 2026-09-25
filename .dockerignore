@@ -3,6 +3,7 @@ node_modules/
 
 # Build artifacts
 packages/core/dist/
+packages/db/dist/
 packages/server/dist/
 packages/web/dist/
 
