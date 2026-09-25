@@ -18,6 +18,7 @@ import {
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { PersonTagBadge } from '@/components/PersonTagBadge';
 import { PersonMembershipPicker } from '@/components/PersonMembershipPicker';
+import * as cs from './ConstraintsTab.css';
 
 type ConstraintType = 'no-overlap' | 'affinity-boost' | 'frequency-multiplier';
 
@@ -56,6 +57,8 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
   const initialWeight = initial?.type === 'frequency-multiplier' ? initial.weight ?? 1 : 1;
   const [weight, setWeight] = useState(String(initialWeight));
   const [boost, setBoost] = useState(String(initial?.type === 'affinity-boost' ? initial.boost ?? 2 : 2));
+  const parsedBoost = Number(boost);
+  const validBoost = boost.trim() !== '' && Number.isFinite(parsedBoost) && parsedBoost > 0;
   const [baseline, setBaseline] = useState(String(initial?.type === 'frequency-multiplier' ? initial.baseline : 1));
   const [multiplier, setMultiplier] = useState(String(initial?.type === 'frequency-multiplier' ? initial.multiplier : 1));
   const [roleScope, setRoleScope] = useState<'presenter' | 'questioner' | 'both'>(
@@ -92,13 +95,14 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
     }
 
     if (constraintType === 'affinity-boost') {
+      if (!validBoost) return;
       onSave({
         id: initial?.id ?? crypto.randomUUID(),
         configId,
         type: 'affinity-boost',
         disabled,
         ...pairFields,
-        boost: Number.isFinite(Number(boost)) && Number(boost) > 0 ? Number(boost) : 2,
+        boost: parsedBoost,
         modifiedAt: Date.now(),
       });
       return;
@@ -120,42 +124,48 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
   }
 
   return (
-    <div>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('constraintConfig')}</label>
-        <select class={s.input} value={configId} onChange={(e) => setConfigId((e.target as HTMLSelectElement).value)}>
-          <option value="">{t('constraintAllConfigs')}</option>
-          {configs.map((config) => (
-            <option key={config.id} value={config.id}>{getScheduleConfigLabel(config)}</option>
-          ))}
-        </select>
-      </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('constraintType')}</label>
-        <select
-          class={s.input}
-          value={constraintType}
-          onChange={(e) => setConstraintType((e.target as HTMLSelectElement).value as ConstraintType)}
-        >
-          <option value="no-overlap">{constraintTypeLabel('no-overlap', t)}</option>
-          <option value="affinity-boost">{constraintTypeLabel('affinity-boost', t)}</option>
-          <option value="frequency-multiplier">{constraintTypeLabel('frequency-multiplier', t)}</option>
-        </select>
-      </div>
-      {groups.slice(0, constraintType === 'frequency-multiplier' ? 1 : undefined).map((group, index) => (
-        <div class={s.formGroup} key={index}>
-          <div class={s.flexGapSm}>
-            <label class={s.label}>{constraintType === 'frequency-multiplier' ? t('constraintTargets') : `${t('constraintGroup')} ${index + 1}`}</label>
-            {index > 0 && <Button variant="secondary" onClick={() => setGroups(current => current.filter((_, i) => i !== index))}>{t('constraintRemoveGroup')}</Button>}
-          </div>
-          <PersonMembershipPicker persons={persons} selectedIds={group.personIds}
-            onChange={ids => updateGroup(index, 'personIds', ids)}
-            allowTags tags={tags} selectedTagIds={group.tagIds}
-            onTagChange={ids => updateGroup(index, 'tagIds', ids)} />
+    <div class={cs.form}>
+      <div class={cs.ruleOptions}>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('constraintConfig')}</label>
+          <select class={s.input} value={configId} onChange={(e) => setConfigId((e.target as HTMLSelectElement).value)}>
+            <option value="">{t('constraintAllConfigs')}</option>
+            {configs.map((config) => (
+              <option key={config.id} value={config.id}>{getScheduleConfigLabel(config)}</option>
+            ))}
+          </select>
         </div>
-      ))}
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('constraintType')}</label>
+          <select
+            class={s.input}
+            value={constraintType}
+            onChange={(e) => setConstraintType((e.target as HTMLSelectElement).value as ConstraintType)}
+          >
+            <option value="no-overlap">{constraintTypeLabel('no-overlap', t)}</option>
+            <option value="affinity-boost">{constraintTypeLabel('affinity-boost', t)}</option>
+            <option value="frequency-multiplier">{constraintTypeLabel('frequency-multiplier', t)}</option>
+          </select>
+        </div>
+      </div>
+      <div class={cs.groupList}>
+        {groups.slice(0, constraintType === 'frequency-multiplier' ? 1 : undefined).map((group, index) => (
+          <section class={cs.groupCard} key={index} aria-label={`${t('constraintGroup')} ${index + 1}`}>
+            <div class={cs.groupHeader}>
+              <h3 class={cs.groupTitle}>{constraintType === 'frequency-multiplier' ? t('constraintTargets') : `${t('constraintGroup')} ${index + 1}`}</h3>
+              {index > 0 && <Button variant="secondary" onClick={() => setGroups(current => current.filter((_, i) => i !== index))}>{t('constraintRemoveGroup')}</Button>}
+            </div>
+            <div class={cs.groupPicker}>
+              <PersonMembershipPicker persons={persons} selectedIds={group.personIds}
+                onChange={ids => updateGroup(index, 'personIds', ids)}
+                allowTags tags={tags} selectedTagIds={group.tagIds}
+                onTagChange={ids => updateGroup(index, 'tagIds', ids)} />
+            </div>
+          </section>
+        ))}
+      </div>
       {constraintType !== 'frequency-multiplier' && <>
-        <Button variant="secondary" onClick={() => setGroups(current => [...current, { personIds: [], tagIds: [] }])}>{t('constraintAddGroup')}</Button>
+        <div class={cs.addGroup}><Button variant="secondary" onClick={() => setGroups(current => [...current, { personIds: [], tagIds: [] }])}>{t('constraintAddGroup')}</Button></div>
         <div class={s.formGroup}>
           <label class={s.label}>{t('constraintOverlapStrategy')}</label>
           <select class={s.input} value={overlapStrategy}
@@ -164,9 +174,9 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
             <option value="exclusive-only">{t('constraintOverlapExclusive')}</option>
           </select>
         </div>
-        <div class={s.formGroup}>
-          <label class={s.label}>{t('constraintPreview')}</label>
-          <p class={s.textMuted}>{t('constraintPreviewCount').replace('{0}', String(previewPairs.length))}</p>
+        <div class={cs.preview}>
+          <p class={cs.previewTitle}>{t('constraintPreview')}</p>
+          <p class={cs.previewCount}>{t('constraintPreviewCount').replace('{0}', String(previewPairs.length))}</p>
           {pairGroups.length !== groups.length && <p class={s.textDanger}>{t('constraintEmptyGroup')}</p>}
           <div class={s.tagList}>
             {previewPairs.slice(0, 40).map(([left, right]) => <span class={s.badge} key={`${left}:${right}`}>
@@ -184,8 +194,13 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
       )}
       {constraintType === 'affinity-boost' && (
         <div class={s.formGroup}>
-          <label class={s.label}>{t('constraintBoost')}</label>
-          <input class={s.input} value={boost} onInput={(e) => setBoost((e.target as HTMLInputElement).value)} />
+          <label class={s.label} for="pairing-preference-multiplier">{t('constraintBoost')}</label>
+          <input id="pairing-preference-multiplier" class={s.input} type="number" min="0" step="any" inputMode="decimal"
+            value={boost} aria-invalid={!validBoost}
+            aria-describedby="pairing-preference-help"
+            onInput={(e) => setBoost((e.target as HTMLInputElement).value)} />
+          <p class={cs.multiplierHelp} id="pairing-preference-help">{t('constraintBoostHelp')}</p>
+          {!validBoost && <p role="alert" class={s.textDanger}>{t('constraintBoostInvalid')}</p>}
         </div>
       )}
       {constraintType === 'frequency-multiplier' && (
@@ -213,8 +228,8 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
         </>
       )}
       <label class={s.flexGapSm}><input type="checkbox" checked={disabled} onChange={event => setDisabled(event.currentTarget.checked)} /> {t('disabled')}</label>
-      <div class={s.flexGapSm}>
-        <Button variant="primary" busy={pending} onClick={handleSave}>{t('save')}</Button>
+      <div class={cs.actions}>
+        <Button variant="primary" busy={pending} disabled={constraintType === 'affinity-boost' && !validBoost} onClick={handleSave}>{t('save')}</Button>
         <Button variant="secondary" disabled={pending} onClick={onCancel}>{t('cancel')}</Button>
         {onDelete && <Button variant="danger" disabled={pending} onClick={onDelete}>{t('delete')}</Button>}
       </div>
@@ -257,15 +272,18 @@ export function ConstraintsTab() {
   function summarizeTargets(constraint: ScheduleConstraint) {
     const map = new Map(persons.map((person) => [person.id, displayName(person)]));
     const tagMap = new Map(tags.map(tag => [tag.id, tag]));
-    const group = (personIds: string[], tagIds: string[]) => <span class={s.tagList}>
+    const group = (personIds: string[], tagIds: string[]) => <span class={cs.targetMembers}>
       {personIds.map(id => <span key={id} class={s.badge}>{map.get(id) ?? id}</span>)}
       {tagIds.map(id => { const tag = tagMap.get(id); return tag ? <PersonTagBadge key={id} tag={tag} /> : <span key={id} class={s.badge}>{id}</span>; })}
       {!personIds.length && !tagIds.length && '—'}
     </span>;
     const groups = constraint.type === 'frequency-multiplier'
       ? [{ personIds: constraint.personIds, tagIds: constraint.tagIds }] : constraint.groups;
-    return <span class={s.flexGapSm}>{groups.map((item, index) =>
-      <span key={index}>{index > 0 && ' ↔ '}{group(item.personIds, item.tagIds)}</span>)}</span>;
+    return <span class={cs.targetSummary}>{groups.map((item, index) =>
+      <span class={cs.targetGroup} key={index}>
+        {constraint.type !== 'frequency-multiplier' && <span class={cs.targetGroupLabel}>{t('constraintGroup')} {index + 1}</span>}
+        {group(item.personIds, item.tagIds)}
+      </span>)}</span>;
   }
 
   function summarizeParameters(constraint: ScheduleConstraint): string {
@@ -314,6 +332,7 @@ export function ConstraintsTab() {
           onClose={() => setEditing(null)}
           closeOnOverlayClick={false}
           title={editing === 'new' ? t('addConstraint') : t('editConstraint')}
+          width="min(920px, 94vw)"
         >
           <ConstraintForm
             initial={editing === 'new' ? undefined : editing}

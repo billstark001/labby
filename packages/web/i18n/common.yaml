@@ -1878,9 +1878,9 @@ constraintTypeNoOverlap:
   ja-JP: 発表者と質問者の重複を禁止
 
 constraintTypeAffinityBoost:
-  en: Boost Affinity Pairing
-  zh-CN: 提升亲和配对
-  ja-JP: 親和性ペアリングを強化
+  en: Adjust Pairing Preference
+  zh-CN: 调整配对倾向
+  ja-JP: ペアの優先度を調整
 
 constraintTypeFrequencyMultiplier:
   en: Adjust Appearance Frequency
@@ -1958,9 +1958,19 @@ constraintWeight:
   ja-JP: 重み
 
 constraintBoost:
-  en: Boost
-  zh-CN: 增益
-  ja-JP: ブースト
+  en: Pairing preference multiplier
+  zh-CN: 配对倾向倍率
+  ja-JP: ペア優先度の倍率
+
+constraintBoostHelp:
+  en: "1 leaves pairing unchanged; above 1 favors matching pairs; between 0 and 1 discourages them."
+  zh-CN: "1 表示不变；大于 1 更倾向于匹配配对；0 到 1 之间减少匹配配对。"
+  ja-JP: "1 は変更なし、1 より大きい値は対象ペアを優先、0〜1 の値は対象ペアを抑制します。"
+
+constraintBoostInvalid:
+  en: Enter a number greater than 0.
+  zh-CN: 请输入大于 0 的数字。
+  ja-JP: 0 より大きい数値を入力してください。
 
 constraintBaseline:
   en: Baseline Frequency

@@ -404,11 +404,7 @@ export interface AffinityBoostConstraint {
   /** One group matches within itself; multiple groups match crossing pairs. */
   groups: ConstraintTargetGroup[];
   overlapStrategy?: PairOverlapStrategy;
-  /**
-   * Affinity multiplier applied to the similarity score between group members.
-   * Values > 1 encourage pairing; values < 1 discourage it.
-   * Defaults to 2.0.
-   */
+  /** Pairing preference multiplier: 1 is neutral, >1 favors pairs, 0–1 discourages them. Defaults to 2. */
   boost?: number;
   modifiedAt?: number;
 }
