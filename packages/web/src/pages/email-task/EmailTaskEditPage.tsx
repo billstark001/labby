@@ -23,6 +23,7 @@ import {
 } from '@labby/core';
 
 import { Button, ContentSkeleton, Dialog, toast } from '@/components/ui';
+import { NumericInput } from '@/components/ui/NumericInput';
 import { confirmDialog } from '@/components/ui/Dialog';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { readAllPaginated, useDatabase } from '@/db';
@@ -647,12 +648,11 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskRecentTimes')}</label>
-          <input
+          <NumericInput
             class={s.input}
-            type="number"
             min={0}
             value={recentTimes}
-            onInput={(e) => { setIsDirty(true); setRecentTimes(Number.parseInt((e.target as HTMLInputElement).value || '0', 10)); }}
+            onValueInput={(raw) => { setIsDirty(true); setRecentTimes(Number.parseInt(raw, 10)); }}
           />
         </div>
 

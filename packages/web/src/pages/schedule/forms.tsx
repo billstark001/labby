@@ -7,6 +7,7 @@ import { displayName } from '@/i18n';
 import { i18n } from '@/i18n';
 import * as s from '@/styles/components.css';
 import { Button } from '@/components/ui/index';
+import { NumericInput } from '@/components/ui/NumericInput';
 import { Dialog } from '@/components/ui/Dialog';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { getScheduleConfigTitle } from '@/lib/scheduleConfigLabel';
@@ -103,14 +104,14 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
   function setGapValue(role: 'presenter' | 'questioner', key: keyof GapBalancePolicy, raw: string, divisor = 1) {
     const parsed = Number(raw) / divisor;
     const maximum = key === 'shortGapRatio' ? 1 : key === 'shortGapWeight' ? 100 : 50;
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
+    if (raw !== '' && Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
       setGapBalance(previous => ({ ...previous, [role]: { ...previous[role], [key]: parsed } }));
   }
   function setOptimizationValue<Group extends keyof QuestionerOptimizationPolicy>(
     group: Group, key: keyof QuestionerOptimizationPolicy[Group], raw: string, maximum: number, divisor = 1,
   ) {
     const parsed = Number(raw) / divisor;
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
+    if (raw !== '' && Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
       setQuestionerOptimization(previous => ({ ...previous, [group]: { ...previous[group], [key]: parsed } }));
   }
   function setCostWeight(key: keyof ScheduleCostWeights, raw: string) {
@@ -174,11 +175,11 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <div class={layout.grid}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configPresenters')}</label>
-        <input class={s.input} type="number" min={1} value={presenters} onInput={e => setPresenters(parseInt((e.target as HTMLInputElement).value, 10))} />
+        <NumericInput class={s.input} min={1} value={presenters} onValueInput={raw => setPresenters(parseInt(raw, 10))} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configQuestioners')}</label>
-        <input class={s.input} type="number" min={0} value={questioners} onInput={e => setQuestioners(parseInt((e.target as HTMLInputElement).value || '0', 10))} />
+        <NumericInput class={s.input} min={0} value={questioners} onValueInput={raw => setQuestioners(parseInt(raw, 10))} />
       </div>
         </div>
       </section>
@@ -187,7 +188,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <div class={layout.grid}>
       <div class={s.formGroup}>
         <label class={s.label}>{t('configRadius')}</label>
-        <input class={s.input} type="number" step={0.05} min={0} max={1} value={radius} onInput={e => setRadius(parseFloat((e.target as HTMLInputElement).value))} />
+        <NumericInput class={s.input} step={0.05} min={0} max={1} value={radius} onValueInput={raw => setRadius(parseFloat(raw))} />
       </div>
       <div class={s.formGroup}>
         <label class={s.label}>{t('reciprocalPairPreference')}</label>
@@ -206,18 +207,18 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           <legend class={s.label} style={{ marginBottom: '0.5rem' }}>{t(role === 'presenter' ? 'gapBalancePresenter' : 'gapBalanceQuestioner')}</legend>
           <div class={s.formGroup}>
             <label class={s.label}>{t('gapBalanceShortRatio')}</label>
-            <input class={s.input} type="number" min={0} max={100} step={1} value={Math.round(gapBalance[role].shortGapRatio * 100)}
-              onInput={event => setGapValue(role, 'shortGapRatio', (event.target as HTMLInputElement).value, 100)} />
+            <NumericInput class={s.input} min={0} max={100} step={1} value={Math.round(gapBalance[role].shortGapRatio * 100)}
+              onValueInput={raw => setGapValue(role, 'shortGapRatio', raw, 100)} />
           </div>
           <div class={s.formGroup}>
             <label class={s.label}>{t('gapBalanceShortWeight')}</label>
-            <input class={s.input} type="number" min={0} max={100} step={1} value={gapBalance[role].shortGapWeight}
-              onInput={event => setGapValue(role, 'shortGapWeight', (event.target as HTMLInputElement).value)} />
+            <NumericInput class={s.input} min={0} max={100} step={1} value={gapBalance[role].shortGapWeight}
+              onValueInput={raw => setGapValue(role, 'shortGapWeight', raw)} />
           </div>
           <div class={s.formGroup}>
             <label class={s.label}>{t('gapBalanceSpreadWeight')}</label>
-            <input class={s.input} type="number" min={0} max={50} step={1} value={gapBalance[role].spreadWeight}
-              onInput={event => setGapValue(role, 'spreadWeight', (event.target as HTMLInputElement).value)} />
+            <NumericInput class={s.input} min={0} max={50} step={1} value={gapBalance[role].spreadWeight}
+              onValueInput={raw => setGapValue(role, 'spreadWeight', raw)} />
           </div>
         </fieldset>)}</div>
       </details>
@@ -227,15 +228,15 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <div class={layout.grid}>
           <div class={s.formGroup}>
             <label class={s.label}>{t('questionerNoveltyChance')}</label>
-            <input class={s.input} type="number" min={0} max={100} step={1}
+            <NumericInput class={s.input} min={0} max={100} step={1}
               value={Math.round(questionerOptimization.assignment.noveltyChance * 100)}
-              onInput={event => setOptimizationValue('assignment', 'noveltyChance', (event.target as HTMLInputElement).value, 1, 100)} />
+              onValueInput={raw => setOptimizationValue('assignment', 'noveltyChance', raw, 1, 100)} />
           </div>
           <div class={s.formGroup}>
             <label class={s.label}>{t('questionerBalanceChance')}</label>
-            <input class={s.input} type="number" min={0} max={100} step={1}
+            <NumericInput class={s.input} min={0} max={100} step={1}
               value={Math.round(questionerOptimization.assignment.balanceChance * 100)}
-              onInput={event => setOptimizationValue('assignment', 'balanceChance', (event.target as HTMLInputElement).value, 1, 100)} />
+              onValueInput={raw => setOptimizationValue('assignment', 'balanceChance', raw, 1, 100)} />
           </div>
         </div>
       </details>
@@ -245,21 +246,21 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         <div class={layout.grid}>
           <div class={s.formGroup}>
             <label class={s.label}>{t('questionerRepairIterations')}</label>
-            <input class={s.input} type="number" min={0} max={500} step={1}
+            <NumericInput class={s.input} min={0} max={500} step={1}
               value={questionerOptimization.repair.iterations}
-              onInput={event => setOptimizationValue('repair', 'iterations', (event.target as HTMLInputElement).value, 500)} />
+              onValueInput={raw => setOptimizationValue('repair', 'iterations', raw, 500)} />
           </div>
           <div class={s.formGroup}>
             <label class={s.label}>{t('questionerRepairPairWeight')}</label>
-            <input class={s.input} type="number" min={0} max={50} step={0.5}
+            <NumericInput class={s.input} min={0} max={50} step={0.5}
               value={questionerOptimization.repair.pairWeight}
-              onInput={event => setOptimizationValue('repair', 'pairWeight', (event.target as HTMLInputElement).value, 50)} />
+              onValueInput={raw => setOptimizationValue('repair', 'pairWeight', raw, 50)} />
           </div>
           <div class={s.formGroup}>
             <label class={s.label}>{t('questionerRepairCountWeight')}</label>
-            <input class={s.input} type="number" min={0} max={50} step={0.5}
+            <NumericInput class={s.input} min={0} max={50} step={0.5}
               value={questionerOptimization.repair.countWeight}
-              onInput={event => setOptimizationValue('repair', 'countWeight', (event.target as HTMLInputElement).value, 50)} />
+              onValueInput={raw => setOptimizationValue('repair', 'countWeight', raw, 50)} />
           </div>
         </div>
       </details>
@@ -270,10 +271,10 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
           {COST_WEIGHT_FIELDS.map(([key, label]) => <div class={s.formGroup} key={key}>
             <label class={s.label} for={`cost-weight-${key}`}>{t(label)}</label>
             <div class={layout.weightControl}>
-              <input id={`cost-weight-${key}`} class={s.input} type="number" min={0}
+              <NumericInput id={`cost-weight-${key}`} class={s.input} min={0}
                 max={key === 'invalidAssignment' ? 1_000_000 : 100}
                 step={key === 'invalidAssignment' ? 1 : 0.1} value={costWeights[key]}
-                onInput={event => setCostWeight(key, (event.target as HTMLInputElement).value)} />
+                onValueInput={raw => setCostWeight(key, raw)} />
               <Button variant="secondary" disabled={costWeights[key] === COST_WEIGHTS[key]}
                 onClick={() => setCostWeights(previous => ({ ...previous, [key]: COST_WEIGHTS[key] }))}>
                 {t('resetToDefault')}
