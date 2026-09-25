@@ -196,6 +196,16 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0(@types/node@26.1.0)(happy-dom@20.14.5)(vite@8.3.0(@types/node@26.1.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.1))
 
+  packages/db:
+    dependencies:
+      '@labby/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/server:
     dependencies:
       '@electric-sql/pglite':
@@ -210,6 +220,9 @@ importers:
       '@labby/core':
         specifier: workspace:*
         version: link:../core
+      '@labby/db':
+        specifier: workspace:*
+        version: link:../db
       '@mpoonuru/paseto':
         specifier: ^4.0.2
         version: 4.0.2
@@ -295,6 +308,9 @@ importers:
       '@labby/core':
         specifier: workspace:*
         version: link:../core
+      '@labby/db':
+        specifier: workspace:*
+        version: link:../db
       '@luma.gl/webgpu':
         specifier: ^9.4.1
         version: 9.4.1(@luma.gl/core@9.4.1)(@luma.gl/shadertools@9.4.1(@luma.gl/core@9.4.1))
