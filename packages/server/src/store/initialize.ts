@@ -16,7 +16,7 @@ export async function initializePostgresSchema(
       throw new Error(
         'db:init requires an empty public schema; use db:migrate for an existing database.',
       );
-    const sql = await readFile(new URL('./current-schema.sql', import.meta.url), 'utf8');
+    const sql = await readFile(new URL(import.meta.resolve('@labby/db/current-schema.sql')), 'utf8');
     if (client.exec) await client.exec(sql);
     else await client.query(sql);
     await client.query('COMMIT');

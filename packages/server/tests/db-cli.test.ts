@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import { runSqlFile } from '../src/store/migrate/runtime.js';
+import { SERVER_SCHEMA_VERSION } from '../src/store/schema-state.js';
 import { resolveCliTarget, safeError } from '../scripts/db-cli.js';
 
 test('CLI target priority, address-only environment and secret redaction', () => {
@@ -55,7 +56,7 @@ test('CLI explicit target diagnoses legacy schema, default command migrates, rep
     const status = JSON.parse((await cli('--action', 'status', '--json')).stdout);
     assert.equal(status.state, 'legacy');
     assert.deepEqual(status.applied, []);
-    assert.deepEqual(status.pendingVersions, [2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.deepEqual(status.pendingVersions, Array.from({ length: SERVER_SCHEMA_VERSION - 1 }, (_, index) => index + 2));
     assert.equal(status.migrated, false);
     assert.match(status.nextCommand, /db:migrate/);
     const migrated = await cli();
@@ -64,7 +65,7 @@ test('CLI explicit target diagnoses legacy schema, default command migrates, rep
     const again = JSON.parse((await cli('--json')).stdout);
     assert.equal(again.state, 'current');
     assert.equal(again.migrated, false);
-    assert.equal(again.applied.length, 9);
+    assert.equal(again.applied.length, SERVER_SCHEMA_VERSION);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

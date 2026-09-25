@@ -5,5 +5,3 @@ await mkdir(target, { recursive: true });
 for (const file of await readdir(source)) {
   if (file.endsWith('.sql')) await copyFile(new URL(file, source), new URL(file, target));
 }
-
-await copyFile(new URL('../src/store/current-schema.sql', import.meta.url), new URL('../dist/store/current-schema.sql', import.meta.url));

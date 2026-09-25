@@ -11,3 +11,9 @@ export async function runSqlFile(client: MigrationClient, file: string): Promise
   if (client.exec) await client.exec(sql);
   else await client.query(sql);
 }
+
+export async function runSharedSqlFile(client: MigrationClient, file: string): Promise<void> {
+  const sql = await readFile(new URL(import.meta.resolve(`@labby/db/migrate/${file}`)), 'utf8');
+  if (client.exec) await client.exec(sql);
+  else await client.query(sql);
+}

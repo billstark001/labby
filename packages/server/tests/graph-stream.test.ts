@@ -4,7 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { initializePostgresSchema } from '../src/store/initialize.js';
 import { checkPostgresSchema } from '../src/store/schema-state.js';
 import { migratePostgresSchema } from '../src/store/schema.js';
-import { listGraphPage } from '../src/store/graph.js';
+import { listGraphPage } from '@labby/db';
 import { createTestStore } from './support/database.js';
 
 const keyword = (id: string) => ({ id, name: id, modifiedAt: 1 });

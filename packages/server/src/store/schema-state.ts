@@ -1,17 +1,7 @@
 import type { MigrationClient } from './migrate/runtime.js';
-export const SERVER_SCHEMA_VERSION = 10;
-export const SCHEMA_NAMES = [
-  'baseline',
-  'product-embedding-and-ranking-history',
-  'graph-change-feed',
-  'jsonb-documents',
-  'uuid-timestamptz-person-tags',
-  'constraint-tag-targets',
-  'localized-person-tags-and-constraint-state',
-  'unavailability-selectors-and-closures',
-  'scheduler-dispatch-deduplication',
-  'unified-pair-constraint-groups',
-] as const;
+import { SCHEMA_NAMES, SCHEMA_VERSION } from '@labby/db';
+export { SCHEMA_NAMES } from '@labby/db';
+export const SERVER_SCHEMA_VERSION = SCHEMA_VERSION;
 
 export async function checkPostgresSchema(client: MigrationClient): Promise<void> {
   const table = (await client.query("SELECT to_regclass('public.schema_migrations') AS name"))

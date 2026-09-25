@@ -1,6 +1,6 @@
 import { SERVER_SCHEMA_VERSION, SCHEMA_NAMES } from './schema-state.js';
 import { up as productEmbeddingUp } from './migrate/002.up.js';
-import { runSqlFile, type MigrationClient } from './migrate/runtime.js';
+import { runSharedSqlFile, runSqlFile, type MigrationClient } from './migrate/runtime.js';
 
 const MIGRATIONS = [
   {
@@ -52,6 +52,11 @@ const MIGRATIONS = [
     version: 10,
     name: SCHEMA_NAMES[9],
     up: (client: MigrationClient) => runSqlFile(client, '010.up.sql'),
+  },
+  {
+    version: 11,
+    name: SCHEMA_NAMES[10],
+    up: (client: MigrationClient) => runSharedSqlFile(client, '011.up.sql'),
   },
 ] as const;
 
