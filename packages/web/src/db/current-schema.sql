@@ -33,5 +33,5 @@ END;
 $$;
 CREATE TRIGGER entities_graph_change AFTER INSERT OR UPDATE OR DELETE ON entities
 FOR EACH ROW EXECUTE FUNCTION record_graph_change();
-INSERT INTO app_metadata VALUES('schema-version','{"version":8}');
+INSERT INTO app_metadata VALUES('schema-version','{"version":9}');
 CREATE INDEX entities_graph_id_idx ON entities(kind, id);

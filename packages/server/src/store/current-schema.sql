@@ -202,7 +202,8 @@ INSERT INTO schema_migrations(version,name) VALUES
   (6,'constraint-tag-targets'),
   (7,'localized-person-tags-and-constraint-state'),
   (8,'unavailability-selectors-and-closures'),
-  (9,'scheduler-dispatch-deduplication');
+  (9,'scheduler-dispatch-deduplication'),
+  (10,'unified-pair-constraint-groups');
 CREATE INDEX keywords_graph_id_idx ON keywords(id);
 
 CREATE TABLE person_tags (

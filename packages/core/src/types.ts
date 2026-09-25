@@ -386,12 +386,9 @@ export interface NoOverlapConstraint {
   configId?: string;
   type: 'no-overlap';
   disabled?: boolean;
-  /** Constraint applies to any person whose ID is in this set. */
-  personIds: string[];
-  tagIds: string[];
-  /** When supplied, only pairs crossing the two target groups are forbidden. */
-  otherPersonIds?: string[];
-  otherTagIds?: string[];
+  /** One group matches within itself; multiple groups match crossing pairs. */
+  groups: ConstraintTargetGroup[];
+  overlapStrategy?: PairOverlapStrategy;
   modifiedAt?: number;
 }
 
@@ -406,12 +403,9 @@ export interface AffinityBoostConstraint {
   configId?: string;
   type: 'affinity-boost';
   disabled?: boolean;
-  /** Members of the group whose co-occurrence should be boosted. */
-  personIds: string[];
-  tagIds: string[];
-  /** When supplied, boost only pairs crossing the two target groups. */
-  otherPersonIds?: string[];
-  otherTagIds?: string[];
+  /** One group matches within itself; multiple groups match crossing pairs. */
+  groups: ConstraintTargetGroup[];
+  overlapStrategy?: PairOverlapStrategy;
   /**
    * Affinity multiplier applied to the similarity score between group members.
    * Values > 1 encourage pairing; values < 1 discourage it.
@@ -420,6 +414,14 @@ export interface AffinityBoostConstraint {
   boost?: number;
   modifiedAt?: number;
 }
+
+export interface ConstraintTargetGroup {
+  personIds: string[];
+  tagIds: string[];
+}
+
+/** Missing value preserves the historical inclusive cross-group behavior. */
+export type PairOverlapStrategy = 'include-multi-group' | 'exclusive-only';
 
 /**
  * Adjust expected appearance frequency for selected persons by multiplier k.

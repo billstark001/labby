@@ -209,6 +209,10 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     await source.putKeyword(sampleKeyword(testUuid('k-b')));
     await source.putKeywordVector(sampleVector(testUuid('k-b')));
     await source.putUnavailability({ ...sampleUnavailability(testUuid('backup-all')), personIds: [], allPeople: true });
+    const constraintId = testUuid('backup-pair');
+    await source.putConstraint({ id: constraintId, type: 'no-overlap', groups: [
+      { personIds: [testUuid('p-a')], tagIds: [] }, { personIds: [], tagIds: [tagId] },
+    ] });
 
     const graph = await source.listGraph();
     assert.equal(graph.items.filter(item => item.keyword).length, 2);
@@ -220,6 +224,10 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     const legacyTag = JSON.parse(String(snapshot.tables.personTags[0]!.payload));
     delete legacyTag.names;
     snapshot.tables.personTags[0]!.payload = JSON.stringify(legacyTag);
+    const oldConstraint = JSON.parse(String(snapshot.tables.constraints[0]!.payload));
+    delete oldConstraint.groups;
+    Object.assign(oldConstraint, { personIds: [testUuid('p-a')], tagIds: [], otherPersonIds: [], otherTagIds: [tagId] });
+    snapshot.tables.constraints[0]!.payload = JSON.stringify(oldConstraint);
     assert.deepEqual(snapshot.tables.rankingJudgments, []);
     assert.deepEqual(snapshot.tables.embeddingMigrationArchive, []);
     await target.restoreBackupSnapshot(snapshot);
@@ -229,6 +237,11 @@ test('LabbyStore snapshot export and restore keeps data', async () => {
     assert.equal((await target.listKeywords()).length, 2);
     assert.equal((await target.listKeywordVectors()).length, 2);
     assert.equal((await target.getUnavailability(testUuid('backup-all')))?.allPeople, true);
+    const restoredConstraint = await target.getConstraint(constraintId);
+    assert.equal(restoredConstraint?.type, 'no-overlap');
+    assert.deepEqual(restoredConstraint?.type === 'no-overlap' ? restoredConstraint.groups : null,
+      [{ personIds: [testUuid('p-a')], tagIds: [] }, { personIds: [], tagIds: [tagId] }]);
+    await assert.rejects(target.deletePersonTag(tagId), /referenced/);
   } finally {
     await source.close();
     await target.close();
@@ -313,8 +326,7 @@ test('LabbyStore keeps modifiedAt sorting and standalone constraints persistence
       id: testUuid('constraint-1'),
       configId: config.id,
       type: 'no-overlap',
-      personIds: [older.id, newer.id],
-      tagIds: [],
+      groups: [{ personIds: [older.id, newer.id], tagIds: [] }],
     });
     await store.putConstraint({
       id: testUuid('constraint-2'),
@@ -345,7 +357,7 @@ test('JSONB schedule foreign keys load presenters, questioners, constraints and 
     for (const id of ['p1','p2','p3','p4'].map(testUuid)) await store.putPerson(samplePerson(id));
     await store.putConfig(sampleConfig());
     await store.putSchedule(samplePlan());
-    await store.putConstraint({id:testUuid('constraint'),configId:testUuid('c1'),type:'no-overlap',personIds:[testUuid('p3')],tagIds:[]});
+    await store.putConstraint({id:testUuid('constraint'),configId:testUuid('c1'),type:'no-overlap',groups:[{personIds:[testUuid('p3')],tagIds:[]}]});
     await store.putUnavailability(sampleUnavailability(testUuid('u1'),testUuid('p4')));
     const bundle=await store.listScheduleForeignKeys({configIds:[testUuid('c1')]});
     assert.deepEqual(bundle.persons.map(person=>person.id).sort(),['p1','p2','p3','p4'].map(testUuid).sort());
@@ -354,4 +366,24 @@ test('JSONB schedule foreign keys load presenters, questioners, constraints and 
     const references = await store.listPersonForeignKeys({ personIds: ['p1','p2','p3','p4'].map(testUuid) });
     assert.deepEqual(references.referencedPersonIds, ['p1','p2','p3','p4'].map(testUuid).sort());
   } finally {await store.close();}
+});
+
+test('additional constraint groups retain person and tag references', async () => {
+  const store = await createTestStore({ dialect: 'pglite', dataDir: 'memory://' });
+  try {
+    const config = sampleConfig(testUuid('group-config'));
+    const person = samplePerson(testUuid('group-person'));
+    const tagId = testUuid('group-tag');
+    await store.putConfig(config);
+    await store.putPerson({ ...person, tagIds: [tagId] });
+    await store.putPersonTag({ id: tagId, name: 'Group', names: { en: 'Group' }, color: '#336699' });
+    await store.putConstraint({
+      id: testUuid('group-rule'), configId: config.id, type: 'no-overlap',
+      groups: [{ personIds: [person.id], tagIds: [tagId] }],
+    });
+    const bundle = await store.listScheduleForeignKeys({ configIds: [config.id] });
+    assert.equal(bundle.persons.some(item => item.id === person.id), true);
+    assert.equal(bundle.personTags.some(item => item.id === tagId), true);
+    await assert.rejects(store.deletePersonTag(tagId), /referenced/);
+  } finally { await store.close(); }
 });

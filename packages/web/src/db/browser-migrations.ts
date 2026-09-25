@@ -1,7 +1,7 @@
 import type { PGliteWorker } from '@electric-sql/pglite/worker';
 import { migrateEuclideanVector } from './migrate/003-projection.js';
 
-export const BROWSER_SCHEMA_VERSION = 8;
+export const BROWSER_SCHEMA_VERSION = 9;
 
 export function pendingBrowserSchemaVersions(currentVersion: number): number[] {
   if (!Number.isInteger(currentVersion) || currentVersion < 0)
@@ -18,7 +18,7 @@ export function pendingBrowserSchemaVersions(currentVersion: number): number[] {
 
 export async function upgradeBrowserSchema(
   client: Pick<PGliteWorker, 'transaction'>,
-  sql: { current: string; graph: string; identity: string; constraints: string; localization: string; unavailability: string },
+  sql: { current: string; graph: string; identity: string; constraints: string; localization: string; unavailability: string; pairGroups: string },
   onMaintenance?: (kind: 'initialize' | 'migrate') => void,
 ): Promise<boolean> {
   let changed = false;
@@ -45,6 +45,7 @@ export async function upgradeBrowserSchema(
       if (version === 6) await tx.exec(sql.constraints);
       if (version === 7) await tx.exec(sql.localization);
       if (version === 8) await tx.exec(sql.unavailability);
+      if (version === 9) await tx.exec(sql.pairGroups);
       if (version === 4) await tx.exec(sql.graph);
       if (version === 1)
         await tx.exec(

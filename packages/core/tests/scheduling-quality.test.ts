@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { Person, ScheduleConfig, Session, SolverInput } from '../src/types';
-import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, COST_WEIGHTS, validateScheduleAssignments } from '../src/schedule/index';
+import type { Person, ScheduleConfig, ScheduleConstraint, Session, SolverInput } from '../src/types';
+import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, COST_WEIGHTS, normalizeStoredConstraint, previewConstraintPairs, validateScheduleAssignments } from '../src/schedule/index';
 import { affinityPairWeight, noOverlapForbidden, personGapCost, weightedTotalCost } from '../src/schedule/constraints';
 
 const config: ScheduleConfig = {
@@ -73,7 +73,7 @@ describe('schedule quality objective and tag selectors', () => {
   });
 
   test('cross-group affinity excludes within-group pairs and follows membership changes', () => {
-    const input: SolverInput = { ...base, constraints: [{ id: 'affinity', configId: config.id, type: 'affinity-boost', personIds: [], tagIds: ['local'], otherPersonIds: [], otherTagIds: ['international'], boost: 3 }] };
+    const input: SolverInput = { ...base, constraints: [{ id: 'affinity', configId: config.id, type: 'affinity-boost', groups: [{ personIds: [], tagIds: ['local'] }, { personIds: [], tagIds: ['international'] }], boost: 3 }] };
     const guidance = buildConstraintGuidance(buildCostContext(input));
     expect(affinityPairWeight('a', 'c', guidance)).toBe(3);
     expect(affinityPairWeight('a', 'b', guidance)).toBe(1);
@@ -81,9 +81,47 @@ describe('schedule quality objective and tag selectors', () => {
     expect(affinityPairWeight('a', 'c', changed)).toBe(1);
   });
 
+  test('three-group pairing previews and enforces inclusive or unique-only membership', () => {
+    const members: Person[] = [
+      { ...persons[0], tagIds: ['a'] },
+      { ...persons[1], tagIds: ['a', 'b'] },
+      { ...persons[2], tagIds: ['b'] },
+      { ...persons[3], tagIds: ['c'] },
+      { ...persons[0], id: 'inactive', disabled: true, tagIds: ['c'] },
+    ];
+    const rule = { id: 'multi', type: 'no-overlap' as const, groups: [
+      { personIds: [], tagIds: ['a'] }, { personIds: [], tagIds: ['b'] }, { personIds: [], tagIds: ['c'] },
+    ] };
+    const inclusive = previewConstraintPairs(rule, members);
+    expect(inclusive).toEqual([['a', 'b'], ['a', 'c'], ['a', 'd'], ['b', 'c'], ['b', 'd'], ['c', 'd']]);
+    const inclusiveGuide = buildConstraintGuidance(buildCostContext({ ...base, persons: members, constraints: [rule] }));
+    for (const [left, right] of inclusive) expect(noOverlapForbidden(left, right, inclusiveGuide)).toBe(true);
+    expect(noOverlapForbidden('a', 'inactive', inclusiveGuide)).toBe(false);
+
+    const unique = { ...rule, overlapStrategy: 'exclusive-only' as const };
+    expect(previewConstraintPairs(unique, members)).toEqual([['a', 'c'], ['a', 'd'], ['c', 'd']]);
+    const uniqueGuide = buildConstraintGuidance(buildCostContext({ ...base, persons: members, constraints: [unique] }));
+    expect(noOverlapForbidden('a', 'b', uniqueGuide)).toBe(false);
+    expect(noOverlapForbidden('a', 'c', uniqueGuide)).toBe(true);
+    const affinity = { ...rule, id: 'affinity', type: 'affinity-boost' as const, boost: 3 };
+    const affinityGuide = buildConstraintGuidance(buildCostContext({ ...base, persons: members, constraints: [affinity] }));
+    expect(affinityPairWeight('b', 'd', affinityGuide)).toBe(3);
+  });
+
+  test('old backup pair selectors normalize once into the unified groups array', () => {
+    const old = { id: 'old', type: 'no-overlap', personIds: ['a'], tagIds: ['local'],
+      otherPersonIds: ['b'], otherTagIds: [], additionalGroups: [{ personIds: [], tagIds: ['international'] }] };
+    const normalized = normalizeStoredConstraint(old as unknown as ScheduleConstraint);
+    expect(normalized).toEqual({ id: 'old', type: 'no-overlap', groups: [
+      { personIds: ['a'], tagIds: ['local'] }, { personIds: ['b'], tagIds: [] },
+      { personIds: [], tagIds: ['international'] },
+    ] });
+    expect(normalizeStoredConstraint(normalized)).toBe(normalized);
+  });
+
   test('mixed selectors and disabled membership apply to hard no-overlap', () => {
     const input: SolverInput = { ...base, persons: persons.map(person => person.id === 'd' ? { ...person, disabled: true } : person),
-      constraints: [{ id: 'hard', configId: config.id, type: 'no-overlap', personIds: ['a'], tagIds: ['local'], otherPersonIds: [], otherTagIds: ['international'] }] };
+      constraints: [{ id: 'hard', configId: config.id, type: 'no-overlap', groups: [{ personIds: ['a'], tagIds: ['local'] }, { personIds: [], tagIds: ['international'] }] }] };
     const guidance = buildConstraintGuidance(buildCostContext(input));
     expect(noOverlapForbidden('a', 'c', guidance)).toBe(true);
     expect(noOverlapForbidden('a', 'd', guidance)).toBe(false);
@@ -92,7 +130,7 @@ describe('schedule quality objective and tag selectors', () => {
 
   test('disabled constraints retain their selectors but do not affect hard or soft guidance', () => {
     const input: SolverInput = { ...base, constraints: [
-      { id: 'hard', configId: config.id, type: 'no-overlap', personIds: ['a', 'c'], tagIds: [], disabled: true },
+      { id: 'hard', configId: config.id, type: 'no-overlap', groups: [{ personIds: ['a', 'c'], tagIds: [] }], disabled: true },
       { id: 'soft', configId: config.id, type: 'frequency-multiplier', personIds: ['a'], tagIds: [], baseline: 1, multiplier: 0.25, roleScope: 'presenter', weight: 5, disabled: true },
     ] };
     const guidance = buildConstraintGuidance(buildCostContext(input));

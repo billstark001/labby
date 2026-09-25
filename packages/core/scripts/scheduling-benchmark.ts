@@ -76,7 +76,7 @@ function scenario(name: string, people: number, endDate: string, leave = false, 
     startDate: dates[index * 2]!, endDate: dates[index * 2]!,
   })) : [];
   const constraints: ScheduleConstraint[] = tags ? [
-    { id: 'pair', configId: config.id, type: 'affinity-boost', personIds: [], tagIds: ['local'], otherPersonIds: [], otherTagIds: ['international'], boost: 1.5 },
+    { id: 'pair', configId: config.id, type: 'affinity-boost', groups: [{ personIds: [], tagIds: ['local'] }, { personIds: [], tagIds: ['international'] }], boost: 1.5 },
     { id: 'frequency', configId: config.id, type: 'frequency-multiplier', personIds: [], tagIds: ['graduate'], baseline: 1, multiplier: 0.5, roleScope: 'presenter', weight: 2 },
   ] : [];
   return { persons, config, similarities: { getPairSimilarity: () => 0.5 }, unavailabilities, constraints };

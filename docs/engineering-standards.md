@@ -49,7 +49,7 @@
 ## Scheduling and people
 
 1. Solver documentation distinguishes the current objective, hard validity rules, initialization guidance, and search behavior. A user-facing constraint is evaluated in the final objective or enforced as a hard rule; an initial-assignment preference alone is not sufficient.
-2. People and tags can both be constraint targets. Pair constraints must be able to target either one group or two different groups; frequency constraints resolve their targets against the active people at solve time. Existing person-only constraints remain readable when the schema evolves.
+2. People and tags can both be constraint targets. Pair constraints store one or more groups in a single array; frequency constraints resolve their targets against the active people at solve time. Schema migrations convert earlier pair selector fields before solver access.
 3. Solver changes are evaluated with fixed seeds and representative histories. Record initial and final objective values, per-person presentation gaps, same-session reciprocal presenter/questioner pairs, hard-rule violations, and runtime. A lower aggregate objective alone does not establish acceptable schedule quality.
 4. A schedule's highlight controls support multiple people and tags. Context actions for highlighting remain available outside manual edit mode; highlight-only presentation does not mutate the schedule.
 

@@ -487,15 +487,13 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
         id: 'constraint-no-overlap',
         configId: config.id,
         type: 'no-overlap' as const,
-        personIds: ['p1', 'p2'],
-        tagIds: [],
+        groups: [{ personIds: ['p1', 'p2'], tagIds: [] }],
       },
       {
         id: 'constraint-affinity',
         configId: config.id,
         type: 'affinity-boost' as const,
-        personIds: ['p3', 'p4'],
-        tagIds: [],
+        groups: [{ personIds: ['p3', 'p4'], tagIds: [] }],
         boost: 4,
       },
       {

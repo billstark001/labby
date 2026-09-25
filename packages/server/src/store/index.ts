@@ -29,7 +29,7 @@ import type {
   ListQuery,
   PaginatedResult,
 } from '@labby/core';
-import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, validateKeywordVector, validateRankingJudgment, validateScheduleAssignments, validateUnavailability } from '@labby/core';
+import { SYSTEM_SETTINGS_ID as CORE_SYSTEM_SETTINGS_ID, constraintSelectorIds, normalizeStoredConstraint, validateKeywordVector, validateRankingJudgment, validateScheduleAssignments, validateUnavailability } from '@labby/core';
 
 /** Numeric role stored in the database (smallint). Root (2) is never stored. */
 export const UserRole = {
@@ -246,11 +246,11 @@ function uniqueIds(values: readonly string[]): string[] {
 }
 
 function extractConstraintPersonIds(constraint: ScheduleConstraint): string[] {
-  return uniqueIds([...constraint.personIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [])]);
+  return uniqueIds(constraintSelectorIds(constraint).personIds);
 }
 
 function extractConstraintTagIds(constraint: ScheduleConstraint): string[] {
-  return uniqueIds([...constraint.tagIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? [])]);
+  return uniqueIds(constraintSelectorIds(constraint).tagIds);
 }
 
 function extractSchedulePersonIds(schedule: SchedulePlan): string[] {
@@ -1554,8 +1554,10 @@ export class LabbyStore {
       if (!tag.names) row.payload = JSON.stringify({ ...tag, names: { en: tag.name, zh: '', ja: '' } });
     }
     for (const row of tables.constraints) {
-      const constraint = this.parsePayload<ScheduleConstraint>(row.payload);
-      if (constraint.disabled === undefined) row.payload = JSON.stringify({ ...constraint, disabled: false });
+      const constraint = normalizeStoredConstraint(this.parsePayload<ScheduleConstraint>(row.payload));
+      row.payload = JSON.stringify({ ...constraint, disabled: constraint.disabled ?? false });
+      row.person_ids = JSON.stringify(extractConstraintPersonIds(constraint));
+      row.tag_ids = JSON.stringify(extractConstraintTagIds(constraint));
     }
     for (const row of tables.unavailabilities) {
       const legacy = this.parsePayload<Record<string, unknown>>(row.payload);

@@ -4,6 +4,7 @@ import identityMigrationSql from './migrate/005.up.sql?raw';
 import constraintMigrationSql from './migrate/006.up.sql?raw';
 import localizationMigrationSql from './migrate/007.up.sql?raw';
 import unavailabilityMigrationSql from './migrate/008.up.sql?raw';
+import pairGroupsMigrationSql from './migrate/009.up.sql?raw';
 import { listBrowserGraphPage } from './graph';
 import { toast } from '@/components/ui/Toast';
 import { i18n } from '@/i18n';
@@ -33,6 +34,8 @@ import {
   validateScheduleAssignments,
   validateUnavailability,
   ProductEmbeddingEngine,
+  constraintSelectorIds,
+  normalizeStoredConstraint,
 } from '@labby/core';
 import { upgradeBrowserSchema } from './browser-migrations';
 import { legacyDumpToEntityRows, readLegacyIndexedDbDump } from './legacy-idb-upgrade';
@@ -95,7 +98,11 @@ async function importLegacyDump(
   const rawRows = dump ? legacyDumpToEntityRows(dump) : [];
   const idMap = new Map<string, string>();
   for (const row of rawRows) idMap.set(row.id, await normalizeUuid(row.id));
-  const rows = rawRows.map(row => ({ ...row, id: idMap.get(row.id)!, updated_at: new Date(row.updated_at).toISOString(), payload: rewriteEntityIds(row.payload, idMap) }));
+  const rows = rawRows.map(row => {
+    const payload = rewriteEntityIds(row.payload, idMap);
+    return { ...row, id: idMap.get(row.id)!, updated_at: new Date(row.updated_at).toISOString(),
+      payload: row.kind === 'constraint' ? normalizeStoredConstraint(payload as ScheduleConstraint) : payload };
+  });
 
   await client.transaction(async (tx) => {
     const migrated = await tx.query<{ exists: boolean }>(
@@ -204,7 +211,7 @@ export async function createPGliteDB(): Promise<{
   try {
     const changed = await upgradeBrowserSchema(
       client,
-      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql, unavailability: unavailabilityMigrationSql },
+      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql, unavailability: unavailabilityMigrationSql, pairGroups: pairGroupsMigrationSql },
       (kind) => {
         maintenanceToast = toast.loading(
           i18n.t(kind === 'initialize' ? 'dbInitializing' : 'dbMigrating'),
@@ -354,7 +361,7 @@ export async function createPGliteDB(): Promise<{
       list: (query) => list<PersonTag>('person-tag', query),
       put: (value) => put('person-tag', value.id, value),
       delete: async (id) => {
-        const referenced = await client.query<{ id: string }>("SELECT id FROM entities WHERE (kind='constraint' AND (payload->'tagIds' ? $1 OR payload->'otherTagIds' ? $1)) OR (kind='unavailability' AND payload->'tagIds' ? $1) LIMIT 1", [id]);
+        const referenced = await client.query<{ id: string }>("SELECT id FROM entities WHERE (kind='constraint' AND (payload->'tagIds' ? $1 OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(payload->'groups', '[]'::jsonb)) AS grp WHERE grp->'tagIds' ? $1))) OR (kind='unavailability' AND payload->'tagIds' ? $1) LIMIT 1", [id]);
         if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling rule');
         const persons = await all<Person>('person');
         await client.transaction(async (tx) => {
@@ -488,13 +495,10 @@ export async function createPGliteDB(): Promise<{
             }),
           ),
         );
-        const referencedTagIds = new Set(selectedConstraints.flatMap(constraint => [
-          ...constraint.tagIds,
-          ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? []),
-        ]));
+        const referencedTagIds = new Set(selectedConstraints.flatMap(constraint => constraintSelectorIds(constraint).tagIds));
         selectedUnavailabilities.forEach(item => item.tagIds.forEach(id => referencedTagIds.add(id)));
         selectedConstraints.forEach((constraint) => {
-          [...constraint.personIds, ...(constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [])]
+          constraintSelectorIds(constraint).personIds
             .forEach(id => personIds.add(id));
         });
         persons.filter(person => person.tagIds?.some(tagId => referencedTagIds.has(tagId)))
@@ -523,13 +527,16 @@ export async function createPGliteDB(): Promise<{
           all<SchedulePlan>('schedule'),
           all<PersonUnavailability>('unavailability'),
         ]);
+        const constraintSelectors = constraints.map(constraintSelectorIds);
         const referencedPersonIds = persons.filter(person => wanted.has(person.id) && (
           schedules.some(schedule => schedule.sessions.some(session => session.presentations.some(presentation =>
             presentation.presenterId === person.id || presentation.questionerIds.includes(person.id))))
           || unavailabilities.some(item => item.personIds.includes(person.id)
             || item.tagIds.some(tagId => person.tagIds?.includes(tagId)))
-          || constraints.some(item => [...item.personIds, ...(item.type === 'frequency-multiplier' ? [] : item.otherPersonIds ?? [])].includes(person.id)
-            || [...item.tagIds, ...(item.type === 'frequency-multiplier' ? [] : item.otherTagIds ?? [])].some(tagId => person.tagIds?.includes(tagId)))
+          || constraintSelectors.some(selectors => {
+            return selectors.personIds.includes(person.id)
+              || selectors.tagIds.some(tagId => person.tagIds?.includes(tagId));
+          })
         )).map(person => person.id).sort();
         return { referencedPersonIds };
       },
@@ -578,7 +585,8 @@ export async function createPGliteDB(): Promise<{
     for (const row of rawRows) restoreIdMap.set(row.id, await normalizeUuid(row.id));
     const rows = rawRows.map(row => {
       const payload = rewriteEntityIds(row.payload, restoreIdMap) as Record<string, unknown>;
-      return { ...row, id: restoreIdMap.get(row.id)!, payload: row.kind === 'constraint' && payload.disabled === undefined ? { ...payload, disabled: false } : payload };
+      return { ...row, id: restoreIdMap.get(row.id)!, payload: row.kind === 'constraint'
+        ? { ...normalizeStoredConstraint(payload as unknown as ScheduleConstraint), disabled: payload.disabled ?? false } : payload };
     });
     await client.transaction(async (tx) => {
       await tx.query('DELETE FROM entities');

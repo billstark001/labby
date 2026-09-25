@@ -11,6 +11,11 @@ import type {
   Session,
   SolverInput,
   ScheduleConstraint,
+  NoOverlapConstraint,
+  AffinityBoostConstraint,
+  ConstraintTargetGroup,
+  PairOverlapStrategy,
+  Person,
   SimilarityLookup,
   GapBalancePolicy,
   QuestionerOptimizationPolicy,
@@ -129,13 +134,12 @@ export interface CostBreakdown {
 
 
 export interface NoOverlapGuide {
-  left: Set<string>;
-  right?: Set<string>;
+  memberships: Map<string, { group: number; multiple: boolean }>;
+  groupCount: number;
+  overlapStrategy: PairOverlapStrategy;
 }
 
-export interface AffinityGuide {
-  left: Set<string>;
-  right?: Set<string>;
+export interface AffinityGuide extends NoOverlapGuide {
   boost: number;
 }
 
@@ -153,6 +157,55 @@ export interface ConstraintGuidance {
   frequency: FrequencyGuide[];
   presenterWeights: Map<string, number>;
   questionerWeights: Map<string, number>;
+}
+
+type PairConstraint = NoOverlapConstraint | AffinityBoostConstraint;
+
+function pairTargetGroups(c: PairConstraint): ConstraintTargetGroup[] {
+  return c.groups.filter(group => group.personIds.length || group.tagIds.length);
+}
+
+export function resolvePairConstraint(c: PairConstraint, personTags: Map<string, string[]>): NoOverlapGuide {
+  const groups = pairTargetGroups(c).map(group => ({
+    personIds: new Set(group.personIds), tagIds: new Set(group.tagIds),
+  }));
+  const memberships = new Map<string, { group: number; multiple: boolean }>();
+  for (const [id, tags] of personTags) {
+    let firstGroup = -1;
+    let multiple = false;
+    for (const [index, group] of groups.entries()) {
+      if (!group.personIds.has(id) && !tags.some(tag => group.tagIds.has(tag))) continue;
+      if (firstGroup < 0) firstGroup = index;
+      else multiple = true;
+    }
+    if (firstGroup >= 0) memberships.set(id, { group: firstGroup, multiple });
+  }
+  return { memberships, groupCount: groups.length, overlapStrategy: c.overlapStrategy ?? 'include-multi-group' };
+}
+
+export function pairConstraintMatches(group: NoOverlapGuide, a: string, b: string): boolean {
+  if (a === b) return false;
+  const left = group.memberships.get(a);
+  const right = group.memberships.get(b);
+  if (!left || !right) return false;
+  if (group.groupCount === 1) return true;
+  if (group.overlapStrategy === 'exclusive-only') {
+    return !left.multiple && !right.multiple && left.group !== right.group;
+  }
+  return left.multiple || right.multiple || left.group !== right.group;
+}
+
+/** Uses the same matching rule as the solver, with disabled people excluded. */
+export function previewConstraintPairs(c: PairConstraint, persons: Person[]): Array<[string, string]> {
+  const active = persons.filter(person => !person.disabled);
+  const guide = resolvePairConstraint(c, new Map(active.map(person => [person.id, person.tagIds ?? []])));
+  const pairs: Array<[string, string]> = [];
+  for (let i = 0; i < active.length; i++) {
+    for (let j = i + 1; j < active.length; j++) {
+      if (pairConstraintMatches(guide, active[i].id, active[j].id)) pairs.push([active[i].id, active[j].id]);
+    }
+  }
+  return pairs;
 }
 
 // #region Constraint guidance and evaluation
@@ -174,19 +227,13 @@ export function buildConstraintGuidance(ctx: CostContext): ConstraintGuidance {
   for (const c of ctx.constraints ?? []) {
     if (c.disabled) continue;
     if (c.type === 'no-overlap') {
-      guidance.noOverlap.push({
-        left: resolve(c.personIds, c.tagIds),
-        right: c.otherPersonIds?.length || c.otherTagIds?.length
-          ? resolve(c.otherPersonIds ?? [], c.otherTagIds ?? []) : undefined,
-      });
+      guidance.noOverlap.push(resolvePairConstraint(c, ctx.personTags));
       continue;
     }
 
     if (c.type === 'affinity-boost') {
       guidance.affinity.push({
-        left: resolve(c.personIds, c.tagIds),
-        right: c.otherPersonIds?.length || c.otherTagIds?.length
-          ? resolve(c.otherPersonIds ?? [], c.otherTagIds ?? []) : undefined,
+        ...resolvePairConstraint(c, ctx.personTags),
         boost: c.boost ?? 2,
       });
       continue;
@@ -224,7 +271,7 @@ export function noOverlapForbidden(
   guidance: ConstraintGuidance,
 ): boolean {
   for (const c of guidance.noOverlap) {
-    if (pairMatches(c, presenterId, questionerId)) return true;
+    if (pairConstraintMatches(c, presenterId, questionerId)) return true;
   }
   return false;
 }
@@ -237,7 +284,7 @@ export function affinityPairWeight(
 ): number {
   let factor = 1;
   for (const c of guidance.affinity) {
-    if (!pairMatches(c, presenterId, questionerId)) continue;
+    if (!pairConstraintMatches(c, presenterId, questionerId)) continue;
     const boost = Number.isFinite(c.boost) ? c.boost : 1;
     if (boost > 0) factor *= boost;
   }
@@ -257,11 +304,6 @@ export function frequencyRoleWeight(
     factor *= Math.max(0.01, f.baseline * m);
   }
   return factor;
-}
-
-function pairMatches(group: { left: Set<string>; right?: Set<string> }, a: string, b: string): boolean {
-  if (!group.right) return group.left.has(a) && group.left.has(b);
-  return (group.left.has(a) && group.right.has(b)) || (group.right.has(a) && group.left.has(b));
 }
 
 // #endregion
@@ -422,7 +464,7 @@ export function computeCostBreakdown(
         if (seen.has(q)) invalidAssignmentPenalty += 0.5;
         if (noOverlapForbidden(pres.presenterId, q, guidance)) constraintPenalty += ctx.costWeights.invalidAssignment;
         for (const c of guidance.affinity) {
-          if (pairMatches(c, pres.presenterId, q)) constraintPenalty -= Math.log(Math.max(0.01, c.boost)) * 4;
+          if (pairConstraintMatches(c, pres.presenterId, q)) constraintPenalty -= Math.log(Math.max(0.01, c.boost)) * 4;
         }
         seen.add(q);
         directedPairs.add(`${pres.presenterId}|${q}`);

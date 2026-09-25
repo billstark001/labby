@@ -1897,15 +1897,55 @@ constraintTargets:
   zh-CN: 人员或标签
   ja-JP: 対象者またはタグ
 
-constraintUseOtherGroup:
-  en: Target pairs between two groups
-  zh-CN: 只约束两个组之间的配对
-  ja-JP: 2つのグループ間の組み合わせを対象にする
+constraintGroup:
+  en: Group
+  zh-CN: 组
+  ja-JP: グループ
 
-constraintOtherTargets:
-  en: Second group
-  zh-CN: 第二组
-  ja-JP: 第2グループ
+constraintAddGroup:
+  en: Add group
+  zh-CN: 添加组
+  ja-JP: グループを追加
+
+constraintRemoveGroup:
+  en: Remove group
+  zh-CN: 移除组
+  ja-JP: グループを削除
+
+constraintOverlapStrategy:
+  en: How to handle members in multiple groups
+  zh-CN: 多组成员的处理方式
+  ja-JP: 複数グループに属する人の扱い
+
+constraintOverlapInclude:
+  en: Include members in multiple groups
+  zh-CN: 包括多组成员
+  ja-JP: 複数グループのメンバーを含める
+
+constraintOverlapExclusive:
+  en: Only members unique to each group
+  zh-CN: 仅各组独有成员
+  ja-JP: 各グループ固有のメンバーのみ
+
+constraintPreview:
+  en: Matching pairs preview
+  zh-CN: 命中配对预览
+  ja-JP: 対象ペアのプレビュー
+
+constraintPreviewCount:
+  en: "{0} person pairs match this rule"
+  zh-CN: "此规则命中 {0} 对人员"
+  ja-JP: "このルールに該当するペア: {0} 組"
+
+constraintPreviewLimited:
+  en: Showing the first 40 pairs
+  zh-CN: 仅显示前 40 对
+  ja-JP: 最初の40組を表示
+
+constraintEmptyGroup:
+  en: Select at least one person or tag in each group.
+  zh-CN: 每组至少选择一个人员或标签。
+  ja-JP: 各グループで少なくとも1人または1つのタグを選択してください。
 
 constraintHardRule:
   en: Hard rule

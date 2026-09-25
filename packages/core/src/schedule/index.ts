@@ -38,7 +38,9 @@ export {
 } from './mutation.js';
 
 export { COST_WEIGHTS, DEFAULT_GAP_BALANCE, DEFAULT_QUESTIONER_OPTIMIZATION } from './constraints.js';
-export { buildCostContext, buildConstraintGuidance, noOverlapForbidden, validateScheduleAssignments } from './constraints.js';
+export { normalizeStoredConstraint } from './migrate-constraint.js';
+export { constraintSelectorIds } from './constraint-selectors.js';
+export { buildCostContext, buildConstraintGuidance, noOverlapForbidden, previewConstraintPairs, validateScheduleAssignments } from './constraints.js';
 export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing-strategies.js';
 export { solveConstrained } from './constrained.js';
 

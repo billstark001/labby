@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { Person, PersonTag, ScheduleConfig, ScheduleConstraint } from '@labby/core';
+import { previewConstraintPairs, type ConstraintTargetGroup, type PairOverlapStrategy, type Person, type PersonTag, type ScheduleConfig, type ScheduleConstraint } from '@labby/core';
 
 import { displayName, i18n } from '@/i18n';
 import { listConstraintsPage, readAllPaginated, useDatabase } from '@/db';
@@ -16,7 +16,8 @@ import {
   responsiveDataStyles as dataStyles,
 } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
-import { PersonTagBadge, tagColorStyle } from '@/components/PersonTagBadge';
+import { PersonTagBadge } from '@/components/PersonTagBadge';
+import { PersonMembershipPicker } from '@/components/PersonMembershipPicker';
 
 type ConstraintType = 'no-overlap' | 'affinity-boost' | 'frequency-multiplier';
 
@@ -43,11 +44,15 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
   const [configId, setConfigId] = useState(initial?.configId ?? '');
   const [disabled, setDisabled] = useState(initial?.disabled ?? false);
   const [constraintType, setConstraintType] = useState<ConstraintType>(initial?.type ?? 'no-overlap');
-  const [selectedPersonIds, setSelectedPersonIds] = useState<string[]>(initial?.personIds ?? []);
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(initial?.tagIds ?? []);
-  const [otherPersonIds, setOtherPersonIds] = useState<string[]>(initial?.type === 'frequency-multiplier' ? [] : initial?.otherPersonIds ?? []);
-  const [otherTagIds, setOtherTagIds] = useState<string[]>(initial?.type === 'frequency-multiplier' ? [] : initial?.otherTagIds ?? []);
-  const [useOtherGroup, setUseOtherGroup] = useState(initial?.type !== 'frequency-multiplier' && Boolean(initial?.otherPersonIds?.length || initial?.otherTagIds?.length));
+  const [groups, setGroups] = useState<ConstraintTargetGroup[]>(() => {
+    return !initial || initial.type === 'frequency-multiplier'
+      ? [{ personIds: initial?.type === 'frequency-multiplier' ? initial.personIds : [],
+        tagIds: initial?.type === 'frequency-multiplier' ? initial.tagIds : [] }]
+      : initial.groups.length ? initial.groups : [{ personIds: [], tagIds: [] }];
+  });
+  const [overlapStrategy, setOverlapStrategy] = useState<PairOverlapStrategy>(
+    initial?.type === 'frequency-multiplier' ? 'include-multi-group' : initial?.overlapStrategy ?? 'include-multi-group',
+  );
   const initialWeight = initial?.type === 'frequency-multiplier' ? initial.weight ?? 1 : 1;
   const [weight, setWeight] = useState(String(initialWeight));
   const [boost, setBoost] = useState(String(initial?.type === 'affinity-boost' ? initial.boost ?? 2 : 2));
@@ -56,15 +61,23 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
   const [roleScope, setRoleScope] = useState<'presenter' | 'questioner' | 'both'>(
     initial?.type === 'frequency-multiplier' ? (initial.roleScope ?? 'presenter') : 'presenter',
   );
-  function toggle(id: string, values: string[], setValues: (values: string[]) => void): void {
-    setValues(values.includes(id) ? values.filter(value => value !== id) : [...values, id]);
+  function updateGroup(index: number, key: 'personIds' | 'tagIds', ids: string[]): void {
+    setGroups(current => current.map((group, groupIndex) => groupIndex === index ? { ...group, [key]: ids } : group));
   }
 
+  const pairGroups = groups.filter(group => group.personIds.length || group.tagIds.length);
+  const first = groups[0];
+  const pairFields = { groups, overlapStrategy };
+  const previewRule = constraintType === 'no-overlap'
+    ? { id: initial?.id ?? '', type: 'no-overlap' as const, ...pairFields }
+    : { id: initial?.id ?? '', type: 'affinity-boost' as const, ...pairFields };
+  const previewPairs = constraintType === 'frequency-multiplier' || pairGroups.length !== groups.length || !first.personIds.length && !first.tagIds.length
+    ? [] : previewConstraintPairs(previewRule, persons);
+  const personNames = new Map(persons.map(person => [person.id, displayName(person)]));
+
   function handleSave(): void {
-    if (selectedPersonIds.length + selectedTagIds.length === 0) return;
-    if (useOtherGroup && constraintType !== 'frequency-multiplier' && otherPersonIds.length + otherTagIds.length === 0) return;
-    const cross = useOtherGroup && constraintType !== 'frequency-multiplier'
-      ? { otherPersonIds, otherTagIds } : {};
+    if (!first.personIds.length && !first.tagIds.length) return;
+    if (constraintType !== 'frequency-multiplier' && pairGroups.length !== groups.length) return;
 
     if (constraintType === 'no-overlap') {
       onSave({
@@ -72,9 +85,7 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
         configId,
         type: 'no-overlap',
         disabled,
-        personIds: selectedPersonIds,
-        tagIds: selectedTagIds,
-        ...cross,
+        ...pairFields,
         modifiedAt: Date.now(),
       });
       return;
@@ -86,9 +97,7 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
         configId,
         type: 'affinity-boost',
         disabled,
-        personIds: selectedPersonIds,
-        tagIds: selectedTagIds,
-        ...cross,
+        ...pairFields,
         boost: Number.isFinite(Number(boost)) && Number(boost) > 0 ? Number(boost) : 2,
         modifiedAt: Date.now(),
       });
@@ -100,8 +109,8 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
       configId,
       type: 'frequency-multiplier',
       disabled,
-      personIds: selectedPersonIds,
-      tagIds: selectedTagIds,
+      personIds: first.personIds,
+      tagIds: first.tagIds,
       baseline: Math.max(0, Number(baseline) || 0),
       multiplier: Math.max(0, Number(multiplier) || 0),
       roleScope,
@@ -133,44 +142,40 @@ function ConstraintForm({ initial, persons, tags, configs, onSave, onCancel, onD
           <option value="frequency-multiplier">{constraintTypeLabel('frequency-multiplier', t)}</option>
         </select>
       </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('constraintTargets')}</label>
-        <div class={s.tagList}>
-          {persons.map((person) => (
-            <button
-              type="button"
-              key={person.id}
-              class={`${s.badgeSelectable} ${selectedPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
-              onClick={() => toggle(person.id, selectedPersonIds, setSelectedPersonIds)}
-            >
-              {displayName(person)}
-            </button>
-          ))}
-          {tags.map(tag => <button type="button" key={tag.id}
-            class={`${s.badgeSelectable} ${selectedTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
-            style={tagColorStyle(tag)}
-            onClick={() => toggle(tag.id, selectedTagIds, setSelectedTagIds)}>
-            <span style={{ color: tag.color }}>●</span> {displayName(tag)}
-          </button>)}
-        </div>
-      </div>
-      {constraintType !== 'frequency-multiplier' && <div class={s.formGroup}>
-        <label class={s.label}><input type="checkbox" checked={useOtherGroup}
-          onChange={event => setUseOtherGroup((event.target as HTMLInputElement).checked)} /> {t('constraintUseOtherGroup')}</label>
-        {useOtherGroup && <>
-          <p class={s.textMuted}>{t('constraintOtherTargets')}</p>
-          <div class={s.tagList}>
-            {persons.map(person => <button type="button" key={person.id}
-              class={`${s.badgeSelectable} ${otherPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
-              onClick={() => toggle(person.id, otherPersonIds, setOtherPersonIds)}>{displayName(person)}</button>)}
-            {tags.map(tag => <button type="button" key={tag.id}
-              class={`${s.badgeSelectable} ${otherTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
-              style={tagColorStyle(tag)}
-              onClick={() => toggle(tag.id, otherTagIds, setOtherTagIds)}>
-              <span style={{ color: tag.color }}>●</span> {displayName(tag)}</button>)}
+      {groups.slice(0, constraintType === 'frequency-multiplier' ? 1 : undefined).map((group, index) => (
+        <div class={s.formGroup} key={index}>
+          <div class={s.flexGapSm}>
+            <label class={s.label}>{constraintType === 'frequency-multiplier' ? t('constraintTargets') : `${t('constraintGroup')} ${index + 1}`}</label>
+            {index > 0 && <Button variant="secondary" onClick={() => setGroups(current => current.filter((_, i) => i !== index))}>{t('constraintRemoveGroup')}</Button>}
           </div>
-        </>}
-      </div>}
+          <PersonMembershipPicker persons={persons} selectedIds={group.personIds}
+            onChange={ids => updateGroup(index, 'personIds', ids)}
+            allowTags tags={tags} selectedTagIds={group.tagIds}
+            onTagChange={ids => updateGroup(index, 'tagIds', ids)} />
+        </div>
+      ))}
+      {constraintType !== 'frequency-multiplier' && <>
+        <Button variant="secondary" onClick={() => setGroups(current => [...current, { personIds: [], tagIds: [] }])}>{t('constraintAddGroup')}</Button>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('constraintOverlapStrategy')}</label>
+          <select class={s.input} value={overlapStrategy}
+            onChange={event => setOverlapStrategy((event.target as HTMLSelectElement).value as PairOverlapStrategy)}>
+            <option value="include-multi-group">{t('constraintOverlapInclude')}</option>
+            <option value="exclusive-only">{t('constraintOverlapExclusive')}</option>
+          </select>
+        </div>
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('constraintPreview')}</label>
+          <p class={s.textMuted}>{t('constraintPreviewCount').replace('{0}', String(previewPairs.length))}</p>
+          {pairGroups.length !== groups.length && <p class={s.textDanger}>{t('constraintEmptyGroup')}</p>}
+          <div class={s.tagList}>
+            {previewPairs.slice(0, 40).map(([left, right]) => <span class={s.badge} key={`${left}:${right}`}>
+              {personNames.get(left)} ↔ {personNames.get(right)}
+            </span>)}
+          </div>
+          {previewPairs.length > 40 && <p class={s.textMuted}>{t('constraintPreviewLimited')}</p>}
+        </div>
+      </>}
       {constraintType === 'frequency-multiplier' && (
         <div class={s.formGroup}>
           <label class={s.label}>{t('constraintWeight')}</label>
@@ -257,19 +262,18 @@ export function ConstraintsTab() {
       {tagIds.map(id => { const tag = tagMap.get(id); return tag ? <PersonTagBadge key={id} tag={tag} /> : <span key={id} class={s.badge}>{id}</span>; })}
       {!personIds.length && !tagIds.length && '—'}
     </span>;
-    const otherPersonIds = constraint.type === 'frequency-multiplier' ? [] : constraint.otherPersonIds ?? [];
-    const otherTagIds = constraint.type === 'frequency-multiplier' ? [] : constraint.otherTagIds ?? [];
-    return <span class={s.flexGapSm}>{group(constraint.personIds, constraint.tagIds)}
-      {(otherPersonIds.length > 0 || otherTagIds.length > 0) && <> ↔ {group(otherPersonIds, otherTagIds)}</>}
-    </span>;
+    const groups = constraint.type === 'frequency-multiplier'
+      ? [{ personIds: constraint.personIds, tagIds: constraint.tagIds }] : constraint.groups;
+    return <span class={s.flexGapSm}>{groups.map((item, index) =>
+      <span key={index}>{index > 0 && ' ↔ '}{group(item.personIds, item.tagIds)}</span>)}</span>;
   }
 
   function summarizeParameters(constraint: ScheduleConstraint): string {
     if (constraint.type === 'no-overlap') {
-      return t('constraintHardRule');
+      return `${t('constraintHardRule')} · ${t(constraint.overlapStrategy === 'exclusive-only' ? 'constraintOverlapExclusive' : 'constraintOverlapInclude')}`;
     }
     if (constraint.type === 'affinity-boost') {
-      return `${t('constraintBoost')}: ${constraint.boost ?? 2}`;
+      return `${t('constraintBoost')}: ${constraint.boost ?? 2} · ${t(constraint.overlapStrategy === 'exclusive-only' ? 'constraintOverlapExclusive' : 'constraintOverlapInclude')}`;
     }
     return [
       `${t('constraintBaseline')}: ${constraint.baseline}`,

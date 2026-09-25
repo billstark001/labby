@@ -12,6 +12,7 @@ const schemaSql = {
   constraints: await readFile(new URL('../src/db/migrate/006.up.sql', import.meta.url), 'utf8'),
   localization: await readFile(new URL('../src/db/migrate/007.up.sql', import.meta.url), 'utf8'),
   unavailability: await readFile(new URL('../src/db/migrate/008.up.sql', import.meta.url), 'utf8'),
+  pairGroups: await readFile(new URL('../src/db/migrate/009.up.sql', import.meta.url), 'utf8'),
 };
 const KEYWORD_ID = '10000000-0000-4000-8000-000000000001';
 
@@ -53,7 +54,8 @@ test('v5 browser constraints migrate to canonical tag selectors', async () => {
       ['constraint', id, new Date(1), JSON.stringify({ id, configId: '', type: 'no-overlap', personIds: [], weight: 4 })]);
     await upgradeBrowserSchema(db, schemaSql);
     const row = (await db.query<{ payload: Record<string, unknown> }>("SELECT payload FROM entities WHERE kind='constraint'")).rows[0]!;
-    assert.deepEqual(row.payload.tagIds, []);
+    assert.deepEqual(row.payload.groups, [{ personIds: [], tagIds: [] }]);
+    assert.equal('personIds' in row.payload, false);
     assert.equal('weight' in row.payload, false);
   } finally { await db.close(); }
 });
@@ -96,6 +98,27 @@ test('v7 browser unavailability rows migrate to inclusive selectors', async () =
     assert.equal(payload.allPeople, false);
     assert.equal(row.all_people, false);
     assert.equal('personId' in payload, false);
+  } finally { await db.close(); }
+});
+
+test('v8 browser pair constraints migrate every group without retaining old selectors', async () => {
+  const db = new PGlite();
+  try {
+    await upgradeBrowserSchema(db, schemaSql);
+    await db.query("UPDATE app_metadata SET value=$1::jsonb WHERE key='schema-version'", [JSON.stringify({ version: 8 })]);
+    const id = '10000000-0000-4000-8000-000000000011';
+    await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4::jsonb)',
+      ['constraint', id, new Date(1), JSON.stringify({ id, type: 'affinity-boost', personIds: ['a'], tagIds: ['first'],
+        otherPersonIds: ['b'], otherTagIds: ['second'], additionalGroups: [{ personIds: ['c'], tagIds: ['third'] }], boost: 3 })]);
+    await upgradeBrowserSchema(db, schemaSql);
+    const payload = (await db.query<{ payload: Record<string, unknown> }>("SELECT payload FROM entities WHERE kind='constraint'")).rows[0]!.payload;
+    assert.deepEqual(payload.groups, [
+      { personIds: ['a'], tagIds: ['first'] }, { personIds: ['b'], tagIds: ['second'] },
+      { personIds: ['c'], tagIds: ['third'] },
+    ]);
+    for (const key of ['personIds', 'tagIds', 'otherPersonIds', 'otherTagIds', 'additionalGroups'])
+      assert.equal(key in payload, false);
+    assert.equal(payload.boost, 3);
   } finally { await db.close(); }
 });
 
