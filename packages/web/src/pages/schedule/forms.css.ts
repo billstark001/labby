@@ -1,4 +1,4 @@
-import { style } from '@vanilla-extract/css';
+import { globalStyle, style } from '@vanilla-extract/css';
 import { breakpoints, vars } from '@/styles/theme.css';
 
 export const configForm = style({ width: '100%', minWidth: 0 });
@@ -23,3 +23,15 @@ export const grid = style({
 });
 export const full = style({ gridColumn: '1 / -1', minWidth: 0 });
 export const gapFieldset = style({ border: 0, minWidth: 0, padding: 0, margin: 0 });
+export const tuningDetails = style({
+  borderTop: `1px solid ${vars.color.border}`,
+  paddingTop: vars.space.sm,
+});
+globalStyle(`${tuningDetails} > summary`, { cursor: 'pointer', fontWeight: vars.font.weight.bold });
+export const weightControl = style({
+  display: 'flex',
+  alignItems: 'center',
+  gap: vars.space.sm,
+  minWidth: 0,
+});
+globalStyle(`${weightControl} > input`, { flex: '1 1 0', minWidth: 0 });

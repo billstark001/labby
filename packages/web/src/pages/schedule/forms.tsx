@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
-import type { GapBalancePolicy, PersonUnavailability, ScheduleConfig, SchedulePlan } from '@labby/core';
-import { DEFAULT_GAP_BALANCE, SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
+import type { GapBalancePolicy, PersonUnavailability, QuestionerOptimizationPolicy, ScheduleConfig, ScheduleCostWeights, SchedulePlan } from '@labby/core';
+import { COST_WEIGHTS, DEFAULT_GAP_BALANCE, DEFAULT_QUESTIONER_OPTIMIZATION, SYSTEM_DEFAULT_TIMEZONE } from '@labby/core';
 
 import { personsSignal, personTagsSignal } from '@/store/index';
 import { displayName } from '@/i18n';
@@ -14,6 +14,13 @@ import { tagColorStyle } from '@/components/PersonTagBadge';
 import * as layout from './forms.css';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const COST_WEIGHT_FIELDS = [
+  ['uniformity', 'metricUniformity'], ['reciprocal', 'metricReciprocal'],
+  ['questionerPair', 'metricQuestionerPair'], ['relevance', 'metricRelevance'],
+  ['presenterLoad', 'metricPresenterLoad'], ['questionerCount', 'metricQuestionerLoad'],
+  ['questionerGap', 'metricQuestionerGap'], ['totalRole', 'metricTotalRole'],
+  ['invalidAssignment', 'metricInvalidAssignment'], ['constraint', 'metricConstraint'],
+] as const satisfies ReadonlyArray<readonly [keyof ScheduleCostWeights, string]>;
 
 interface ConfigFormProps {
   initial?: ScheduleConfig;
@@ -37,6 +44,11 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
     presenter: { ...DEFAULT_GAP_BALANCE.presenter, ...initial?.gapBalance?.presenter },
     questioner: { ...DEFAULT_GAP_BALANCE.questioner, ...initial?.gapBalance?.questioner },
   });
+  const [questionerOptimization, setQuestionerOptimization] = useState<QuestionerOptimizationPolicy>({
+    assignment: { ...DEFAULT_QUESTIONER_OPTIMIZATION.assignment, ...initial?.questionerOptimization?.assignment },
+    repair: { ...DEFAULT_QUESTIONER_OPTIMIZATION.repair, ...initial?.questionerOptimization?.repair },
+  });
+  const [costWeights, setCostWeights] = useState<ScheduleCostWeights>({ ...COST_WEIGHTS, ...initial?.costWeights });
   const [reciprocalPairPreference, setReciprocalPairPreference] = useState<NonNullable<ScheduleConfig['reciprocalPairPreference']>>(
     initial?.reciprocalPairPreference ?? 'neutral',
   );
@@ -58,6 +70,7 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
     setSaving(true);
     setError(null);
     try { await onSave({
+      ...initial,
       id: initial?.id ?? crypto.randomUUID(),
       daysOfWeek: [...selectedDays].sort((a, b) => a - b),
       timeRange: [startTime, endTime],
@@ -65,6 +78,9 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
       questionersPerPresenter: questioners,
       targetSimilarityRadius: radius,
       gapBalance,
+      questionerOptimization,
+      costWeights: Object.fromEntries((Object.keys(COST_WEIGHTS) as (keyof ScheduleCostWeights)[])
+        .filter(key => costWeights[key] !== COST_WEIGHTS[key]).map(key => [key, costWeights[key]])),
       reciprocalPairPreference,
       startDate,
       endDate,
@@ -89,6 +105,19 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
     const maximum = key === 'shortGapRatio' ? 1 : key === 'shortGapWeight' ? 100 : 50;
     if (Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
       setGapBalance(previous => ({ ...previous, [role]: { ...previous[role], [key]: parsed } }));
+  }
+  function setOptimizationValue<Group extends keyof QuestionerOptimizationPolicy>(
+    group: Group, key: keyof QuestionerOptimizationPolicy[Group], raw: string, maximum: number, divisor = 1,
+  ) {
+    const parsed = Number(raw) / divisor;
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= maximum)
+      setQuestionerOptimization(previous => ({ ...previous, [group]: { ...previous[group], [key]: parsed } }));
+  }
+  function setCostWeight(key: keyof ScheduleCostWeights, raw: string) {
+    const value = Number(raw);
+    const maximum = key === 'invalidAssignment' ? 1_000_000 : 100;
+    if (raw !== '' && Number.isFinite(value) && value >= 0 && value <= maximum)
+      setCostWeights(previous => ({ ...previous, [key]: value }));
   }
 
   return (
@@ -191,6 +220,67 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
               onInput={event => setGapValue(role, 'spreadWeight', (event.target as HTMLInputElement).value)} />
           </div>
         </fieldset>)}</div>
+      </details>
+      <details class={`${layout.full} ${layout.tuningDetails}`}>
+        <summary>{t('questionerAssignmentSettings')}</summary>
+        <p class={s.mutedParagraph}>{t('questionerAssignmentHelp')}</p>
+        <div class={layout.grid}>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('questionerNoveltyChance')}</label>
+            <input class={s.input} type="number" min={0} max={100} step={1}
+              value={Math.round(questionerOptimization.assignment.noveltyChance * 100)}
+              onInput={event => setOptimizationValue('assignment', 'noveltyChance', (event.target as HTMLInputElement).value, 1, 100)} />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('questionerBalanceChance')}</label>
+            <input class={s.input} type="number" min={0} max={100} step={1}
+              value={Math.round(questionerOptimization.assignment.balanceChance * 100)}
+              onInput={event => setOptimizationValue('assignment', 'balanceChance', (event.target as HTMLInputElement).value, 1, 100)} />
+          </div>
+        </div>
+      </details>
+      <details class={`${layout.full} ${layout.tuningDetails}`}>
+        <summary>{t('questionerRepairSettings')}</summary>
+        <p class={s.mutedParagraph}>{t('questionerRepairHelp')}</p>
+        <div class={layout.grid}>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('questionerRepairIterations')}</label>
+            <input class={s.input} type="number" min={0} max={500} step={1}
+              value={questionerOptimization.repair.iterations}
+              onInput={event => setOptimizationValue('repair', 'iterations', (event.target as HTMLInputElement).value, 500)} />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('questionerRepairPairWeight')}</label>
+            <input class={s.input} type="number" min={0} max={50} step={0.5}
+              value={questionerOptimization.repair.pairWeight}
+              onInput={event => setOptimizationValue('repair', 'pairWeight', (event.target as HTMLInputElement).value, 50)} />
+          </div>
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('questionerRepairCountWeight')}</label>
+            <input class={s.input} type="number" min={0} max={50} step={0.5}
+              value={questionerOptimization.repair.countWeight}
+              onInput={event => setOptimizationValue('repair', 'countWeight', (event.target as HTMLInputElement).value, 50)} />
+          </div>
+        </div>
+      </details>
+      <details class={`${layout.full} ${layout.tuningDetails}`}>
+        <summary>{t('costWeightsSettings')}</summary>
+        <p class={s.mutedParagraph}>{t('costWeightsHelp')}</p>
+        <div class={layout.grid}>
+          {COST_WEIGHT_FIELDS.map(([key, label]) => <div class={s.formGroup} key={key}>
+            <label class={s.label} for={`cost-weight-${key}`}>{t(label)}</label>
+            <div class={layout.weightControl}>
+              <input id={`cost-weight-${key}`} class={s.input} type="number" min={0}
+                max={key === 'invalidAssignment' ? 1_000_000 : 100}
+                step={key === 'invalidAssignment' ? 1 : 0.1} value={costWeights[key]}
+                onInput={event => setCostWeight(key, (event.target as HTMLInputElement).value)} />
+              <Button variant="secondary" disabled={costWeights[key] === COST_WEIGHTS[key]}
+                onClick={() => setCostWeights(previous => ({ ...previous, [key]: COST_WEIGHTS[key] }))}>
+                {t('resetToDefault')}
+              </Button>
+            </div>
+          </div>)}
+        </div>
       </details>
         </div>
       </section>

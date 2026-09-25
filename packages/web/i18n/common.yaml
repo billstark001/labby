@@ -197,14 +197,63 @@ gapBalanceSpreadWeight:
   zh-CN: 间隔离散罚分权重
   ja-JP: 間隔ばらつきのペナルティ重み
 
+questionerAssignmentSettings:
+  en: Initial questioner selection
+  zh-CN: 初始提问者选择
+  ja-JP: 初期質問者の選択
+questionerAssignmentHelp:
+  en: During initial generation, prefer less-used presenter pairs and less-loaded eligible people. Each percentage is the chance of applying that preference for a question slot; zero keeps the current selection method.
+  zh-CN: 初始生成时可优先选择较少搭配过的发表者与提问者，以及提问负载较低的可用人员。百分比表示每个提问位应用该偏好的概率；零保持原有选择方式。
+  ja-JP: 初期生成時に、使用回数の少ない発表者との組み合わせや、質問回数の少ない候補者を優先します。各割合は質問枠ごとに優先を適用する確率で、ゼロは従来の選択方法です。
+questionerNoveltyChance:
+  en: Prefer new pairings (%)
+  zh-CN: 优先新搭配（%）
+  ja-JP: 新しい組み合わせを優先（%）
+questionerBalanceChance:
+  en: Prefer lower question load (%)
+  zh-CN: 优先提问负载较低者（%）
+  ja-JP: 質問回数の少ない人を優先（%）
+questionerRepairSettings:
+  en: Targeted questioner repair
+  zh-CN: 提问者定向修复
+  ja-JP: 質問者の重点修正
+questionerRepairHelp:
+  en: After the main search, try questioner replacements and swaps without changing presenters. Extra weights favor fewer repeated pairs or more even question counts; zero iterations disables repair.
+  zh-CN: 主搜索后尝试替换或交换提问者，不改变发表者。额外权重分别偏向减少重复搭配和均衡提问次数；迭代次数为零时关闭修复。
+  ja-JP: 主探索後、発表者を変えずに質問者を置換・交換します。追加の重みで組み合わせの重複や質問回数の偏りを減らします。反復回数ゼロで無効です。
+questionerRepairIterations:
+  en: Repair attempts
+  zh-CN: 修复尝试次数
+  ja-JP: 修正の試行回数
+questionerRepairPairWeight:
+  en: Extra repeated-pair weight
+  zh-CN: 重复搭配额外权重
+  ja-JP: 組み合わせ重複の追加重み
+questionerRepairCountWeight:
+  en: Extra question-count weight
+  zh-CN: 提问次数额外权重
+  ja-JP: 質問回数の追加重み
+costWeightsSettings:
+  en: Objective weights
+  zh-CN: 目标函数权重
+  ja-JP: 目的関数の重み
+costWeightsHelp:
+  en: Edit every scoring term independently. Values shown initially are the current model defaults; zero removes a term from scoring. Mandatory rules still apply even when their weight is zero.
+  zh-CN: 可独立调整每个评分项。初始显示当前模型的默认值；零表示该项不计入评分。即使硬规则权重为零，硬规则仍须遵守。
+  ja-JP: 各評価項目の重みを個別に調整できます。初期値は現行モデルの既定値です。ゼロは評価から除外しますが、必須ルールは引き続き適用されます。
+resetToDefault:
+  en: Reset
+  zh-CN: 重置
+  ja-JP: リセット
+
 metricUniformity:
   en: Interval unevenness
   zh-CN: 间隔不均匀
   ja-JP: 間隔のばらつき
 metricUniformityHelp:
-  en: Presentations and questions clustered too close together or too far apart.
-  zh-CN: 同一人员的发表或提问过于集中，或间隔过长。
-  ja-JP: 同じ参加者の発表や質問が近すぎる、または離れすぎています。
+  en: Consecutive presentations by one person are too close together or unevenly spaced.
+  zh-CN: 同一人员相邻两次发表的间隔过短或分布不均。
+  ja-JP: 同じ参加者の連続する発表間隔が短すぎる、または不均等です。
 metricReciprocal:
   en: Reciprocal roles
   zh-CN: 同日互换角色
@@ -242,9 +291,17 @@ metricQuestionerLoad:
   zh-CN: 提问次数不均
   ja-JP: 質問回数の偏り
 metricQuestionerLoadHelp:
-  en: Question counts are uneven across people.
-  zh-CN: 各人的提问次数分配不均。
-  ja-JP: 参加者ごとの質問回数に偏りがあります。
+  en: Question counts differ from frequency-weighted targets.
+  zh-CN: 各人的提问次数偏离按频率权重计算的目标。
+  ja-JP: 質問回数が頻度の重みを考慮した目標から外れています。
+metricQuestionerGap:
+  en: Question timing imbalance
+  zh-CN: 提问间隔不均
+  ja-JP: 質問間隔のばらつき
+metricQuestionerGapHelp:
+  en: Consecutive questions by one person are too close together or unevenly spaced.
+  zh-CN: 同一人员相邻两次提问的间隔过短或分布不均。
+  ja-JP: 同じ参加者の連続する質問間隔が短すぎる、または不均等です。
 metricTotalRole:
   en: Combined role imbalance
   zh-CN: 总参与次数不均
