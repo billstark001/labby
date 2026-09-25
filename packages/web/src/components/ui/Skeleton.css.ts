@@ -1,4 +1,4 @@
-import { keyframes, style } from '@vanilla-extract/css';
+import { createVar, keyframes, style } from '@vanilla-extract/css';
 import { vars } from '../../styles/theme.css';
 
 const pulse = keyframes({
@@ -6,9 +6,12 @@ const pulse = keyframes({
   '50%': { opacity: 1 },
 });
 
+export const skeletonWidth = createVar();
+export const skeletonHeight = createVar();
 export const skeleton = style({
   display: 'block',
-  height: '1rem',
+  width: skeletonWidth,
+  height: skeletonHeight,
   borderRadius: vars.radius.sm,
   background: vars.color.border,
   animation: `${pulse} 1.5s ease-in-out infinite`,

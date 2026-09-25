@@ -2,7 +2,7 @@
 import { h } from 'preact';
 import { LoaderCircle } from 'lucide-preact';
 import * as s from '../../styles/components.css';
-import { spin } from './Toast.css';
+import { spinningIcon } from './Toast.css';
 
 export { Pagination } from './Pagination';
 export type { PaginationProps } from './Pagination';
@@ -22,7 +22,7 @@ export function Button({ variant = 'primary', class: cls, busy = false, children
       disabled={disabled || busy}
       aria-busy={busy}
       {...rest}
-    >{busy && <LoaderCircle size={14} style={{ animation: `${spin} 1s linear infinite` }} />}{busy ? ' ' : null}{children}</button>
+    >{busy && <LoaderCircle size={14} class={spinningIcon} />}{busy ? ' ' : null}{children}</button>
   );
 }
 

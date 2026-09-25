@@ -1,4 +1,4 @@
-import { style } from '@vanilla-extract/css';
+import { style, styleVariants } from '@vanilla-extract/css';
 import { breakpoints, vars } from '@/styles/theme.css';
 import { card } from '@/styles/components.css';
 
@@ -29,3 +29,5 @@ export const muted = style({ color: vars.color.textMuted, fontSize: vars.font.si
 export const discardZone = style({ margin: vars.space.sm, border: `1px solid ${vars.color.danger}55`, borderRadius: vars.radius.md, background: `${vars.color.danger}0d` });
 export const discardTitle = style({ display: 'flex', justifyContent: 'space-between', gap: vars.space.md, padding: `${vars.space.sm} ${vars.space.md}`, color: vars.color.danger, fontSize: vars.font.size.xs, fontWeight: vars.font.weight.bold });
 export const discardEmpty = style({ padding: `${vars.space.sm} ${vars.space.md}`, color: vars.color.textMuted, fontSize: vars.font.size.xs, textAlign: 'center' });
+export const dragInteraction = styleVariants({ drag: { cursor: 'grab', touchAction: 'none' }, clickable: { cursor: 'pointer', touchAction: 'auto' }, idle: { cursor: 'default', touchAction: 'auto' } });
+export const presenterCursor = styleVariants({ clickable: { cursor: 'pointer' }, idle: { cursor: 'default' } });

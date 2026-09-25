@@ -14,7 +14,7 @@
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect } from 'preact/hooks';
 import { signal, type Signal } from '@preact/signals';
-import type { CSSProperties } from 'preact';
+import * as css from './primitives.css';
 
 interface DropdownContextValue {
   open: Signal<boolean>;
@@ -37,7 +37,7 @@ export function DropdownMenu({ children }: { children: ComponentChildren }) {
 
   return (
     <DropdownCtx.Provider value={{ open, close }}>
-      <div data-dropdown-root style={{ position: 'relative', display: 'inline-block' }}>
+      <div data-dropdown-root class={css.root}>
         {children}
       </div>
     </DropdownCtx.Provider>
@@ -66,16 +66,10 @@ export function DropdownContent({ children, align = 'start' }: DropdownContentPr
   const { open } = useContext(DropdownCtx)!;
   if (!open.value) return null;
 
-  const alignStyle: CSSProperties = align === 'end' ? { right: 0 } : { left: 0 };
   return (
     <div
       role="menu"
-      style={{
-        position: 'absolute',
-        top: '100%',
-        ...alignStyle,
-        zIndex: 500,
-      }}
+      class={`${css.dropdownContent} ${css.align[align]}`}
     >
       {children}
     </div>
@@ -102,7 +96,7 @@ export function DropdownItem({ children, onSelect, disabled }: DropdownItemProps
       aria-disabled={disabled}
       onClick={handleSelect}
       onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(); }}
-      style={{ opacity: disabled ? 0.5 : 1 }}
+      class={disabled ? css.disabledItem : undefined}
     >
       {children}
     </div>

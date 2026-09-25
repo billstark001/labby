@@ -15,6 +15,7 @@
  */
 import { signal } from '@preact/signals';
 import { X } from 'lucide-preact';
+import * as css from './primitives.css';
 
 interface ToastItem {
   id: number;
@@ -55,9 +56,7 @@ function ToastEntry({ id, message, type }: ToastItem) {
       aria-live="polite"
       data-type={type}
       onClick={() => toast.dismiss(id)}
-      style={{
-        cursor: 'pointer',
-      }}
+      class={css.toastEntry}
     >
       <span>{message}</span>
       <span aria-hidden="true"><X size={14} /></span>
@@ -70,12 +69,7 @@ export function Toaster() {
   return (
     <div
       aria-label="Notifications"
-      style={{
-        position: 'fixed',
-        bottom: '24px',
-        right: '24px',
-        zIndex: 9999,
-      }}
+      class={css.toaster}
     >
       {_toasts.value.map(t => <ToastEntry key={t.id} {...t} />)}
     </div>

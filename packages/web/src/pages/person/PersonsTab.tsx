@@ -285,8 +285,8 @@ export function PersonsTab() {
           { header: t('modifiedAt'), sortKey: 'modifiedAt' },
         ]}
         getKey={(person) => person.id}
-        getDesktopRowProps={(person) => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
-        getMobileCardProps={(person) => ({ style: { opacity: person.disabled ? 0.5 : 1 } })}
+        getDesktopRowProps={(person) => ({ class: person.disabled ? s.dimmedRow : undefined })}
+        getMobileCardProps={(person) => ({ class: person.disabled ? s.dimmedRow : undefined })}
         renderDesktopRow={(person) => (
           <>
             <td class={s.td}>

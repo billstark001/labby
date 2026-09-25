@@ -13,7 +13,7 @@ const spin = keyframes({
   to: { transform: 'rotate(360deg)' },
 });
 
-export { spin };
+export const spinningIcon = style({ animation: `${spin} 1s linear infinite` });
 
 export const toastContainer = style({
   position: 'fixed',

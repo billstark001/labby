@@ -23,14 +23,14 @@ export function PersonTagMembershipPicker({ tags, selectedIds, onChange, disable
     <label class={s.label}>{label ?? t('personTags')} ({selectedIds.length})</label>
     <input class={s.input} type="search" value={query} disabled={disabled} placeholder={t('search')}
       onInput={event => setQuery((event.target as HTMLInputElement).value)} />
-    <div class={s.tagList} style={{ maxHeight: '12rem', overflowY: 'auto' }}>
+    <div class={`${s.tagList} ${s.scrollableTagList}`}>
       {visible.map(tag => {
         const selected = selectedIds.includes(tag.id);
         return <button type="button" key={tag.id} disabled={disabled} aria-pressed={selected}
-          class={`${s.badgeSelectable} ${selected ? s.badgeSelectableActive : ''}`}
+          class={`${s.badgeSelectable} ${s.tagBadge} ${selected ? s.badgeSelectableActive : ''}`}
           style={tagColorStyle(tag)}
           onClick={() => onChange(selected ? selectedIds.filter(id => id !== tag.id) : [...selectedIds, tag.id])}>
-          <span aria-hidden="true" style={{ color: tag.color }}>●</span> {displayName(tag)}
+          <span aria-hidden="true" class={s.tagDot}>●</span> {displayName(tag)}
         </button>;
       })}
     </div>

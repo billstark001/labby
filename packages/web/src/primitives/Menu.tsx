@@ -25,6 +25,8 @@
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef } from 'preact/hooks';
 import { signal, type Signal } from '@preact/signals';
+import { assignInlineVars } from '@vanilla-extract/dynamic';
+import * as css from './primitives.css';
 
 export type MenuMode = 'dropdown' | 'context';
 
@@ -92,7 +94,7 @@ export function Menu({ children, mode = 'dropdown' }: MenuProps) {
 
   return (
     <MenuCtx.Provider value={{ open, position, mode, show, close }}>
-      <div ref={rootRef} data-menu-root style={{ position: 'relative', display: 'inline-block' }}>
+      <div ref={rootRef} data-menu-root class={css.root}>
         {children}
       </div>
     </MenuCtx.Provider>
@@ -148,30 +150,20 @@ export function MenuContent({ children, align = 'start' }: MenuContentProps) {
         role="menu"
         onClick={(event: MouseEvent) => event.stopPropagation()}
         onContextMenu={(event: MouseEvent) => event.stopPropagation()}
-        style={{
-          position: 'fixed',
-          top: y,
-          left: x,
-          zIndex: 9000,
-        }}
+        class={css.contextMenu}
+        style={assignInlineVars({ [css.menuPositionX]: `${x}px`, [css.menuPositionY]: `${y}px` })}
       >
         {children}
       </div>
     );
   }
 
-  const alignStyle = align === 'end' ? { right: 0 as const } : { left: 0 as const };
   return (
     <div
       role="menu"
       onClick={(event: MouseEvent) => event.stopPropagation()}
       onContextMenu={(event: MouseEvent) => event.stopPropagation()}
-      style={{
-        position: 'absolute',
-        top: '100%',
-        ...alignStyle,
-        zIndex: 9000,
-      }}
+      class={`${css.dropdownMenu} ${css.align[align]}`}
     >
       {children}
     </div>
@@ -198,7 +190,7 @@ export function MenuItem({ children, onSelect, disabled }: MenuItemProps) {
       aria-disabled={disabled}
       onClick={handleSelect}
       onKeyDown={(e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(); }}
-      style={{ opacity: disabled ? 0.5 : 1 }}
+      class={disabled ? css.disabledItem : undefined}
     >
       {children}
     </div>

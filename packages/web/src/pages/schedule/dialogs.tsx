@@ -48,12 +48,12 @@ export function PersonSelectDialog({
       getPersonSimilarity(person.keywordIds, presenter.keywordIds, similarities),
     ]));
   }, [persons, presenter, similarities]);
-  const similarityColor = (value: number): string => {
-    if (value >= 1) return '#4caf50';
-    if (value >= 0.75) return 'green';
-    if (value >= 0.5) return '#b7c34a';
-    if (value >= 0.25) return 'orange';
-    return 'red';
+  const similarityClass = (value: number): string => {
+    if (value >= 1) return s.similarityColors.highest;
+    if (value >= 0.75) return s.similarityColors.high;
+    if (value >= 0.5) return s.similarityColors.medium;
+    if (value >= 0.25) return s.similarityColors.low;
+    return s.similarityColors.lowest;
   };
   if (!open) return null;
   return (
@@ -68,7 +68,7 @@ export function PersonSelectDialog({
           autoFocus
         />
       </div>
-      <div style={{ maxHeight: '55vh', overflow: 'auto' }}>
+      <div class={s.scrollablePersonList}>
         <table class={s.table}>
           <thead>
             <tr>
@@ -85,11 +85,11 @@ export function PersonSelectDialog({
                 <tr key={person.id}>
                   <td class={s.td}>{displayName(person)}</td>
                   {showSimilarity && (
-                    <td class={s.td} style={{ color: person.id === currentPersonId ? 'inherit' : similarityColor(personSimilarity ?? 0) }}>
+                    <td class={`${s.td} ${person.id === currentPersonId ? '' : similarityClass(personSimilarity ?? 0)}`}>
                       {personSimilarity?.toFixed(3)}
                     </td>
                   )}
-                  <td class={s.td} style={{ width: 1, whiteSpace: 'nowrap' }}>
+                  <td class={`${s.td} ${s.actionTd}`}>
                     <Button
                       variant={disabled ? 'ghost' : 'primary'}
                       disabled={disabled}

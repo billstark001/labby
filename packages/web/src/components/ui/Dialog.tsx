@@ -16,6 +16,7 @@ import * as btnStyles from '../../styles/components.css';
 import { Button } from './common';
 import { i18n } from '@/i18n';
 import { X } from 'lucide-preact';
+import { assignInlineVars } from '@vanilla-extract/dynamic';
 
 // Re-export primitive components for convenience
 export { useDialog, type DialogHandle };
@@ -36,9 +37,9 @@ interface DialogProps {
 export function Dialog({ open, onClose, closeOnOverlayClick = true, title, description, children, actions, width }: DialogProps) {
   const titleId = useId();
   const descriptionId = useId();
-  const widthStyle = width
-    ? { width: typeof width === 'number' ? `${width}px` : width }
-    : undefined;
+  const widthStyle = width === undefined ? undefined : assignInlineVars({
+    [s.dialogWidth]: typeof width === 'number' ? `${width}px` : width,
+  });
   return (
     <PrimitiveDialog
       open={open}

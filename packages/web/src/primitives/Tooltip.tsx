@@ -8,7 +8,7 @@
  */
 import { type ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
-import type { CSSProperties } from 'preact';
+import * as css from './primitives.css';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
 
@@ -20,19 +20,12 @@ interface TooltipProps {
   renderContent?: (content: string) => ComponentChildren;
 }
 
-const sideStyle: Record<Side, CSSProperties> = {
-  top:    { bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)' },
-  bottom: { top: 'calc(100% + 6px)',    left: '50%', transform: 'translateX(-50%)' },
-  left:   { right: 'calc(100% + 6px)', top: '50%',  transform: 'translateY(-50%)' },
-  right:  { left:  'calc(100% + 6px)', top: '50%',  transform: 'translateY(-50%)' },
-};
-
 export function Tooltip({ content, children, side = 'top', renderContent }: TooltipProps) {
   const [visible, setVisible] = useState(false);
 
   return (
     <div
-      style={{ position: 'relative', display: 'inline-flex' }}
+      class={css.tooltipRoot}
       onMouseEnter={() => setVisible(true)}
       onMouseLeave={() => setVisible(false)}
       onFocus={() => setVisible(true)}
@@ -42,12 +35,7 @@ export function Tooltip({ content, children, side = 'top', renderContent }: Tool
       {visible && (
         <div
           role="tooltip"
-          style={{
-            position: 'absolute',
-            ...sideStyle[side],
-            pointerEvents: 'none',
-            zIndex: 800,
-          }}
+          class={`${css.tooltipContent} ${css.tooltipSide[side]}`}
         >
           {renderContent ? renderContent(content) : content}
         </div>
@@ -55,4 +43,3 @@ export function Tooltip({ content, children, side = 'top', renderContent }: Tool
     </div>
   );
 }
-

@@ -23,6 +23,8 @@ export const grid = style({
 });
 export const full = style({ gridColumn: '1 / -1', minWidth: 0 });
 export const gapFieldset = style({ border: 0, minWidth: 0, padding: 0, margin: 0 });
+export const gapSummary = style({ cursor: 'pointer' });
+export const gapLegend = style({ marginBottom: '0.5rem' });
 export const tuningDetails = style({
   borderTop: `1px solid ${vars.color.border}`,
   paddingTop: vars.space.sm,

@@ -303,7 +303,7 @@ function BoundaryHandle({ dndManager, sessionId, sessionIndex, manualEditMode, c
     elementRef(element);
     handleRef(element);
   }, [elementRef, handleRef]);
-  return <div ref={setHandleRef} class={css.dateHandle} style={{ cursor: manualEditMode ? 'grab' : 'default', touchAction: manualEditMode ? 'none' : 'auto' }} tabIndex={0}>{children}</div>;
+  return <div ref={setHandleRef} class={`${css.dateHandle} ${css.dragInteraction[manualEditMode ? 'drag' : 'idle']}`} tabIndex={0}>{children}</div>;
 }
 
 function InsertRail({ dndManager, sessionIndex, presentationIndex, onInsert }: { dndManager: DragDropManager; sessionIndex: number; presentationIndex: number; onInsert: () => void }) {
@@ -396,8 +396,7 @@ function PresentationRow({
         {manualEditMode && <span ref={presentationDrag.handleRef} class={css.rowGrip}><GripVertical size={15} /></span>}
         <Menu mode="context">
           <MenuTrigger>
-            <span class={presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''} ${highlightOnly && !highlightPersonIds.has(presentation.presenter.personId) ? css.dimmedPerson : ''}`}
-              style={{ cursor: !manualEditMode && presentation.presenter.kind === 'fixed' ? 'pointer' : 'default' }}
+            <span class={`${presentation.presenter.kind === 'auto' ? css.autoSlot : `${css.personLabel} ${highlightPersonIds.has(presentation.presenter.personId) ? css.highlightedPerson : ''} ${highlightOnly && !highlightPersonIds.has(presentation.presenter.personId) ? css.dimmedPerson : ''}`} ${css.presenterCursor[!manualEditMode && presentation.presenter.kind === 'fixed' ? 'clickable' : 'idle']}`}
               onDblClick={() => { if (!manualEditMode && presentation.presenter.kind === 'fixed') onHighlightPerson(presentation.presenter.personId, 'toggle'); }}>
               {slotLabel(presentation.presenter, personMap, t('autoPresenter'))}
             </span>
@@ -469,8 +468,7 @@ function QuestionerToken({ dndManager, presentation, slot, index, label, manualE
     <span class={css.questionerWithMenu}>
     <Menu mode="context">
       <MenuTrigger>
-        <span ref={setTokenRef} class={slot.kind === 'auto' ? css.autoSlot : `${css.questionerToken} ${highlighted ? css.highlightedPerson : ''} ${dimmed ? css.dimmedPerson : ''}`}
-          style={{ cursor: manualEditMode ? 'grab' : slot.kind === 'fixed' ? 'pointer' : 'default', touchAction: manualEditMode ? 'none' : 'auto' }}
+        <span ref={setTokenRef} class={`${slot.kind === 'auto' ? css.autoSlot : `${css.questionerToken} ${highlighted ? css.highlightedPerson : ''} ${dimmed ? css.dimmedPerson : ''}`} ${css.dragInteraction[manualEditMode ? 'drag' : slot.kind === 'fixed' ? 'clickable' : 'idle']}`}
           onDblClick={() => { if (!manualEditMode && slot.kind === 'fixed') onHighlightPerson(slot.personId, 'toggle'); }}>{label}</span>
       </MenuTrigger>
       <MenuContent>{menu}</MenuContent>

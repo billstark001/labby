@@ -125,7 +125,7 @@ export function KeywordList() {
           { header: t('modifiedAt'), sortKey: 'modifiedAt' },
         ]}
         getKey={kw => kw.id}
-        getDesktopRowProps={kw => ({ style: { opacity: kw.disabled ? 0.5 : 1 } })}
+        getDesktopRowProps={kw => ({ class: kw.disabled ? s.dimmedRow : undefined })}
         renderDesktopRow={kw => (
           <>
             <td class={s.td}>

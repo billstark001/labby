@@ -820,7 +820,7 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         <p class={s.mutedParagraph}>{t('emailTaskOneOffRecipientsHint')}</p>
         <div class={s.formGroup}>
           <label class={s.label} for="send-now-recipients">{t('emailTaskEmails')}</label>
-          <textarea id="send-now-recipients" class={s.input} style={{ display: 'block', width: '100%', boxSizing: 'border-box', resize: 'vertical' }} rows={3} value={sendRecipientsText}
+          <textarea id="send-now-recipients" class={`${s.input} ${s.fullWidthTextarea}`} rows={3} value={sendRecipientsText}
             disabled={sendingNow} onInput={event => setSendRecipientsText((event.target as HTMLTextAreaElement).value)} />
           <small class={s.textMuted}>{t('emailTaskRecipientSeparatorHint')}</small>
         </div>

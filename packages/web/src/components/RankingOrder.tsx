@@ -132,30 +132,20 @@ function RankingRow({
   return (
     <div
       ref={element}
-      class={s.formGroup}
-      style={{
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        flexWrap: 'wrap',
-        padding: 8,
-        outline: over ? '2px solid currentColor' : undefined,
-      }}
+      class={`${s.formGroup} ${s.rankingRow} ${over ? s.rankingRowOver : ''}`}
     >
       <button
         ref={handle}
         type="button"
         disabled={disabled}
         aria-label={`${t('rankingDragHint')} ${name}`}
-        style={{ touchAction: 'none', cursor: disabled ? 'default' : 'grab' }}
+        class={s.rankingHandle}
       >
         <GripVertical size={18} />
       </button>
-      <span style={{ flex: '1 1 120px' }}>{name}</span>
+      <span class={s.rankingName}>{name}</span>
       <select
-        class={s.input}
-        style={{ width: 'auto' }}
+        class={`${s.input} ${s.rankingSelect}`}
         aria-label={`${name} · ${t('rankingNearest')}`}
         value={rank}
         disabled={disabled}

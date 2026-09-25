@@ -1,5 +1,5 @@
 /** Dialog component styles. */
-import { style } from '@vanilla-extract/css';
+import { createVar, style } from '@vanilla-extract/css';
 import { breakpoints, vars } from '../../styles/theme.css';
 
 export const dialogOverlay = style({
@@ -13,6 +13,7 @@ export const dialogOverlay = style({
   zIndex: 1000,
 });
 
+export const dialogWidth = createVar();
 export const dialogContent = style({
   position: 'fixed',
   top: '50%',
@@ -22,6 +23,7 @@ export const dialogContent = style({
   borderRadius: vars.radius.lg,
   padding: 0,
   minWidth: '320px',
+  width: dialogWidth,
   maxWidth: '90vw',
   maxHeight: '80vh',
   display: 'flex',

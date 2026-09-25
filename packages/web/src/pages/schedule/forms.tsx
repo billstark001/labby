@@ -201,10 +201,10 @@ export function ConfigForm({ initial, onSave, onCancel }: ConfigFormProps) {
         </select>
       </div>
       <details class={layout.full}>
-        <summary style={{ cursor: 'pointer' }}>{t('gapBalanceSettings')}</summary>
+        <summary class={layout.gapSummary}>{t('gapBalanceSettings')}</summary>
         <p class={s.mutedParagraph}>{t('gapBalanceHelp')}</p>
         <div class={layout.grid}>{(['presenter', 'questioner'] as const).map(role => <fieldset key={role} class={layout.gapFieldset}>
-          <legend class={s.label} style={{ marginBottom: '0.5rem' }}>{t(role === 'presenter' ? 'gapBalancePresenter' : 'gapBalanceQuestioner')}</legend>
+          <legend class={`${s.label} ${layout.gapLegend}`}>{t(role === 'presenter' ? 'gapBalancePresenter' : 'gapBalanceQuestioner')}</legend>
           <div class={s.formGroup}>
             <label class={s.label}>{t('gapBalanceShortRatio')}</label>
             <NumericInput class={s.input} min={0} max={100} step={1} value={Math.round(gapBalance[role].shortGapRatio * 100)}

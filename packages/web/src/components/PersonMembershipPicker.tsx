@@ -30,7 +30,7 @@ export function PersonMembershipPicker({ persons, selectedIds, onChange, disable
     <label class={s.label}>{label ?? t('selectPeople')} ({selectedIds.length})</label>
     <input class={s.input} type="search" value={query} disabled={disabled} placeholder={t('searchPerson')}
       onInput={event => setQuery((event.target as HTMLInputElement).value)} />
-    <div class={s.tagList} style={{ maxHeight: '12rem', overflowY: 'auto' }}>
+    <div class={`${s.tagList} ${s.scrollableTagList}`}>
       {visible.map(person => {
         const selected = selectedIds.includes(person.id);
         return <button type="button" key={person.id} disabled={disabled || (!selected && cannotAdd?.(person))}

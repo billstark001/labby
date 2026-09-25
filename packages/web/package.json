@@ -31,6 +31,7 @@
     "@luma.gl/webgpu": "^9.4.1",
     "@msgpack/msgpack": "^3.1.3",
     "@preact/signals": "^2.11.2",
+    "@vanilla-extract/dynamic": "^2.1.5",
     "clsx": "^2.1.1",
     "d3": "^7.9.0",
     "lucide-preact": "^1.46.0",

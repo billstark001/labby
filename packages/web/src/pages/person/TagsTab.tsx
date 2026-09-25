@@ -121,7 +121,7 @@ export function TagsTab() {
       <Button disabled={!query.data || pendingId !== null} onClick={() => setEditing({ id: crypto.randomUUID(), name: '', names: { en: '', zh: '', ja: '' }, color: randomTagColor() })}>{t('addPersonTag')}</Button>
     </div>
     <div class={s.toolbar}>
-      <input class={s.input} style={{ flex: '1 1 12rem', minWidth: 0 }} type="search" aria-label={t('search')} placeholder={t('search')} value={search} onInput={event => setSearch((event.target as HTMLInputElement).value)} />
+      <input class={`${s.input} ${s.searchFlexInput}`} type="search" aria-label={t('search')} placeholder={t('search')} value={search} onInput={event => setSearch((event.target as HTMLInputElement).value)} />
       <select class={s.input} aria-label={t('sortBy')} value={sort} onChange={event => setSort((event.target as HTMLSelectElement).value as 'name' | 'members')}>
         <option value="name">{t('name')}</option>
         <option value="members">{t('tagMembers')}</option>

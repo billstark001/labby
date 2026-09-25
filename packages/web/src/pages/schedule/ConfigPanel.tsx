@@ -64,7 +64,7 @@ export function ConfigPanel({
   function renderUnavailabilityTargets(unavail: PersonUnavailability) {
     if (unavail.allPeople) return t('unavailEveryone');
     const tagMap = new Map(personTagsSignal.value.map(tag => [tag.id, tag]));
-    return <span class={s.flexGapSm} style={{ flexWrap: 'wrap' }}>
+    return <span class={`${s.flexGapSm} ${s.flexGapSmWrap}`}>
       {unavail.personIds.map(id => <span key={id}>{personMap.get(id) ? displayName(personMap.get(id)!) : fallbackEntityId(id)}</span>)}
       {unavail.tagIds.map(id => tagMap.get(id)
         ? <PersonTagBadge key={id} tag={tagMap.get(id)!} />

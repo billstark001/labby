@@ -1,10 +1,13 @@
-import type { CSSProperties } from 'preact';
+import { assignInlineVars } from '@vanilla-extract/dynamic';
 import { i18n } from '@/i18n';
 import * as s from './Skeleton.css';
 
 export function Skeleton({ width = '100%', height }: { width?: string | number; height?: string | number }) {
-  const style: CSSProperties = { width, ...(height === undefined ? {} : { height }) };
-  return <span class={s.skeleton} style={style} aria-hidden="true" />;
+  const dimension = (value: string | number) => typeof value === 'number' ? `${value}px` : value;
+  return <span class={s.skeleton} style={assignInlineVars({
+    [s.skeletonWidth]: dimension(width),
+    [s.skeletonHeight]: height === undefined ? '1rem' : dimension(height),
+  })} aria-hidden="true" />;
 }
 
 export function ContentSkeleton({ rows = 4, label }: { rows?: number; label?: string }) {

@@ -1,5 +1,5 @@
 /** Shared component styles. */
-import { style, styleVariants } from '@vanilla-extract/css';
+import { createVar, style, styleVariants } from '@vanilla-extract/css';
 import { breakpoints, vars } from './theme.css';
 
 // ---------------------------------------------------------------------------
@@ -16,6 +16,7 @@ export const appShell = style({
     },
   },
 });
+export const startupMain = style({ padding: '2rem' });
 
 export const mobileTopbar = style({
   display: 'none',
@@ -284,6 +285,9 @@ export const input = style({
   },
 });
 
+export const searchFlexInput = style({ flex: '1 1 12rem', minWidth: 0 });
+export const fullWidthTextarea = style({ display: 'block', width: '100%', boxSizing: 'border-box', resize: 'vertical' });
+
 export const preWrap = style({
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
@@ -314,6 +318,16 @@ export const td = style({
   padding: `${vars.space.sm} ${vars.space.md}`,
   borderBottom: `1px solid ${vars.color.border}`,
 });
+export const actionTd = style({ width: 1, whiteSpace: 'nowrap' });
+export const dimmedRow = style({ opacity: 0.5 });
+export const scrollablePersonList = style({ maxHeight: '55vh', overflow: 'auto' });
+export const similarityColors = styleVariants({
+  highest: { color: '#4caf50' },
+  high: { color: 'green' },
+  medium: { color: '#b7c34a' },
+  low: { color: 'orange' },
+  lowest: { color: 'red' },
+});
 
 // ---------------------------------------------------------------------------
 // Badge
@@ -328,6 +342,11 @@ export const badge = style({
   background: `${vars.color.accent}18`,
   color: vars.color.accent,
 });
+
+export const tagBorderColor = createVar();
+export const tagBackgroundColor = createVar();
+export const tagBadge = style({ border: `1px solid ${tagBorderColor}`, backgroundColor: tagBackgroundColor });
+export const tagDot = style({ color: tagBorderColor });
 
 export const badgeButton = style([
   badge,
@@ -412,6 +431,7 @@ export const tagList = style({
   flexWrap: 'wrap',
   gap: vars.space.xs,
 });
+export const scrollableTagList = style({ maxHeight: '12rem', overflowY: 'auto' });
 
 // ---------------------------------------------------------------------------
 // Utility styles for flex and spacing
@@ -426,6 +446,7 @@ export const flexGapSm = style({
   display: 'flex',
   gap: vars.space.sm,
 });
+export const flexGapSmWrap = style({ flexWrap: 'wrap' });
 
 export const flexGapMd = style({
   display: 'flex',
@@ -597,6 +618,16 @@ export const graphSidebarCard = style([
     overflowY: 'auto',
   },
 ]);
+
+export const graphSidebarHeight = createVar();
+export const graphSidebarSized = style({ maxHeight: graphSidebarHeight });
+export const graphLoadingStatus = style({ minHeight: '3em' });
+
+export const rankingRow = style({ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 8 });
+export const rankingRowOver = style({ outline: '2px solid currentColor' });
+export const rankingHandle = style({ touchAction: 'none', cursor: 'grab', selectors: { '&:disabled': { cursor: 'default' } } });
+export const rankingName = style({ flex: '1 1 120px' });
+export const rankingSelect = style({ width: 'auto' });
 
 // ---------------------------------------------------------------------------
 // Disabled badge

@@ -21,6 +21,7 @@ import { Button } from './ui/common';
 import { ContentSkeleton } from './ui';
 import { i18n } from '@/i18n';
 import clsx from 'clsx';
+import { assignInlineVars } from '@vanilla-extract/dynamic';
 import { productDistance, rankingQueryKey } from '@labby/core';
 import { RankingEditor } from './RankingCard';
 
@@ -69,7 +70,7 @@ function GraphLoadingStatus() {
   const streamStatus = graphStreamStatus.value;
   const [refreshing, setRefreshing] = useState(false);
   const { t } = i18n;
-  return <div style={{minHeight:'3em'}}>
+  return <div class={s.graphLoadingStatus}>
     <p role="status" aria-live="polite" class={s.mutedParagraph}>
       {streamStatus.loading ? t('graphLoading', String(streamStatus.count)) : refreshing ? t('graphSyncing') : t('graphUpToDate')}
     </p>
@@ -481,7 +482,7 @@ export function KeywordGraph() {
             />}
             <p class={s.mutedParagraph}>{t('rankingGraphHint')}</p>
           </div>
-          <div class={`${s.card} ${s.graphSidebarCard}`} style={{ maxHeight: `${Math.max(canvasSize.height, 340)}px` }}>
+          <div class={`${s.card} ${s.graphSidebarCard} ${s.graphSidebarSized}`} style={assignInlineVars({ [s.graphSidebarHeight]: `${Math.max(canvasSize.height, 340)}px` })}>
             <h3 class={`${s.mb12} ${s.text16} ${s.fontBold}`}>Selected Keywords</h3>
             <div class={s.metricList}>
               {selectedLabels.length === 0 ? (
