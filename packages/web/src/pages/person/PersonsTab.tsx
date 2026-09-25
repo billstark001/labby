@@ -16,7 +16,8 @@ import {
 } from '@/components/ui';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
 import { toast } from '@/components/ui/Toast';
-import { PersonTagBadge, tagColorStyle } from '@/components/PersonTagBadge';
+import { PersonTagBadge } from '@/components/PersonTagBadge';
+import { PersonTagMembershipPicker } from '@/components/PersonTagMembershipPicker';
 
 const MAX_KEYWORDS = 10;
 
@@ -116,22 +117,7 @@ function PersonForm({ initial, keywords, tags, onSave, onCancel, onDelete, pendi
         <label class={s.label}>Name (EN)</label>
         <input class={s.input} value={nameEn} onInput={(e) => setNameEn((e.target as HTMLInputElement).value)} />
       </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('personTags')}</label>
-        <div class={s.tagList}>
-          {tags.map((tag) => (
-            <button
-              type="button"
-              key={tag.id}
-              class={`${s.badgeSelectable} ${selectedTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
-              style={{ ...tagColorStyle(tag), boxShadow: selectedTagIds.includes(tag.id) ? `inset 0 0 0 1px ${tag.color}` : undefined }}
-              onClick={() => setSelectedTagIds(prev => prev.includes(tag.id) ? prev.filter(id => id !== tag.id) : [...prev, tag.id])}
-            >
-              <span style={{ color: tag.color }}>●</span> {displayName(tag)}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PersonTagMembershipPicker tags={tags} selectedIds={selectedTagIds} onChange={setSelectedTagIds} />
       <div class={s.formGroup}>
         <label class={s.label}>Name (中文)</label>
         <input class={s.input} value={nameZh} onInput={(e) => setNameZh((e.target as HTMLInputElement).value)} />

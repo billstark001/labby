@@ -11,7 +11,7 @@ import { NumericInput } from '@/components/ui/NumericInput';
 import { Dialog } from '@/components/ui/Dialog';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { getScheduleConfigTitle } from '@/lib/scheduleConfigLabel';
-import { tagColorStyle } from '@/components/PersonTagBadge';
+import { PersonMembershipPicker } from '@/components/PersonMembershipPicker';
 import * as layout from './forms.css';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -357,47 +357,14 @@ export function UnavailForm({ configId, initial, onSave, onCancel, onDelete }: U
     finally { setSaving(false); }
   }
 
-  function togglePerson(personId: string) {
-    setPersonIds((prev) => {
-      if (prev.includes(personId)) {
-        return prev.filter((id) => id !== personId);
-      }
-      return [...prev, personId];
-    });
-  }
-
   return (
     <div>
       <p class={s.mutedParagraph}>{t('unavailInclusiveHelp')}</p>
       <label class={s.checkboxRow}><input class={s.checkboxRowInput} type="checkbox" checked={allPeople}
         onChange={event => { setAllPeople(event.currentTarget.checked); if (event.currentTarget.checked) { setPersonIds([]); setTagIds([]); } }} /> {t('unavailEveryone')}</label>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('unavailPerson')}</label>
-        <div class={s.tagList}>
-          {persons.map((person) => {
-            const selected = personIds.includes(person.id);
-            return (
-              <button
-                key={person.id}
-                type="button"
-                disabled={allPeople}
-                class={`${s.badgeSelectable} ${selected ? s.badgeSelectableActive : ''}`}
-                onClick={() => togglePerson(person.id)}
-              >
-                {displayName(person)}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <div class={s.formGroup}>
-        <label class={s.label}>{t('personTags')}</label>
-        <div class={s.tagList}>{tags.map(tag => <button type="button" key={tag.id} disabled={allPeople}
-          class={`${s.badgeSelectable} ${tagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
-          style={tagColorStyle(tag)} onClick={() => setTagIds(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])}>
-          {displayName(tag)}
-        </button>)}</div>
-      </div>
+      <PersonMembershipPicker persons={persons} selectedIds={personIds} onChange={setPersonIds}
+        label={t('unavailPerson')} disabled={allPeople} allowTags tags={tags}
+        selectedTagIds={tagIds} onTagChange={setTagIds} />
       <div class={s.formGroup}>
         <label class={s.label}>{t('unavailStart')}</label>
         <input class={s.input} type="date" value={startDate} onInput={e => setStartDate((e.target as HTMLInputElement).value)} />

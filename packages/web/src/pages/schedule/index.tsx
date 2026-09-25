@@ -43,7 +43,7 @@ import {
   downloadScheduleIcs,
 } from '@/lib/scheduleExport';
 import { Dialog, confirmDialog } from '@/components/ui/Dialog';
-import { tagColorStyle } from '@/components/PersonTagBadge';
+import { PersonMembershipPicker } from '@/components/PersonMembershipPicker';
 import { toast } from '@/components/ui/Toast';
 import { usePendingAction } from '@/lib/use-pending-action';
 import { i18n } from '@/i18n';
@@ -1003,22 +1003,9 @@ export function SchedulePage() {
           <Button variant="secondary" onClick={() => { setHighlightPersonIds([]); setHighlightTagIds([]); }}>{t('clearSelection')}</Button>
         </div>
         <button type="button" class={`${s.badgeSelectable} ${highlightOnly ? s.badgeSelectableActive : ''}`} aria-pressed={highlightOnly} onClick={() => setHighlightOnly(value => !value)}>{t('onlyHighlight')}</button>
-        <div class={s.formGroup}>
-          <p class={s.label}>{t('highlightPerson')}</p>
-          <div class={s.tagList}>{[...persons].sort((a,b) => displayName(a).localeCompare(displayName(b), i18n.lang.value) || a.id.localeCompare(b.id)).map(person => <button type="button" key={person.id}
-            class={`${s.badgeSelectable} ${highlightPersonIds.includes(person.id) ? s.badgeSelectableActive : ''}`}
-            aria-pressed={highlightPersonIds.includes(person.id)}
-            onClick={() => setHighlightPersonIds(previous => previous.includes(person.id) ? previous.filter(id => id !== person.id) : [...previous, person.id])}>{displayName(person)}</button>)}</div>
-        </div>
-        <div class={s.formGroup}>
-          <p class={s.label}>{t('highlightPersonTag')}</p>
-          <div class={s.tagList}>{[...personTagsSignal.value].sort((a,b) => displayName(a).localeCompare(displayName(b), i18n.lang.value) || a.id.localeCompare(b.id)).map(tag => <button type="button" key={tag.id}
-            class={`${s.badgeSelectable} ${highlightTagIds.includes(tag.id) ? s.badgeSelectableActive : ''}`}
-            style={tagColorStyle(tag)} aria-pressed={highlightTagIds.includes(tag.id)}
-            onClick={() => setHighlightTagIds(previous => previous.includes(tag.id) ? previous.filter(id => id !== tag.id) : [...previous, tag.id])}>
-            <span aria-hidden="true" style={{ color: tag.color }}>●</span> {displayName(tag)}
-          </button>)}</div>
-        </div>
+        <PersonMembershipPicker persons={persons} selectedIds={highlightPersonIds} onChange={setHighlightPersonIds}
+          label={t('highlightPerson')} allowTags tags={personTagsSignal.value} tagLabel={t('highlightPersonTag')}
+          selectedTagIds={highlightTagIds} onTagChange={setHighlightTagIds} />
         <Button onClick={() => setHighlightDialogOpen(false)}>{t('done')}</Button>
       </Dialog>
       <ScheduleView
