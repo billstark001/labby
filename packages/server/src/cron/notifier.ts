@@ -8,13 +8,13 @@
 
 import { normalizeTimeZone, type ScheduleConfig } from '@labby/core';
 import type { Mailer } from '../lib/mailer.js';
-import type { CronScheduler } from './scheduler.js';
+import type { JobScheduler } from './scheduler.js';
 import type { LabbyStore } from '../store/index.js';
 import { resolveScheduleTimezone } from '../lib/email-task-timezone.js';
 import { safeErrorInfo } from '../lib/logging.js';
 
 export interface ScheduleNotifierOptions {
-  scheduler: CronScheduler;
+  scheduler: JobScheduler;
   mailer: Mailer;
   store: LabbyStore;
   /** Email addresses to notify. */

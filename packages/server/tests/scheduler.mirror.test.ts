@@ -1,20 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { CronScheduler, resolveSchedulerMode } from '../src/cron/scheduler.js';
+import { CronScheduler, resolveDynamicSchedulerMode, resolveStaticSchedulerMode } from '../src/cron/scheduler.js';
 
 class FakeMirror {
-  readonly upserts: string[] = [];
-  readonly removals: string[] = [];
   syncedNames: string[] = [];
-
-  async upsert(definition: { name: string }): Promise<void> {
-    this.upserts.push(definition.name);
-  }
-
-  async remove(name: string): Promise<void> {
-    this.removals.push(name);
-  }
 
   async sync(definitions: Array<{ name: string }>): Promise<void> {
     this.syncedNames = definitions.map((item) => item.name).sort();
@@ -42,23 +32,61 @@ test('CronScheduler cloud mode keeps definitions and can dispatch manually', asy
   assert.equal(ok, true);
   assert.equal(runs, 1);
 
-  await scheduler.syncMirrorNow();
+  await scheduler.sync();
   assert.deepEqual(mirror.syncedNames, ['job-a']);
 
   scheduler.unregister('job-a');
   assert.deepEqual(scheduler.registeredJobs, []);
-  assert.ok(mirror.upserts.includes('job-a'));
-  assert.ok(mirror.removals.includes('job-a'));
+  await scheduler.sync();
+  assert.deepEqual(mirror.syncedNames, []);
 });
 
-test('external scheduler aliases register jobs without local timers', () => {
-  assert.equal(resolveSchedulerMode('external'), 'external');
-  assert.equal(resolveSchedulerMode('railway'), 'external');
-  assert.throws(() => resolveSchedulerMode('typo'), /Unsupported SCHEDULER_MODE/);
+test('static and dynamic mode values are validated separately', () => {
+  assert.equal(resolveStaticSchedulerMode('external'), 'external');
+  assert.equal(resolveDynamicSchedulerMode('cloud'), 'cloud');
+  assert.equal(resolveStaticSchedulerMode(undefined), 'cron');
+  assert.equal(resolveDynamicSchedulerMode(undefined), 'cron');
+  assert.throws(() => resolveDynamicSchedulerMode('external'), /cannot be external/);
+  assert.throws(() => resolveStaticSchedulerMode('mixed'), /Unsupported STATIC_SCHEDULER_MODE/);
+  assert.throws(() => resolveDynamicSchedulerMode('typo'), /Unsupported DYNAMIC_SCHEDULER_MODE/);
 
   const scheduler = new CronScheduler();
   scheduler.setMode('external');
   scheduler.register({ name: 'job-a', expression: '*/5 * * * *', handler: () => {} });
   assert.deepEqual(scheduler.registeredJobs, ['job-a']);
   scheduler.shutdown();
+});
+
+test('scheduler serializes remote reconciliation and uses the newest definitions', async () => {
+  const scheduler = new CronScheduler();
+  scheduler.setMode('cloud');
+  const snapshots: string[][] = [];
+  scheduler.setMirror({
+    async sync(definitions) {
+      snapshots.push(definitions.map((definition) => definition.name));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+  });
+  scheduler.register({ name: 'old', expression: '0 0 * * *', handler: () => {} });
+  const first = scheduler.sync();
+  scheduler.unregister('old');
+  scheduler.register({ name: 'new', expression: '0 0 * * *', handler: () => {} });
+  const second = scheduler.sync();
+  await Promise.all([first, second]);
+  assert.deepEqual(snapshots, [['new'], ['new']]);
+});
+
+test('a second dispatch does not overlap a running handler', async () => {
+  const scheduler = new CronScheduler();
+  scheduler.setMode('external');
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  let calls = 0;
+  scheduler.register({ name: 'fixed', expression: '0 0 * * *', handler: async () => { calls++; await pending; } });
+  const first = scheduler.runNow('fixed');
+  await Promise.resolve();
+  assert.equal(await scheduler.runNow('fixed'), true);
+  finish();
+  assert.equal(await first, true);
+  assert.equal(calls, 1);
 });

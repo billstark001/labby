@@ -1,9 +1,8 @@
 import { serve } from "@hono/node-server";
 import { createBackupServiceFromEnv, setActiveBackupService } from "./backup/service.js";
 import { createApp } from "./app.js";
-import { createCloudSchedulerMirrorFromEnv } from "./cron/cloud-scheduler.js";
 import { createAuthMaintenanceServiceFromEnv } from "./cron/auth-maintenance.js";
-import { resolveSchedulerMode, scheduler, type SchedulerMode } from "./cron/scheduler.js";
+import { createSchedulerRuntimeFromEnv, dispatchScheduledJob } from "./cron/scheduler-runtime.js";
 import { createMailerFromEnv } from "./lib/mailer.js";
 import type { EmailTaskNotifier as EmailTaskNotifierType } from "./cron/email-task-notifier.js";
 import { resolvePublicBaseUrl, resolveStoreConnectionConfig } from "./lib/runtime-config.js";
@@ -13,25 +12,24 @@ const port = Number(process.env.PORT ?? 4410);
 const dbConfig = resolveStoreConnectionConfig(process.env);
 const publicBaseUrl = resolvePublicBaseUrl(process.env, port);
 
-const requestedSchedulerMode = resolveSchedulerMode(process.env.SCHEDULER_MODE);
-const schedulerMode: SchedulerMode = requestedSchedulerMode;
-if (requestedSchedulerMode === 'external' && !process.env.SCHEDULER_DISPATCH_API_KEY?.trim()) {
-  throw new Error('SCHEDULER_MODE=external requires SCHEDULER_DISPATCH_API_KEY');
-}
-if (requestedSchedulerMode === 'cloud' || requestedSchedulerMode === 'hybrid') {
-  const mirror = createCloudSchedulerMirrorFromEnv();
-  if (mirror) {
-    scheduler.setMirror(mirror);
-  } else {
-    throw new Error(
-      `SCHEDULER_MODE=${requestedSchedulerMode} requires CLOUD_SCHEDULER_PROJECT_ID, `
-      + 'CLOUD_SCHEDULER_LOCATION, SCHEDULER_DISPATCH_API_KEY, and either PUBLIC_BASE_URL or CLOUD_SCHEDULER_DISPATCH_URL',
-    );
-  }
-}
-scheduler.setMode(schedulerMode);
+const schedulers = createSchedulerRuntimeFromEnv();
 
 let emailTaskNotifier: EmailTaskNotifierType | null = null;
+let scheduleNotifier: { syncJobs(): Promise<void> } | null = null;
+let dynamicSync = Promise.resolve();
+const refreshDynamicJobs = (syncRemote: boolean): Promise<void> => {
+  const next = dynamicSync.catch(() => {}).then(async () => {
+    await scheduleNotifier?.syncJobs();
+    await emailTaskNotifier?.syncJobs();
+    if (syncRemote) await schedulers.sync();
+  });
+  dynamicSync = next;
+  return next;
+};
+const syncDynamicJobs = (): Promise<void> => refreshDynamicJobs(true);
+let schedulerDispatchHandler: (jobName: string, occurrenceId?: string) => Promise<boolean> = async () => {
+  throw new Error('Scheduler dispatch is not ready');
+};
 const mailer = createMailerFromEnv();
 
 const { app, store, close } = await createApp({
@@ -49,15 +47,9 @@ const { app, store, close } = await createApp({
   rootPassword: process.env.ROOT_PASSWORD,
   rootEmail: process.env.ROOT_EMAIL,
   mailer,
-  onEmailTasksChanged: async () => {
-    await emailTaskNotifier?.syncJobs();
-  },
-  onConfigsChanged: async () => {
-    await emailTaskNotifier?.syncJobs();
-  },
-  onSchedulesChanged: async () => {
-    await emailTaskNotifier?.syncJobs();
-  },
+  onEmailTasksChanged: syncDynamicJobs,
+  onConfigsChanged: syncDynamicJobs,
+  onSchedulesChanged: syncDynamicJobs,
   runEmailTaskNow: async (taskId: string, recipients: string[]) => {
     if (!emailTaskNotifier) {
       throw new Error('email task notifier is not configured');
@@ -65,8 +57,15 @@ const { app, store, close } = await createApp({
     return emailTaskNotifier.runTaskNow(taskId, recipients);
   },
   schedulerDispatchApiKey: process.env.SCHEDULER_DISPATCH_API_KEY,
-  onSchedulerDispatch: async (jobName: string) => scheduler.runNow(jobName),
+  onSchedulerDispatch: (jobName, occurrenceId) => schedulerDispatchHandler(jobName, occurrenceId),
 });
+schedulerDispatchHandler = async (jobName, occurrenceId) => {
+  if (jobName.startsWith('email-task:') || jobName.startsWith('schedule-notify:')) {
+    // Another replica may have handled the mutation that changed this job.
+    await refreshDynamicJobs(false);
+  }
+  return dispatchScheduledJob(schedulers, store, jobName, occurrenceId);
+};
 
 // Email / cron subsystem (optional – only starts if SMTP is configured)
 if (mailer) {
@@ -89,29 +88,28 @@ if (mailer) {
 
   const { ScheduleNotifier } = await import("./cron/notifier.js");
   const { EmailTaskNotifier } = await import("./cron/email-task-notifier.js");
-  const notifier = new ScheduleNotifier({ scheduler, mailer, store, recipients });
+  scheduleNotifier = new ScheduleNotifier({ scheduler: schedulers.dynamicJobs, mailer, store, recipients });
   emailTaskNotifier = new EmailTaskNotifier({
-    scheduler,
+    scheduler: schedulers.dynamicJobs,
     mailer,
     store,
     publicBaseUrl,
   });
-  await notifier.syncJobs();
-  await emailTaskNotifier.syncJobs();
-  console.info(`[cron] Email notifications enabled. Registered ${scheduler.registeredJobs.length} job(s).`);
+  await refreshDynamicJobs(false);
+  console.info(`[cron] Email notifications enabled. Registered ${schedulers.dynamicJobs.registeredJobs.length} dynamic job(s).`);
 } else {
   console.info("[cron] SMTP not configured; email notifications disabled.");
 }
 
 const authMaintenanceService = createAuthMaintenanceServiceFromEnv({
-  scheduler,
+  scheduler: schedulers.staticJobs,
   store,
 });
 authMaintenanceService.syncJobs();
-console.info(`[auth] Cleanup scheduler ready. Registered ${scheduler.registeredJobs.length} job(s).`);
+console.info(`[auth] Cleanup scheduler ready. Registered ${schedulers.staticJobs.registeredJobs.length} static job(s).`);
 
 const backupService = createBackupServiceFromEnv({
-  scheduler,
+  scheduler: schedulers.staticJobs,
   store,
   mailer,
 });
@@ -125,16 +123,9 @@ if (backupService) {
   console.info("[backup] Database backups disabled.");
 }
 
-if (scheduler.hasMirror) {
-  try {
-    await scheduler.syncMirrorNow();
-    console.info(`[scheduler] Mirrored ${scheduler.registeredJobs.length} job(s) to Cloud Scheduler.`);
-  } catch (err) {
-    console.error(JSON.stringify({ event: 'scheduler_sync_error', ...safeErrorInfo(err) }));
-  }
-}
-
-console.info(`[scheduler] Mode: ${scheduler.getMode()}; registered jobs: ${scheduler.registeredJobs.length}.`);
+// A cloud-mode process must not become healthy while its schedule is missing.
+await schedulers.sync();
+console.info(`[scheduler] Static mode: ${schedulers.staticMode}; dynamic mode: ${schedulers.dynamicMode}; static jobs: ${schedulers.staticJobs.registeredJobs.length}; dynamic jobs: ${schedulers.dynamicJobs.registeredJobs.length}.`);
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`Labby server listening on http://localhost:${info.port}`);
@@ -142,7 +133,7 @@ const server = serve({ fetch: app.fetch, port }, (info) => {
 
 // Graceful shutdown
 const shutdown = () => {
-  scheduler.shutdown();
+  schedulers.shutdown();
   server.close(async () => {
     await close();
     process.exit(0);

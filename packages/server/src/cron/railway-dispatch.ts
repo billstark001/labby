@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_ATTEMPTS = 3;
@@ -53,6 +54,7 @@ export async function dispatchRailwayCron(options: RailwayCronDispatchOptions = 
   const timeoutMs = positiveInteger(env, 'LABBY_CRON_TIMEOUT_MS', DEFAULT_TIMEOUT_MS);
   const attempts = positiveInteger(env, 'LABBY_CRON_ATTEMPTS', DEFAULT_ATTEMPTS);
   const dispatchUrl = new URL('/internal/scheduler/dispatch', `${baseUrl}/`);
+  const dispatchId = randomUUID();
 
   if (dispatchUrl.protocol !== 'https:' && dispatchUrl.hostname !== 'localhost' && dispatchUrl.hostname !== '127.0.0.1') {
     throw new Error('LABBY_SERVER_URL must use HTTPS outside localhost');
@@ -65,7 +67,7 @@ export async function dispatchRailwayCron(options: RailwayCronDispatchOptions = 
     try {
       const response = await fetchImpl(dispatchUrl, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
+        headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'x-labby-dispatch-id': dispatchId },
         body: JSON.stringify({ jobName }),
         signal: AbortSignal.timeout(timeoutMs),
       });

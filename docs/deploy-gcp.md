@@ -48,27 +48,26 @@ Common optional values:
 - `AUTH_ACCESS_TTL`, `AUTH_REFRESH_TTL`
 - `SMTP_*`, `NOTIFY_RECIPIENTS`
 - `BACKUP_*`
-- `SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
+- `STATIC_SCHEDULER_MODE`, `DYNAMIC_SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
 - `CLOUD_SCHEDULER_PROJECT_ID`, `CLOUD_SCHEDULER_LOCATION`
 - `CLOUD_SCHEDULER_DISPATCH_URL` (optional if `PUBLIC_BASE_URL` is set)
 - `CLOUD_SCHEDULER_JOB_PREFIX`
 
 Important for this repository: do not set `PORT` manually in Cloud Run env vars. Cloud Run injects it.
 
-## Cron + Cloud Scheduler Dual Mode
+## Scheduler providers
 
-This server supports three runtime scheduler modes via `SCHEDULER_MODE`:
+Configure fixed and database-defined jobs independently:
 
-- `cron`: local node-cron only
-- `cloud`: Cloud Scheduler only
-- `hybrid`: both local node-cron and Cloud Scheduler
+- `STATIC_SCHEDULER_MODE=cron|cloud|external` controls authentication cleanup and backups.
+- `DYNAMIC_SCHEDULER_MODE=cron|cloud` controls email tasks and schedule notifications.
 
-Recommended on Cloud Run: `SCHEDULER_MODE=cloud`.
+Recommended on Cloud Run: set both to `cloud`. Production requires explicit values; nonproduction defaults to `cron` when omitted. Remove the former `SCHEDULER_MODE` entry from Cloud Run configuration during rollout; it is no longer read.
 
 Implementation notes:
 
 - Internal jobs still register in one place (same `syncJobs()` paths as local mode).
-- In `cloud`/`hybrid`, the server mirrors registered internal jobs to Cloud Scheduler automatically.
+- The server mirrors every job group configured as `cloud`. When both use `cloud`, they share one mirror so reconciliation covers both groups.
 - Cloud Scheduler triggers `POST /internal/scheduler/dispatch` with `X-Api-Key`.
 - The endpoint executes internal jobs by name, so Cloud and local jobs stay in sync without duplicating business logic.
 
@@ -184,7 +183,8 @@ gcloud run deploy <SERVICE_NAME> \
 Suggested scheduler-related env entries in `/tmp/labby-cloudrun-env.yaml`:
 
 ```yaml
-SCHEDULER_MODE: cloud
+STATIC_SCHEDULER_MODE: cloud
+DYNAMIC_SCHEDULER_MODE: cloud
 SCHEDULER_DISPATCH_API_KEY: "<strong-random-secret>"
 CLOUD_SCHEDULER_PROJECT_ID: "<PROJECT_ID>"
 CLOUD_SCHEDULER_LOCATION: "<REGION>"
@@ -256,7 +256,7 @@ Executed operations summary:
 6. Prepared Cloud Run env yaml from existing `packages/server/.env` values.
 7. Deployed Cloud Run with secret file mounts.
 8. Granted `roles/secretmanager.secretAccessor` to runtime account used by Cloud Run.
-9. Added scheduler dual-mode runtime (`cron/cloud/hybrid`) and mirrored internal jobs to Cloud Scheduler.
+9. Added the original scheduler modes and mirrored internal jobs to Cloud Scheduler. The current runtime configuration uses separate static and dynamic scheduler modes as documented above.
 10. Bound internal dispatch endpoint `/internal/scheduler/dispatch` with API-key authentication.
 
 Result:

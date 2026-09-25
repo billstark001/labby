@@ -26,11 +26,10 @@ export interface CronJobDefinition {
   timezone?: string;
 }
 
-export type SchedulerMode = 'cron' | 'cloud' | 'external' | 'hybrid';
+export type StaticSchedulerMode = 'cron' | 'cloud' | 'external';
+export type DynamicSchedulerMode = 'cron' | 'cloud';
 
 export interface SchedulerMirror {
-  upsert(definition: CronJobDefinition): Promise<void>;
-  remove(name: string): Promise<void>;
   sync(definitions: CronJobDefinition[]): Promise<void>;
   shutdown?(): Promise<void>;
 }
@@ -40,13 +39,24 @@ export interface CronJobHandle {
   stop(): void;
 }
 
-export class CronScheduler {
+/** The application services only need this contract, regardless of who ticks jobs. */
+export interface JobScheduler {
+  register(definition: CronJobDefinition): CronJobHandle;
+  unregister(name: string): void;
+  readonly registeredJobs: string[];
+  runNow(name: string): Promise<boolean>;
+  sync(): Promise<void>;
+}
+
+export class CronScheduler implements JobScheduler {
   private readonly jobs = new Map<string, ScheduledTask>();
   private readonly definitions = new Map<string, CronJobDefinition>();
-  private mode: SchedulerMode = 'cron';
+  private readonly running = new Set<string>();
+  private mode: StaticSchedulerMode = 'cron';
   private mirror: SchedulerMirror | null = null;
+  private pendingSync: Promise<void> = Promise.resolve();
 
-  setMode(mode: SchedulerMode): void {
+  setMode(mode: StaticSchedulerMode): void {
     this.mode = mode;
   }
 
@@ -54,7 +64,7 @@ export class CronScheduler {
     this.mirror = mirror;
   }
 
-  getMode(): SchedulerMode {
+  getMode(): StaticSchedulerMode {
     return this.mode;
   }
 
@@ -62,22 +72,17 @@ export class CronScheduler {
     return this.mirror !== null;
   }
 
-  private shouldRunLocally(): boolean {
-    return this.mode === 'cron' || this.mode === 'hybrid';
-  }
-
-  private upsertMirror(definition: CronJobDefinition): void {
-    if (!this.mirror) return;
-    void this.mirror.upsert(definition).catch((err) => {
-      console.error(JSON.stringify({ event: 'scheduler_mirror_upsert_error', job: definition.name, ...safeErrorInfo(err) }));
-    });
-  }
-
-  private removeMirror(name: string): void {
-    if (!this.mirror) return;
-    void this.mirror.remove(name).catch((err) => {
-      console.error(JSON.stringify({ event: 'scheduler_mirror_remove_error', job: name, ...safeErrorInfo(err) }));
-    });
+  private async execute(name: string, handler: CronJobDefinition['handler']): Promise<void> {
+    if (this.running.has(name)) {
+      console.warn(JSON.stringify({ event: 'scheduler_job_overlap_skipped', job: name }));
+      return;
+    }
+    this.running.add(name);
+    try {
+      await handler();
+    } finally {
+      this.running.delete(name);
+    }
   }
 
   /**
@@ -85,20 +90,24 @@ export class CronScheduler {
    * If a job with the same name already exists it is stopped and replaced.
    */
   register(definition: CronJobDefinition): CronJobHandle {
-    this.unregister(definition.name);
-
     if (!cron.validate(definition.expression)) {
       throw new Error(`Invalid cron expression "${definition.expression}" for job "${definition.name}"`);
     }
 
+    const existing = this.jobs.get(definition.name);
+    if (existing) {
+      existing.stop();
+      this.jobs.delete(definition.name);
+    }
+
     this.definitions.set(definition.name, definition);
 
-    if (this.shouldRunLocally()) {
+    if (this.mode === 'cron') {
       const task = cron.schedule(
         definition.expression,
         async () => {
           try {
-            await definition.handler();
+            await this.execute(definition.name, definition.handler);
           } catch (err) {
             console.error(JSON.stringify({ event: 'cron_job_error', job: definition.name, ...safeErrorInfo(err) }));
           }
@@ -111,10 +120,11 @@ export class CronScheduler {
       this.jobs.set(definition.name, task);
     }
 
-    this.upsertMirror(definition);
     return {
       name: definition.name,
-      stop: () => this.unregister(definition.name),
+      stop: () => {
+        if (this.definitions.get(definition.name) === definition) this.unregister(definition.name);
+      },
     };
   }
 
@@ -126,7 +136,6 @@ export class CronScheduler {
       this.jobs.delete(name);
     }
     this.definitions.delete(name);
-    this.removeMirror(name);
   }
 
   /** Stop all registered cron jobs (call on graceful shutdown). */
@@ -150,28 +159,38 @@ export class CronScheduler {
     return [...this.definitions.keys()];
   }
 
-  async syncMirrorNow(): Promise<void> {
+  async sync(): Promise<void> {
     if (!this.mirror) return;
-    await this.mirror.sync([...this.definitions.values()]);
+    // Serialize reconciliations. Read the current definitions when the queued
+    // operation starts so a stale callback cannot restore an older schedule.
+    const next = this.pendingSync.catch(() => {}).then(() => this.mirror!.sync([...this.definitions.values()]));
+    this.pendingSync = next;
+    await next;
   }
 
   async runNow(name: string): Promise<boolean> {
     const definition = this.definitions.get(name);
     if (!definition) return false;
 
-    await definition.handler();
+    await this.execute(name, definition.handler);
     return true;
   }
 }
 
-export function resolveSchedulerMode(value: string | undefined): SchedulerMode {
+function resolveMode(value: string | undefined, variable: string): StaticSchedulerMode {
   const normalized = value?.trim().toLowerCase();
   if (!normalized || normalized === 'cron') return 'cron';
   if (normalized === 'cloud') return 'cloud';
-  if (normalized === 'external' || normalized === 'railway') return 'external';
-  if (normalized === 'hybrid' || normalized === 'both') return 'hybrid';
-  throw new Error(`Unsupported SCHEDULER_MODE: ${value}`);
+  if (normalized === 'external') return 'external';
+  throw new Error(`Unsupported ${variable}: ${value}`);
 }
 
-/** Singleton scheduler instance for the application. */
-export const scheduler = new CronScheduler();
+export function resolveStaticSchedulerMode(value: string | undefined): StaticSchedulerMode {
+  return resolveMode(value, 'STATIC_SCHEDULER_MODE');
+}
+
+export function resolveDynamicSchedulerMode(value: string | undefined): DynamicSchedulerMode {
+  const mode = resolveMode(value, 'DYNAMIC_SCHEDULER_MODE');
+  if (mode === 'external') throw new Error('DYNAMIC_SCHEDULER_MODE cannot be external');
+  return mode;
+}

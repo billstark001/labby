@@ -3,6 +3,7 @@ import path from "path";
 import { Hono, type Context } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
+import { dispatchOccurrenceId } from './cron/dispatch-occurrence.js';
 
 import type {
   EmailTask,
@@ -94,7 +95,7 @@ export interface CreateAppOptions {
   onSchedulesChanged?: () => Promise<void> | void;
   runEmailTaskNow?: (taskId: string, recipients: string[]) => Promise<ManualEmailResult>;
   schedulerDispatchApiKey?: string;
-  onSchedulerDispatch?: (jobName: string) => Promise<boolean>;
+  onSchedulerDispatch?: (jobName: string, occurrenceId?: string) => Promise<boolean>;
 }
 
 function resolveWebDistDir(explicitDir?: string): string | null {
@@ -233,7 +234,12 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
         throw new AppError('VALIDATION_ERROR', 'jobName is required', 400);
       }
 
-      const okRun = await schedulerDispatch(jobName);
+      const occurrenceId = dispatchOccurrenceId({
+        cloudJobName: c.req.header('X-CloudScheduler-JobName'),
+        cloudScheduleTime: c.req.header('X-CloudScheduler-ScheduleTime'),
+        railwayDispatchId: c.req.header('X-Labby-Dispatch-Id'),
+      });
+      const okRun = await schedulerDispatch(jobName, occurrenceId);
       if (!okRun) {
         throw new AppError('VALIDATION_ERROR', 'scheduler job not found', 404);
       }

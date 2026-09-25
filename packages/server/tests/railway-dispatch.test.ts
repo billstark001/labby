@@ -29,6 +29,9 @@ test('Railway cron dispatch retries a serverless cold-start gateway response', a
   assert.equal(requests.length, 2);
   assert.equal(requests[0]?.url, 'https://labby.example/internal/scheduler/dispatch');
   assert.equal(new Headers(requests[0]?.init?.headers).get('x-api-key'), 'test-key');
+  const firstDispatchId = new Headers(requests[0]?.init?.headers).get('x-labby-dispatch-id');
+  assert.match(firstDispatchId ?? '', /^[0-9a-f-]{36}$/);
+  assert.equal(new Headers(requests[1]?.init?.headers).get('x-labby-dispatch-id'), firstDispatchId);
   assert.deepEqual(JSON.parse(String(requests[0]?.init?.body)), { jobName: 'database-backup' });
   assert.deepEqual(waits, [1_000]);
 });

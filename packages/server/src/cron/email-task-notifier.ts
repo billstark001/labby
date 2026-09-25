@@ -11,12 +11,12 @@ import {
 } from '@labby/core';
 
 import type { Mailer } from '../lib/mailer.js';
-import type { CronScheduler } from './scheduler.js';
+import type { JobScheduler } from './scheduler.js';
 import type { LabbyStore } from '../store/index.js';
 import { resolveEmailTaskTimezone, resolveScheduleTimezone } from '../lib/email-task-timezone.js';
 
 export interface EmailTaskNotifierOptions {
-  scheduler: CronScheduler;
+  scheduler: JobScheduler;
   mailer: Mailer;
   store: LabbyStore;
   defaultHour?: number;
@@ -349,6 +349,7 @@ export class EmailTaskNotifier {
     if (decision.kind === 'unregister-missing-config') {
       if (options.manual) throw new Error('Email task has no schedule configuration');
       this.options.scheduler.unregister(`email-task:${task.id}`);
+      await this.options.scheduler.sync();
       return { sent: 0, failed: 0 };
     }
 
@@ -361,6 +362,7 @@ export class EmailTaskNotifier {
 
     if (decision.kind === 'skip-ended') {
       this.options.scheduler.unregister(`email-task:${task.id}`);
+      await this.options.scheduler.sync();
       await this.persistScheduledSkip(task, runAt);
       return { sent: 0, failed: 0 };
     }

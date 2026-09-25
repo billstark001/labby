@@ -1,6 +1,6 @@
 import { decode, encode } from '@msgpack/msgpack';
 
-import type { CronScheduler } from '../cron/scheduler.js';
+import type { JobScheduler } from '../cron/scheduler.js';
 import {
   fetchGoogleAccessToken,
   resolveGoogleOAuthCredentials,
@@ -44,7 +44,7 @@ interface BackupConfig {
 }
 
 export interface CreateBackupServiceOptions {
-  scheduler: CronScheduler;
+  scheduler: JobScheduler;
   store: LabbyStore;
   mailer: Mailer | null;
 }

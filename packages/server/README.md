@@ -95,7 +95,7 @@ Optional settings:
 - `GOOGLE_OAUTH_REFRESH_TOKEN`, `GOOGLE_OAUTH_REFRESH_TOKEN_PATH`
 - `NOTIFY_RECIPIENTS`
 - `PUBLIC_BASE_URL`
-- `SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
+- `STATIC_SCHEDULER_MODE`, `DYNAMIC_SCHEDULER_MODE`, `SCHEDULER_DISPATCH_API_KEY`
 - `CLOUD_SCHEDULER_PROJECT_ID`, `CLOUD_SCHEDULER_LOCATION`, `CLOUD_SCHEDULER_DISPATCH_URL`, `CLOUD_SCHEDULER_JOB_PREFIX`
 - `BACKUP_CRON`, `BACKUP_TIMEZONE`, `BACKUP_FORMAT`, `BACKUP_TARGET`, `BACKUP_FILENAME_PREFIX`
 - `BACKUP_EMAIL_RECIPIENTS`, `GOOGLE_DRIVE_FOLDER_ID`
@@ -132,16 +132,11 @@ If SMTP is not configured, the cron subsystem stays disabled.
 
 ## Scheduler Modes
 
-The scheduler can run in four modes using `SCHEDULER_MODE`:
+`STATIC_SCHEDULER_MODE` selects `cron`, `cloud`, or `external` for fixed authentication cleanup and backup jobs. `DYNAMIC_SCHEDULER_MODE` selects `cron` or `cloud` for database-defined email tasks and schedule notifications. Both default to `cron` outside production; production requires explicit values to avoid accidentally starting local timers. `external` means a separately configured provider such as Railway Cron calls the server. Set both to `cloud` on Cloud Run, or use `external` for fixed jobs and `cloud` for dynamic jobs on Railway.
 
-- `cron`: local node-cron only
-- `external` (alias `railway`): register dispatchable jobs without local timers or a provider mirror
-- `cloud`: Cloud Scheduler only
-- `hybrid`: local cron + Cloud Scheduler mirrored jobs
+When either group uses `cloud`, the server reconciles its Cloud Scheduler jobs before serving and after relevant schedules change. Both external providers use `POST /internal/scheduler/dispatch` and `SCHEDULER_DISPATCH_API_KEY` for execution. See [Railway deployment](../../docs/deploy-railway.md) for the credential-file expansion and provider split.
 
-In `cloud`/`hybrid`, the server keeps Cloud Scheduler jobs synchronized with internal job registration and uses `POST /internal/scheduler/dispatch` + `SCHEDULER_DISPATCH_API_KEY` for secure execution.
-
-Current limitation: mirrored scheduler dispatch assumes a single live server instance. Job definitions are held in memory, so multi-instance Cloud Run deployments can route a callback to an instance that has not synced the latest job set.
+External callbacks refresh dynamic job definitions from the database before execution. A database ledger deduplicates Cloud Scheduler's scheduled occurrence and Railway Cron's HTTP retries across replicas; claims made before a process crash require manual recovery if the handler did not finish.
 
 Each email task can opt in via metadata (`serveScheduleIcs`) to expose its latest schedule at:
 
