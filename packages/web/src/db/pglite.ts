@@ -1,14 +1,22 @@
-import currentSchemaSql from './current-schema.sql?raw';
+import currentSchemaSql from '@labby/db/current-schema.sql?raw';
+import sharedMetadataSql from '@labby/db/migrate/011.up.sql?raw';
+import legacySchemaSql from './migrate/legacy-current-schema.sql?raw';
 import graphMigrationSql from './migrate/004.up.sql?raw';
 import identityMigrationSql from './migrate/005.up.sql?raw';
 import constraintMigrationSql from './migrate/006.up.sql?raw';
 import localizationMigrationSql from './migrate/007.up.sql?raw';
 import unavailabilityMigrationSql from './migrate/008.up.sql?raw';
 import pairGroupsMigrationSql from './migrate/009.up.sql?raw';
-import { listBrowserGraphPage } from './graph';
+import {
+  buildEntityPageQueries, clearBusinessRecords, deleteBusinessRecord, listGraphPage,
+  readAllBusinessRecords, readBusinessRecord, upsertPerson, upsertPersonTag,
+  upsertKeyword, upsertKeywordVector, upsertRankingJudgment, upsertConfig,
+  upsertConstraint, upsertSchedule, upsertUnavailability, upsertEmailTask,
+  upsertSystemSettings,
+  type BusinessKind,
+} from '@labby/db';
 import { toast } from '@/components/ui/Toast';
 import { i18n } from '@/i18n';
-import type { LegacyMigrationDump } from './legacy-idb-upgrade.js';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import type {
   DatabaseDump,
@@ -35,10 +43,12 @@ import {
   validateUnavailability,
   ProductEmbeddingEngine,
   constraintSelectorIds,
-  normalizeStoredConstraint,
 } from '@labby/core';
 import { upgradeBrowserSchema } from './browser-migrations';
-import { legacyDumpToEntityRows, readLegacyIndexedDbDump } from './legacy-idb-upgrade';
+import { upgradeSharedSchema } from './shared-migrations';
+import { migrateBrowserToSharedSchema } from './migrate/010-to-shared';
+import { readLegacyIndexedDbDump } from './legacy-idb-upgrade';
+import { importLegacyIndexedDbDump, LEGACY_IMPORT_KEY } from './migrate/legacy-idb-import';
 
 type StoredEntity =
   | RankingJudgment
@@ -52,97 +62,9 @@ type StoredEntity =
   | PersonUnavailability
   | EmailTask
   | SystemSettings;
-type EntityKind =
-  | 'ranking-judgment'
-  | 'person'
-  | 'person-tag'
-  | 'keyword'
-  | 'keyword-vector'
-  | 'config'
-  | 'constraint'
-  | 'schedule'
-  | 'unavailability'
-  | 'email-task'
-  | 'system-settings';
+type EntityKind = BusinessKind;
 
 const SYSTEM_ID = SYSTEM_SETTINGS_ID;
-const LEGACY_MIGRATION_KEY = 'legacy-idb-v6-import';
-
-type SqlClient = Pick<PGliteWorker, 'exec' | 'query' | 'transaction'>;
-
-function rewriteEntityIds(
-  value: unknown,
-  idMap: ReadonlyMap<string, string>,
-  rewriteStrings = false,
-): unknown {
-  if (typeof value === 'string')
-    return rewriteStrings ? (idMap.get(value) ?? value) : value;
-  if (Array.isArray(value))
-    return value.map(item => rewriteEntityIds(item, idMap, rewriteStrings));
-  if (value && typeof value === 'object')
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key,
-      rewriteEntityIds(
-        item,
-        idMap,
-        rewriteStrings || key === 'id' || key === 'groups' || /(Id|Ids)$/.test(key),
-      ),
-    ]));
-  return value;
-}
-
-async function importLegacyDump(
-  client: SqlClient,
-  dump: LegacyMigrationDump | null,
-): Promise<void> {
-  const rawRows = dump ? legacyDumpToEntityRows(dump) : [];
-  const idMap = new Map<string, string>();
-  for (const row of rawRows) idMap.set(row.id, await normalizeUuid(row.id));
-  const rows = rawRows.map(row => {
-    const payload = rewriteEntityIds(row.payload, idMap);
-    return { ...row, id: idMap.get(row.id)!, updated_at: new Date(row.updated_at).toISOString(),
-      payload: row.kind === 'constraint' ? normalizeStoredConstraint(payload as ScheduleConstraint) : payload };
-  });
-
-  await client.transaction(async (tx) => {
-    const migrated = await tx.query<{ exists: boolean }>(
-      'SELECT EXISTS(SELECT 1 FROM app_metadata WHERE key = $1) AS exists',
-      [LEGACY_MIGRATION_KEY],
-    );
-    if (migrated.rows[0]?.exists) return;
-
-    if (rows.length > 0) {
-      await tx.query(
-        `INSERT INTO entities(kind, id, updated_at, payload, all_people)
-         SELECT kind, id, updated_at, payload, kind = 'unavailability' AND payload->>'allPeople' = 'true'
-         FROM jsonb_to_recordset($1::jsonb)
-           AS imported(kind text, id uuid, updated_at timestamptz, payload jsonb)
-         ON CONFLICT(kind, id) DO NOTHING`,
-        [JSON.stringify(rows)],
-      );
-    }
-    for (const row of dump?.embeddingMigrationArchive ?? [])
-      await tx.query(
-        'INSERT INTO embedding_migration_archive(keyword_id,source) VALUES($1,$2::jsonb) ON CONFLICT(keyword_id) DO NOTHING',
-        [idMap.get(row.keywordId) ?? await normalizeUuid(row.keywordId), JSON.stringify(row.source)],
-      );
-    await tx.query(
-      `INSERT INTO app_metadata(key, value) VALUES ($1, $2::jsonb)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      [LEGACY_MIGRATION_KEY, JSON.stringify({ importedAt: Date.now(), records: rows.length })],
-    );
-  });
-}
-
-async function normalizeUuid(value: string): Promise<string> {
-  if (value === 'system') return SYSTEM_SETTINGS_ID;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return value.toLowerCase();
-  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`labby:browser:v5:${value}`)));
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes.slice(0, 16)].map(byte => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
-}
 
 function normalizedQuery(
   query: ListQuery,
@@ -160,7 +82,7 @@ function localizedName(record: Record<string, unknown>, locale: ListQuery['local
   return names?.[language]?.trim() || names?.en?.trim() || String(record.name ?? '').trim();
 }
 
-function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQuery, tagNames: ReadonlyMap<string, string>, keywordNames: ReadonlyMap<string, string>): number {
+function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQuery): number {
   const sortBy = query.sortBy ?? 'modifiedAt';
   const direction = query.sortDirection ?? (sortBy === 'modifiedAt' ? 'desc' : 'asc');
   const factor = direction === 'asc' ? 1 : -1;
@@ -168,20 +90,9 @@ function compareEntities(left: StoredEntity, right: StoredEntity, query: ListQue
   const rightRecord = right as unknown as Record<string, unknown>;
   const collator = new Intl.Collator(query.locale ?? 'en', { sensitivity: 'base', numeric: true });
   const compareText = (a: unknown, b: unknown) => collator.compare(String(a ?? '').trim(), String(b ?? '').trim());
-  const tagKey = (record: Record<string, unknown>) => (record.tagIds as string[] | undefined ?? [])
-    .map(id => tagNames.get(id)).filter((name): name is string => Boolean(name)).sort(collator.compare).join('|');
-  const keywordKey = (record: Record<string, unknown>) => (record.keywordIds as string[] | undefined ?? [])
-    .map(id => keywordNames.get(id)).filter((name): name is string => Boolean(name)).sort(collator.compare).join('|');
   let primary: number;
-  if (sortBy === 'tags') {
-    const a = tagKey(leftRecord); const b = tagKey(rightRecord);
-    if (!a || !b) primary = a ? -1 : b ? 1 : 0;
-    else primary = compareText(a, b) * factor;
-  } else if (sortBy === 'keywords') {
-    const a = keywordKey(leftRecord); const b = keywordKey(rightRecord);
-    if (!a || !b) primary = a ? -1 : b ? 1 : 0;
-    else primary = compareText(a, b) * factor;
-  } else if (sortBy === 'disabled') primary = (Number(Boolean(leftRecord.disabled)) - Number(Boolean(rightRecord.disabled))) * factor;
+  if (sortBy === 'tags' || sortBy === 'keywords') primary = 0;
+  else if (sortBy === 'disabled') primary = (Number(Boolean(leftRecord.disabled)) - Number(Boolean(rightRecord.disabled))) * factor;
   else if (sortBy === 'modifiedAt') primary = (Number(leftRecord.modifiedAt ?? 0) - Number(rightRecord.modifiedAt ?? 0)) * factor;
   else primary = compareText(sortBy === 'name' ? localizedName(leftRecord, query.locale) : leftRecord[sortBy], sortBy === 'name' ? localizedName(rightRecord, query.locale) : rightRecord[sortBy]) * factor;
   if (primary !== 0) return primary;
@@ -209,23 +120,35 @@ export async function createPGliteDB(): Promise<{
   );
   let maintenanceToast: number | undefined;
   try {
-    const changed = await upgradeBrowserSchema(
-      client,
-      { current: currentSchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql, unavailability: unavailabilityMigrationSql, pairGroups: pairGroupsMigrationSql },
-      (kind) => {
-        maintenanceToast = toast.loading(
-          i18n.t(kind === 'initialize' ? 'dbInitializing' : 'dbMigrating'),
-        );
-      },
-    );
+    const schemaState = (await client.query<{ canonical: string | null; legacy: string | null }>(
+      "SELECT to_regclass('public.schema_migrations') AS canonical, to_regclass('public.entities') AS legacy",
+    )).rows[0]!;
+    let changed = false;
+    if (schemaState.legacy) {
+      if (schemaState.canonical) throw new Error('Browser database contains conflicting schemas');
+      await upgradeBrowserSchema(
+        client,
+        { current: legacySchemaSql, graph: graphMigrationSql, identity: identityMigrationSql, constraints: constraintMigrationSql, localization: localizationMigrationSql, unavailability: unavailabilityMigrationSql, pairGroups: pairGroupsMigrationSql },
+        () => { maintenanceToast = toast.loading(i18n.t('dbMigrating')); },
+      );
+      await migrateBrowserToSharedSchema(client, currentSchemaSql);
+      changed = true;
+    } else if (!schemaState.canonical) {
+      maintenanceToast = toast.loading(i18n.t('dbInitializing'));
+      await client.transaction(tx => tx.exec(currentSchemaSql));
+      changed = true;
+    }
+    changed = await upgradeSharedSchema(client, { metadata: sharedMetadataSql }, () => {
+      if (maintenanceToast === undefined) maintenanceToast = toast.loading(i18n.t('dbMigrating'));
+    }) || changed;
     const imported = await client.query<{ exists: boolean }>(
       'SELECT EXISTS(SELECT 1 FROM app_metadata WHERE key=$1) AS exists',
-      [LEGACY_MIGRATION_KEY],
+      [LEGACY_IMPORT_KEY],
     );
     if (!imported.rows[0]?.exists) {
       if (maintenanceToast === undefined) maintenanceToast = toast.loading(i18n.t('dbMigrating'));
       const legacyDump = await readLegacyIndexedDbDump();
-      await importLegacyDump(client, legacyDump);
+      await importLegacyIndexedDbDump(client, legacyDump);
     }
     if (maintenanceToast !== undefined) toast.dismiss(maintenanceToast);
     if (changed || maintenanceToast !== undefined) toast.success(i18n.t('dbMaintenanceComplete'));
@@ -237,65 +160,46 @@ export async function createPGliteDB(): Promise<{
   }
 
   async function all<T extends StoredEntity>(kind: EntityKind): Promise<T[]> {
-    const result = await client.query<{ payload: T }>(
-      'SELECT payload FROM entities WHERE kind = $1',
-      [kind],
-    );
-    return result.rows.map((row) => row.payload);
+    return readAllBusinessRecords<T>(client, kind);
   }
 
   async function get<T extends StoredEntity>(kind: EntityKind, id: string): Promise<T | undefined> {
-    const result = await client.query<{ payload: T }>(
-      'SELECT payload FROM entities WHERE kind = $1 AND id = $2',
-      [kind, id],
-    );
-    return result.rows[0]?.payload;
+    return readBusinessRecord<T>(client, kind, id);
   }
 
-  async function put(kind: EntityKind, id: string, value: StoredEntity): Promise<void> {
-    if (kind === 'schedule') {
-      const schedule = value as SchedulePlan;
-      const config = await get<ScheduleConfig>('config', schedule.configId);
-      if (!config) throw new Error('Schedule config not found');
-      const [persons, unavailabilities, constraints] = await Promise.all([
-        all<Person>('person'), all<PersonUnavailability>('unavailability'), all<ScheduleConstraint>('constraint'),
-      ]);
-      const violations = validateScheduleAssignments(schedule.sessions, {
-        config, persons, unavailabilities, constraints: constraints.filter(item => item.configId === config.id),
-        similarities: { getPairSimilarity: () => undefined },
-      });
-      if (violations.length) throw new Error(violations[0]);
-    }
-    const record = value as unknown as Record<string, unknown>;
-    const updatedAt = Number(
-      record.updatedAt ?? record.modifiedAt ?? record.createdAt ?? Date.now(),
-    );
-    await client.query(
-      `INSERT INTO entities(kind, id, updated_at, payload, all_people) VALUES ($1, $2, $3, $4::jsonb, $5)
-       ON CONFLICT(kind, id) DO UPDATE SET updated_at = excluded.updated_at, payload = excluded.payload, all_people = excluded.all_people`,
-      [kind, id, new Date(updatedAt), JSON.stringify(value), kind === 'unavailability' && (value as PersonUnavailability).allPeople],
-    );
+  async function putSchedule(schedule: SchedulePlan): Promise<void> {
+    const config = await get<ScheduleConfig>('config', schedule.configId);
+    if (!config) throw new Error('Schedule config not found');
+    const [persons, unavailabilities, constraints] = await Promise.all([
+      all<Person>('person'), all<PersonUnavailability>('unavailability'), all<ScheduleConstraint>('constraint'),
+    ]);
+    const violations = validateScheduleAssignments(schedule.sessions, {
+      config, persons, unavailabilities, constraints: constraints.filter(item => item.configId === config.id),
+      similarities: { getPairSimilarity: () => undefined },
+    });
+    if (violations.length) throw new Error(violations[0]);
+    await upsertSchedule(client, schedule);
   }
 
   async function remove(kind: EntityKind, id: string): Promise<void> {
     await client.transaction(async (tx) => {
       if (kind === 'keyword' || kind === 'keyword-vector') {
         await tx.query(
-          "DELETE FROM entities WHERE kind='ranking-judgment' AND (payload->>'anchorId'=$1 OR EXISTS(SELECT 1 FROM jsonb_array_elements(payload->'groups') g,jsonb_array_elements_text(g) candidate WHERE candidate=$1))",
+          "DELETE FROM ranking_judgments WHERE payload->>'anchorId'=$1 OR EXISTS(SELECT 1 FROM jsonb_array_elements(payload->'groups') g,jsonb_array_elements_text(g) candidate WHERE candidate=$1)",
           [id],
         );
         if (kind === 'keyword')
-          await tx.query("DELETE FROM entities WHERE kind='keyword-vector' AND id=$1", [id]);
+          await deleteBusinessRecord(tx, 'keyword-vector', id);
       }
-      await tx.query('DELETE FROM entities WHERE kind=$1 AND id=$2', [kind, id]);
+      await deleteBusinessRecord(tx, kind, id);
     });
   }
 
   async function clear(kind: EntityKind): Promise<void> {
     await client.transaction(async (tx) => {
       if (kind === 'keyword' || kind === 'keyword-vector')
-        await tx.query("DELETE FROM entities WHERE kind IN ('keyword-vector','ranking-judgment')");
-      await tx.query('DELETE FROM entities WHERE kind=$1', [kind]);
+        await tx.exec('DELETE FROM ranking_judgments; DELETE FROM keyword_vectors;');
+      await clearBusinessRecords(tx, kind);
     });
   }
 
@@ -304,14 +208,17 @@ export async function createPGliteDB(): Promise<{
     query: ListQuery,
   ): Promise<PaginatedResult<T>> {
     const normalized = normalizedQuery(query);
-    const tagNames = new Map<string, string>();
-    if (kind === 'person' && normalized.sortBy === 'tags')
-      for (const tag of await all<PersonTag>('person-tag')) tagNames.set(tag.id, localizedName(tag as unknown as Record<string, unknown>, normalized.locale));
-    const keywordNames = new Map<string, string>();
-    if (kind === 'person' && normalized.sortBy === 'keywords')
-      for (const keyword of await all<Keyword>('keyword')) keywordNames.set(keyword.id, localizedName(keyword as unknown as Record<string, unknown>, normalized.locale));
+    if (kind === 'person' || kind === 'person-tag' || kind === 'keyword') {
+      const table = kind === 'person' ? 'persons' : kind === 'person-tag' ? 'person_tags' : 'keywords';
+      const { pageSql, countSql, offset, limit } = buildEntityPageQueries(table, normalized, '"C"');
+      const [page, count] = await Promise.all([
+        client.query<{ payload: T }>(pageSql),
+        client.query<{ total: number }>(countSql),
+      ]);
+      return { items: page.rows.map(row => row.payload), total: Number(count.rows[0]?.total ?? 0), offset, limit };
+    }
     const values = (await all<T>(kind)).sort((left, right) =>
-      compareEntities(left, right, normalized, tagNames, keywordNames),
+      compareEntities(left, right, normalized),
     );
     return {
       items: values.slice(normalized.offset, normalized.offset + normalized.limit),
@@ -336,40 +243,37 @@ export async function createPGliteDB(): Promise<{
         for (const j of history) validateRankingJudgment(j, ids);
         await client.transaction(async (tx) => {
           for (const v of vectors)
-            await tx.query(
-              "INSERT INTO entities(kind,id,updated_at,payload) VALUES('keyword-vector',$1,$2,$3::jsonb) ON CONFLICT(kind,id) DO UPDATE SET updated_at=excluded.updated_at,payload=excluded.payload",
-              [v.keywordId, new Date(v.updatedAt), JSON.stringify(v)],
-            );
-          await tx.query("DELETE FROM entities WHERE kind='ranking-judgment'");
+            await upsertKeywordVector(tx, v);
+          await tx.query('DELETE FROM ranking_judgments');
           for (const j of history)
-            await tx.query(
-              "INSERT INTO entities(kind,id,updated_at,payload) VALUES('ranking-judgment',$1,$2,$3::jsonb)",
-              [j.id, new Date(j.createdAt), JSON.stringify(j)],
-            );
+            await upsertRankingJudgment(tx, j);
         });
       },
     },
     persons: {
       get: (id) => get<Person>('person', id),
       list: (query) => list<Person>('person', query),
-      put: (value) => put('person', value.id, value),
+      put: (value) => upsertPerson(client, value),
       delete: (id) => remove('person', id),
       clear: () => clear('person'),
     },
     personTags: {
       get: (id) => get<PersonTag>('person-tag', id),
       list: (query) => list<PersonTag>('person-tag', query),
-      put: (value) => put('person-tag', value.id, value),
+      put: (value) => upsertPersonTag(client, value),
       delete: async (id) => {
-        const referenced = await client.query<{ id: string }>("SELECT id FROM entities WHERE (kind='constraint' AND (payload->'tagIds' ? $1 OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(payload->'groups', '[]'::jsonb)) AS grp WHERE grp->'tagIds' ? $1))) OR (kind='unavailability' AND payload->'tagIds' ? $1) LIMIT 1", [id]);
+        const referenced = await client.query<{ id: string }>(
+          'SELECT id FROM constraints WHERE tag_ids ? $1 UNION ALL SELECT id FROM unavailabilities WHERE tag_ids ? $1 LIMIT 1',
+          [id],
+        );
         if (referenced.rows.length) throw new Error('Tag is referenced by a scheduling rule');
         const persons = await all<Person>('person');
         await client.transaction(async (tx) => {
           for (const person of persons.filter(item => item.tagIds?.includes(id))) {
             const next = { ...person, tagIds: person.tagIds!.filter(tagId => tagId !== id), modifiedAt: Date.now() };
-            await tx.query("UPDATE entities SET updated_at=$1,payload=$2::jsonb WHERE kind='person' AND id=$3", [new Date(next.modifiedAt), JSON.stringify(next), next.id]);
+            await upsertPerson(tx, next);
           }
-          await tx.query("DELETE FROM entities WHERE kind='person-tag' AND id=$1", [id]);
+          await deleteBusinessRecord(tx, 'person-tag', id);
         });
       },
       clear: async () => {
@@ -380,7 +284,7 @@ export async function createPGliteDB(): Promise<{
     keywords: {
       get: (id) => get<Keyword>('keyword', id),
       list: (query) => list<Keyword>('keyword', query),
-      put: (value) => put('keyword', value.id, value),
+      put: (value) => upsertKeyword(client, value),
       delete: (id) => remove('keyword', id),
       clear: () => clear('keyword'),
     },
@@ -393,12 +297,12 @@ export async function createPGliteDB(): Promise<{
       list: (query) => list<KeywordVector>('keyword-vector', query),
       put: (value) => {
         validateKeywordVector(value);
-        return put('keyword-vector', value.keywordId, value);
+        return upsertKeywordVector(client, value);
       },
       putMany: async (values) => {
         for (const value of values) {
           validateKeywordVector(value);
-          await put('keyword-vector', value.keywordId, value);
+          await upsertKeywordVector(client, value);
         }
       },
       delete: (id) => remove('keyword-vector', id),
@@ -407,21 +311,21 @@ export async function createPGliteDB(): Promise<{
     configs: {
       get: (id) => get<ScheduleConfig>('config', id),
       list: (query) => list<ScheduleConfig>('config', query),
-      put: (value) => put('config', value.id, value),
+      put: (value) => upsertConfig(client, value),
       delete: (id) => remove('config', id),
       clear: () => clear('config'),
     },
     constraints: {
       get: (id) => get<ScheduleConstraint>('constraint', id),
       list: (query) => list<ScheduleConstraint>('constraint', query),
-      put: (value) => put('constraint', value.id, value),
+      put: (value) => upsertConstraint(client, value),
       delete: (id) => remove('constraint', id),
       clear: () => clear('constraint'),
     },
     schedules: {
       get: (id) => get<SchedulePlan>('schedule', id),
       list: (query) => list<SchedulePlan>('schedule', query),
-      put: (value) => put('schedule', value.id, value),
+      put: putSchedule,
       delete: (id) => remove('schedule', id),
       clear: () => clear('schedule'),
     },
@@ -431,7 +335,7 @@ export async function createPGliteDB(): Promise<{
       put: (value) => {
         const errors = validateUnavailability(value);
         if (errors.length) throw new Error(errors[0]);
-        return put('unavailability', value.id, {
+        return upsertUnavailability(client, {
         ...value,
         personIds: value.allPeople ? [] : [...new Set(value.personIds)],
         tagIds: value.allPeople ? [] : [...new Set(value.tagIds)],
@@ -443,7 +347,7 @@ export async function createPGliteDB(): Promise<{
     emailTasks: {
       get: (id) => get<EmailTask>('email-task', id),
       list: (query) => list<EmailTask>('email-task', query),
-      put: (value) => put('email-task', value.id, value),
+      put: (value) => upsertEmailTask(client, value),
       delete: (id) => remove('email-task', id),
       clear: () => clear('email-task'),
     },
@@ -451,7 +355,7 @@ export async function createPGliteDB(): Promise<{
       get: async () =>
         (await get<SystemSettings>('system-settings', SYSTEM_ID)) ?? { id: SYSTEM_ID },
       put: (value) =>
-        put('system-settings', SYSTEM_ID, {
+        upsertSystemSettings(client, {
           ...value,
           id: SYSTEM_ID,
           modifiedAt: value.modifiedAt ?? Date.now(),
@@ -554,7 +458,7 @@ export async function createPGliteDB(): Promise<{
         };
       },
     },
-    graph: { list: (query = {}) => listBrowserGraphPage(client, query) },
+    graph: { list: (query = {}) => listGraphPage(client, query) },
   };
 
   async function restore(dump: DatabaseDump): Promise<void> {
@@ -566,35 +470,32 @@ export async function createPGliteDB(): Promise<{
     for (const j of dump.rankingHistory)
       validateRankingJudgment(j, new Set(dump.keywordVectors.map((v) => v.keywordId)));
     new ProductEmbeddingEngine(dump.keywordVectors, dump.rankingHistory);
-    const rawRows = [
-      ...legacyDumpToEntityRows(dump),
-      ...(dump.personTags ?? []).map((tag) => ({
-        kind: 'person-tag',
-        id: tag.id,
-        updated_at: tag.modifiedAt ?? 0,
-        payload: tag.names ? tag : { ...tag, names: { en: tag.name, zh: '', ja: '' } },
-      })),
-      ...dump.rankingHistory.map((j) => ({
-        kind: 'ranking-judgment',
-        id: j.id,
-        updated_at: j.createdAt,
-        payload: j,
-      })),
-    ];
-    const restoreIdMap = new Map<string, string>();
-    for (const row of rawRows) restoreIdMap.set(row.id, await normalizeUuid(row.id));
-    const rows = rawRows.map(row => {
-      const payload = rewriteEntityIds(row.payload, restoreIdMap) as Record<string, unknown>;
-      return { ...row, id: restoreIdMap.get(row.id)!, payload: row.kind === 'constraint'
-        ? { ...normalizeStoredConstraint(payload as unknown as ScheduleConstraint), disabled: payload.disabled ?? false } : payload };
-    });
     await client.transaction(async (tx) => {
-      await tx.query('DELETE FROM entities');
-      for (const row of rows)
-        await tx.query(
-          'INSERT INTO entities(kind,id,updated_at,payload,all_people) VALUES($1,$2,$3,$4::jsonb,$5)',
-          [row.kind, row.id, new Date(row.updated_at), JSON.stringify(row.payload), row.kind === 'unavailability' && row.payload.allPeople === true],
-        );
+      await tx.exec(`
+        DELETE FROM ranking_judgments;
+        DELETE FROM keyword_vectors;
+        DELETE FROM keyword_relations;
+        DELETE FROM keywords;
+        DELETE FROM system_settings;
+        DELETE FROM email_tasks;
+        DELETE FROM unavailabilities;
+        DELETE FROM schedules;
+        DELETE FROM constraints;
+        DELETE FROM configs;
+        DELETE FROM person_tags;
+        DELETE FROM persons;
+      `);
+      for (const value of dump.persons) await upsertPerson(tx, value);
+      for (const value of dump.personTags) await upsertPersonTag(tx, value);
+      for (const value of dump.keywords) await upsertKeyword(tx, value);
+      for (const value of dump.configs) await upsertConfig(tx, value);
+      for (const value of dump.constraints) await upsertConstraint(tx, value);
+      for (const value of dump.schedules) await upsertSchedule(tx, value);
+      for (const value of dump.unavailabilities) await upsertUnavailability(tx, value);
+      for (const value of dump.emailTasks) await upsertEmailTask(tx, value);
+      if (dump.systemSettings) await upsertSystemSettings(tx, dump.systemSettings);
+      for (const value of dump.keywordVectors) await upsertKeywordVector(tx, value);
+      for (const value of dump.rankingHistory) await upsertRankingJudgment(tx, value);
     });
   }
 

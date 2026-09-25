@@ -6,7 +6,7 @@ import { migrateEuclideanVector } from '../src/db/migrate/003-projection.js';
 import { BROWSER_SCHEMA_VERSION, upgradeBrowserSchema } from '../src/db/browser-migrations';
 
 const schemaSql = {
-  current: await readFile(new URL('../src/db/current-schema.sql', import.meta.url), 'utf8'),
+  current: await readFile(new URL('../src/db/migrate/legacy-current-schema.sql', import.meta.url), 'utf8'),
   graph: await readFile(new URL('../src/db/migrate/004.up.sql', import.meta.url), 'utf8'),
   identity: await readFile(new URL('../src/db/migrate/005.up.sql', import.meta.url), 'utf8'),
   constraints: await readFile(new URL('../src/db/migrate/006.up.sql', import.meta.url), 'utf8'),
@@ -184,7 +184,7 @@ test('browser graph cursor feed reports deletes and equal-timestamp updates', as
   const db = new PGlite();
   try {
     await upgradeBrowserSchema(db, schemaSql);
-    const { listBrowserGraphPage } = await import('../src/db/graph.js');
+    const { listBrowserGraphPage } = await import('../src/db/migrate/legacy-graph.js');
     const first = await listBrowserGraphPage(db);
     await db.query('INSERT INTO entities(kind,id,updated_at,payload) VALUES($1,$2,$3,$4)', ['keyword',KEYWORD_ID,new Date(1),JSON.stringify({id:KEYWORD_ID,name:'before'})]);
     const added = await listBrowserGraphPage(db, { since: first.checkpoint! });
