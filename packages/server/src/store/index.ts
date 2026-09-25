@@ -369,12 +369,12 @@ export class LabbyStore {
     finally { connection.release(); }
   }
 
-  private async queryRows(query: ReturnType<typeof sql>): Promise<DbRow[]> {
+  private async queryRows(query: ReturnType<typeof sql>, operation: 'read' | 'write' = 'read'): Promise<DbRow[]> {
     const db = this.similarityTransaction.getStore()?.db ?? this.db;
     const started = performance.now();
     let result: unknown;
     try { result = await db.execute(query as never); }
-    finally { this.recordQuery(started); this.logSlowQuery(started, 'read'); }
+    finally { this.recordQuery(started); this.logSlowQuery(started, operation); }
     if (result && typeof result === 'object' && 'rows' in result && Array.isArray((result as { rows?: unknown }).rows)) {
       return (result as { rows: DbRow[] }).rows;
     }
@@ -923,6 +923,32 @@ export class LabbyStore {
   async clearEmailTasks(): Promise<void> {
     await this.ensureReady();
     await this.executeCommand(sql`DELETE FROM email_tasks`);
+  }
+
+  /** Atomically claim one provider occurrence across all API replicas. */
+  async claimSchedulerDispatch(id: string, jobName: string): Promise<boolean> {
+    await this.ensureReady();
+    const rows = await this.queryRows(sql`
+      INSERT INTO scheduler_dispatches (id, job_name)
+      VALUES (${id}, ${jobName})
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id
+    `, 'write');
+    return rows.length > 0;
+  }
+
+  async finishSchedulerDispatch(id: string, success: boolean): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`
+      UPDATE scheduler_dispatches
+      SET status = ${success ? 'succeeded' : 'failed'}, finished_at = now()
+      WHERE id = ${id}
+    `);
+  }
+
+  async pruneSchedulerDispatches(): Promise<void> {
+    await this.ensureReady();
+    await this.executeCommand(sql`DELETE FROM scheduler_dispatches WHERE claimed_at < now() - interval '30 days'`);
   }
 
   async getSystemSettings(): Promise<SystemSettings> {

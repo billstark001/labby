@@ -1,5 +1,5 @@
 import type { LabbyStore } from '../store/index.js';
-import type { CronScheduler } from './scheduler.js';
+import type { JobScheduler } from './scheduler.js';
 
 interface AuthMaintenanceConfig {
   cronExpression?: string;
@@ -7,7 +7,7 @@ interface AuthMaintenanceConfig {
 }
 
 export interface CreateAuthMaintenanceServiceOptions {
-  scheduler: CronScheduler;
+  scheduler: JobScheduler;
   store: LabbyStore;
 }
 
@@ -30,6 +30,7 @@ export class AuthMaintenanceService {
       handler: async () => {
         await this.options.store.pruneExpiredRefreshTokens();
         await this.options.store.pruneAuthVerificationCodes();
+        await this.options.store.pruneSchedulerDispatches();
       },
     });
   }

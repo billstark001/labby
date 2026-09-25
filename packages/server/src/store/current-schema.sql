@@ -67,6 +67,14 @@ CREATE TABLE persons (
     payload JSONB NOT NULL
   );
 
+  CREATE TABLE scheduler_dispatches (
+    id TEXT PRIMARY KEY,
+    job_name TEXT NOT NULL,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'running'
+  );
+
   CREATE TABLE system_settings (
     id UUID PRIMARY KEY,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -133,6 +141,7 @@ CREATE TABLE persons (
   CREATE INDEX unavailabilities_config_idx ON unavailabilities (config_id);
   CREATE INDEX email_tasks_config_idx ON email_tasks (config_id);
   CREATE INDEX email_tasks_updated_at_idx ON email_tasks (updated_at DESC, id DESC);
+  CREATE INDEX scheduler_dispatches_claimed_at_idx ON scheduler_dispatches (claimed_at);
   CREATE INDEX system_settings_updated_at_idx ON system_settings (updated_at DESC, id DESC);
   CREATE INDEX refresh_tokens_user_idx ON refresh_tokens (user_id);
   CREATE INDEX refresh_tokens_expires_idx ON refresh_tokens (expires_at);
@@ -192,7 +201,8 @@ INSERT INTO schema_migrations(version,name) VALUES
   (4,'jsonb-documents'), (5,'uuid-timestamptz-person-tags'),
   (6,'constraint-tag-targets'),
   (7,'localized-person-tags-and-constraint-state'),
-  (8,'unavailability-selectors-and-closures');
+  (8,'unavailability-selectors-and-closures'),
+  (9,'scheduler-dispatch-deduplication');
 CREATE INDEX keywords_graph_id_idx ON keywords(id);
 
 CREATE TABLE person_tags (

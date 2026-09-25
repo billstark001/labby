@@ -83,12 +83,13 @@ Browser-local PGlite is explicitly allowed to initialize and migrate automatical
 mounts notification UI before opening the database. Actual initialization, schema upgrade or
 legacy import displays progress and completion; failures remain visible with a retry action.
 
-Empty browser databases use current-schema.sql directly. Existing databases migrate to version 8:
+Empty browser databases use current-schema.sql directly. Existing databases migrate to version 9:
 version 3 archives and converts old keyword vectors, version 4 installs the graph revision clock and
 change-feed triggers, and version 5 normalizes entity IDs/timestamps before enabling person-tag
 entities. Version 6 normalizes all constraint tag selectors and removes the unused no-overlap weight.
 Version 7 backfills localized person-tag names and the enabled state of constraints.
 Version 8 canonicalizes unavailability selectors and adds the `entities.all_people` column. Browser writes, IndexedDB import, and restore keep it synchronized with the payload.
+Version 9 adds a server-side dispatch ledger that atomically claims Cloud Scheduler and Railway Cron occurrences. The ledger is operational state, is pruned after 30 days, and is not included in business-data backup snapshots.
 Each upgrade transaction includes its schema version updates.
 ranking-judgment entities store accepted lists.
 The earlier IndexedDB import is a one-time migration; source vectors are archived and the
