@@ -10,7 +10,7 @@ import {
   noOverlapForbidden,
   validateScheduleAssignments,
 } from './constraints.js';
-import { ANNEALING_CONFIG } from './annealing.js';
+import { ANNEALING_CONFIG } from './annealing-strategies.js';
 import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 
 interface SlotMask {

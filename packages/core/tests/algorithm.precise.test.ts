@@ -9,6 +9,7 @@ import {
   SimilarityLookup,
   solveFull,
   solveIncremental,
+  validateScheduleAssignments,
   validateUnavailability,
   type Person,
   type ScheduleConfig,
@@ -377,6 +378,24 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
         presentation.questionerIds.join('|') !== (previousActive[sessionIndex]?.presentations[presentationIndex]?.questionerIds.join('|') ?? ''),
       ),
     )).toBe(true);
+  });
+
+  test('initial questioner preferences and repair work together in questioners-only mode', () => {
+    const config = makeConfig({
+      reciprocalPairPreference: 'forbid',
+      questionerOptimization: {
+        assignment: { noveltyChance: 1, balanceChance: 1 },
+        repair: { iterations: 12, pairWeight: 8, countWeight: 8 },
+      },
+    });
+    const input: SolverInput = { config, persons: makePersons(), similarities: makeSimilarities() };
+    const previous = withSeed(9, () => solveFull(input));
+    const changeDate = '2026-04-15';
+    const next = withSeed(21, () => solveIncremental({ ...input, sessions: previous, changeDate, mode: 'questioners-only' }));
+    expect(next.filter(session => session.date < changeDate)).toEqual(previous.filter(session => session.date < changeDate));
+    expect(next.map(session => session.presentations.map(presentation => presentation.presenterId)))
+      .toEqual(previous.map(session => session.presentations.map(presentation => presentation.presenterId)));
+    expect(validateScheduleAssignments(next, input)).toEqual([]);
   });
 
   test('frequency-multiplier constraint is accepted with configurable role scopes', () => {

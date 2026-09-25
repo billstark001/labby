@@ -17,7 +17,8 @@
     "dev": "tsc -p tsconfig.json --watch",
     "test": "vitest run",
     "benchmark:dimensions": "tsx scripts/dimension-benchmark.ts",
-    "benchmark:scheduling": "tsx scripts/scheduling-benchmark.ts"
+    "benchmark:scheduling": "tsx scripts/scheduling-benchmark.ts",
+    "benchmark:questioner-tuning": "tsx scripts/questioner-tuning-benchmark.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.13",

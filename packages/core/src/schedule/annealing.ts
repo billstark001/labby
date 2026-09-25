@@ -1,12 +1,9 @@
 /**
- * Schedule builder and simulated annealing optimizer.
- *
- * Mutation strategies and annealing hyperparameters are tunable via
- * MUTATION_WEIGHTS and ANNEALING_CONFIG.
+ * Schedule construction and orchestration. Search moves live in strategy modules.
  */
 
 import { getPersonSimilarity } from '../nlp.js';
-import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SolverInput, SolverDiagnostics } from '../types.js';
+import type { Session, Presentation, ScheduleConfig, ScheduleSolver, IncrementalSolverInput, SolverInput, SolverDiagnostics, QuestionerAssignmentPolicy } from '../types.js';
 import {
   type CostContext,
   computeCost,
@@ -15,65 +12,15 @@ import {
   buildConstraintGuidance,
   ConstraintGuidance,
   noOverlapForbidden,
-  personGapCost,
   validateScheduleAssignments,
-  validateAssignmentsWithContext,
 } from './constraints.js';
 import { replaySessionMutations } from './mutation.js';
+import { ANNEALING_CONFIG, MUTATION_WEIGHTS, mutateQuestionersOnly, mutateWithStrategies, runAnnealing } from './annealing-strategies.js';
+import { repairQuestioners } from './targeted-strategies.js';
+import { cloneSessions, hammingDistance } from './strategy-utils.js';
 import { generateSessionDates, buildUnavailMap, isISO8601, isWholeGroupClosure } from './utils.js';
 import { drrNext, drrRecover, DRRState, vftNext, vftRecover, VFTState } from './wps.js';
 
-// ---------------------------------------------------------------------------
-// Configurable hyperparameters
-// ---------------------------------------------------------------------------
-
-/**
- * Relative probability weight for each mutation strategy.
- * Values need not sum to 1 – they are normalized at runtime.
- *
- * Raise `frequencyTargeted` to fix frequency-multiplier constraint violations
- * more aggressively; raise `sessionRebuild` to escape deep local minima.
- */
-export const MUTATION_WEIGHTS = {
-  /** Swap presenter slots between two random sessions. */
-  swapPresenters: 0.20,
-  /** Reassign questioners for a random presentation. */
-  reassignQuestioners: 0.15,
-  /**
-   * Replace a random presenter with the most under-represented eligible person
-   * not currently scheduled in that session.
-   */
-  replacePresenter: 0.15,
-  /**
-   * Directly fix the person with the largest frequency-multiplier deviation by
-   * inserting or removing them from a presentation slot.
-   */
-  frequencyTargeted: 0.15,
-  /** Swap a clustered presenter appearance without changing either person's load. */
-  gapTargeted: 0.10,
-  /** Break a same-day reciprocal pair by changing one questioner. */
-  reciprocalTargeted: 0.10,
-  /** Fully rebuild all presenter and questioner assignments for one session. */
-  sessionRebuild: 0.15,
-};
-
-/** Simulated annealing hyperparameters. */
-export const ANNEALING_CONFIG = {
-  maxIter: 1000,
-  /** Stop once the best score has not improved for this many iterations. */
-  maxStagnantIter: 400,
-  initialTemp: 1.0,
-  coolingRate: 0.995,
-  /** Hamming penalty weight applied during incremental solves. */
-  hammingWeight: 10,
-};
-
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
-
-
-// #endregion
 
 // #region Assignment state
 
@@ -126,6 +73,9 @@ function chooseQuestioners(
   guidance: ConstraintGuidance,
   isUnavailable?: (id: string) => boolean,
   forbiddenReciprocalQuestioners?: Set<string>,
+  assignment?: QuestionerAssignmentPolicy,
+  pairCounts?: Map<string, number>,
+  questionerCounts?: Map<string, number>,
 ) {
   const isVetoed = (i: number) => {
     const id = personIds[i];
@@ -146,36 +96,34 @@ function chooseQuestioners(
 
   const questionerIds: string[] = [];
   for (let j = 0; j < count; j++) {
-    const idx = vftNext(vftState, isVetoed, weightAdjust);
+    let preferred: Set<string> | null = null;
+    const preferNovelty = !!assignment && assignment.noveltyChance > 0 && Math.random() < assignment.noveltyChance;
+    const preferBalance = !!assignment && assignment.balanceChance > 0 && Math.random() < assignment.balanceChance;
+    if (preferNovelty || preferBalance) {
+      const eligible = personIds.filter((_, index) => !isVetoed(index));
+      if (eligible.length && preferNovelty) {
+        const fewest = Math.min(...eligible.map(id => pairCounts?.get(`${id}→${presenterId}`) ?? 0));
+        preferred = new Set(eligible.filter(id => (pairCounts?.get(`${id}→${presenterId}`) ?? 0) === fewest));
+      }
+      if (eligible.length && preferBalance) {
+        const pool = preferred ? eligible.filter(id => preferred!.has(id)) : eligible;
+        const load = (id: string) => (questionerCounts?.get(id) ?? 0) / Math.max(0.01, guidance.questionerWeights.get(id) ?? 1);
+        const least = Math.min(...pool.map(load));
+        preferred = new Set(pool.filter(id => load(id) <= least + 1e-9));
+      }
+    }
+    const idx = vftNext(vftState, index => isVetoed(index)
+      || (preferred !== null && !preferred.has(personIds[index])), weightAdjust);
     if (idx === null) break; // All candidates vetoed
-    questionerIds.push(personIds[idx]);
+    const selected = personIds[idx];
+    questionerIds.push(selected);
+    if (pairCounts) {
+      const key = `${selected}→${presenterId}`;
+      pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+    }
+    if (questionerCounts) questionerCounts.set(selected, (questionerCounts.get(selected) ?? 0) + 1);
   }
   return questionerIds;
-}
-
-// #endregion
-
-// #region Utilities
-
-export function deepCloneSessions(sessions: Session[]): Session[] {
-  return sessions.map(s => ({
-    date: s.date,
-    presentations: s.presentations.map(p => ({
-      presenterId: p.presenterId,
-      questionerIds: [...p.questionerIds],
-    })),
-  }));
-}
-
-export function hammingDistance(a: Session[], b: Session[]): number {
-  const mapB = new Map(b.map(s => [s.date, new Set(s.presentations.map(p => p.presenterId))]));
-  let diff = 0;
-  for (const s of a) {
-    const bp = mapB.get(s.date);
-    if (!bp) { diff += s.presentations.length; continue; }
-    for (const p of s.presentations) { if (!bp.has(p.presenterId)) diff++; }
-  }
-  return diff;
 }
 
 // #endregion
@@ -189,6 +137,8 @@ export class RandomScheduleGenerator {
   private readonly questionerNumbers: ReturnType<typeof buildNumberedPersonIds>["questionerNumbers"];
   private readonly drrState: ReturnType<typeof drrRecover>;
   private readonly vftStateQuestioner: ReturnType<typeof vftRecover>;
+  private readonly pairCounts = new Map<string, number>();
+  private readonly questionerCounts = new Map<string, number>();
 
   constructor(
     private readonly personIds: string[],
@@ -203,6 +153,12 @@ export class RandomScheduleGenerator {
     const { presenterNumbers, questionerNumbers } = buildNumberedPersonIds(historicalSessions, personIds);
     this.presenterNumbers = presenterNumbers;
     this.questionerNumbers = questionerNumbers;
+    for (const session of historicalSessions) for (const presentation of session.presentations)
+      for (const id of presentation.questionerIds) {
+        const key = `${id}→${presentation.presenterId}`;
+        this.pairCounts.set(key, (this.pairCounts.get(key) ?? 0) + 1);
+        this.questionerCounts.set(id, (this.questionerCounts.get(id) ?? 0) + 1);
+      }
 
     const weights = personIds.map(id => this.guidance.presenterWeights?.get(id) ?? 1);
     this.drrState = drrRecover(
@@ -258,6 +214,9 @@ export class RandomScheduleGenerator {
         this.ctx.reciprocalPreference === 'forbid'
           ? new Set(presentations.filter(previous => previous.questionerIds.includes(presenterId)).map(previous => previous.presenterId))
           : undefined,
+        this.ctx.questionerOptimization.assignment,
+        this.pairCounts,
+        this.questionerCounts,
       );
 
       presentations.push({ presenterId, questionerIds });
@@ -295,7 +254,18 @@ function buildQuestionerPicker(
   ctx: CostContext,
   guidance: ConstraintGuidance,
   unavailMap: Map<string, Set<string>>,
-): (presenterId: string, date: string, count: number) => string[] {
+  historicalSessions: Session[] = [],
+  assignment?: QuestionerAssignmentPolicy,
+  random: () => number = Math.random,
+): (presenterId: string, date: string, count: number, forbidden?: Set<string>) => string[] {
+  const pairCounts = new Map<string, number>();
+  const questionerCounts = new Map<string, number>();
+  for (const session of historicalSessions) for (const presentation of session.presentations)
+    for (const questioner of presentation.questionerIds) {
+      const key = `${questioner}→${presentation.presenterId}`;
+      pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+      questionerCounts.set(questioner, (questionerCounts.get(questioner) ?? 0) + 1);
+    }
   const simFactor = (presenterId: string, questionerId: string): number => {
     const rawSim = getPersonSimilarity(
       ctx.personKeywords.get(presenterId) ?? [],
@@ -307,22 +277,31 @@ function buildQuestionerPicker(
     return Math.min(Math.max(0, 1 - scaled), 1);
   };
 
-  return (presenterId: string, date: string, count: number): string[] => {
+  return (presenterId: string, date: string, count: number, forbidden?: Set<string>): string[] => {
     const unavail = unavailMap.get(date) ?? new Set<string>();
     const pool = personIds.filter(
-      id => id !== presenterId && !unavail.has(id) && !noOverlapForbidden(presenterId, id, guidance),
+      id => id !== presenterId && !unavail.has(id) && !forbidden?.has(id) && !noOverlapForbidden(presenterId, id, guidance),
     );
     const picked: string[] = [];
     const used = new Set<string>();
 
     for (let j = 0; j < count; j++) {
-      const avail = pool.filter(id => !used.has(id));
+      let avail = pool.filter(id => !used.has(id));
       if (!avail.length) break;
+      if (assignment && assignment.noveltyChance > 0 && random() < assignment.noveltyChance) {
+        const fewest = Math.min(...avail.map(id => pairCounts.get(`${id}→${presenterId}`) ?? 0));
+        avail = avail.filter(id => (pairCounts.get(`${id}→${presenterId}`) ?? 0) === fewest);
+      }
+      if (assignment && assignment.balanceChance > 0 && random() < assignment.balanceChance) {
+        const load = (id: string) => (questionerCounts.get(id) ?? 0) / Math.max(0.01, guidance.questionerWeights.get(id) ?? 1);
+        const least = Math.min(...avail.map(load));
+        avail = avail.filter(id => load(id) <= least + 1e-9);
+      }
       const weights = avail.map(id =>
         Math.max(0.01, affinityPairWeight(presenterId, id, guidance) * simFactor(presenterId, id)),
       );
       const total = weights.reduce((sum, weight) => sum + weight, 0);
-      let cursor = Math.random() * total;
+      let cursor = random() * total;
       let chosen = avail.length - 1;
       for (let k = 0; k < weights.length; k++) {
         cursor -= weights[k];
@@ -331,8 +310,12 @@ function buildQuestionerPicker(
           break;
         }
       }
-      used.add(avail[chosen]);
-      picked.push(avail[chosen]);
+      const selected = avail[chosen]!;
+      used.add(selected);
+      picked.push(selected);
+      const pairKey = `${selected}→${presenterId}`;
+      pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+      questionerCounts.set(selected, (questionerCounts.get(selected) ?? 0) + 1);
     }
 
     return picked;
@@ -345,15 +328,22 @@ function rebuildQuestionersForSessions(
   ctx: CostContext,
   config: ScheduleConfig,
   unavailMap: Map<string, Set<string>> = new Map(),
+  historicalSessions: Session[] = [],
 ): Session[] {
   const guidance = buildConstraintGuidance(ctx);
-  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap);
-  const next = deepCloneSessions(sessions);
+  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap,
+    historicalSessions, ctx.questionerOptimization.assignment);
+  const next = cloneSessions(sessions);
 
   for (const session of next) {
+    const assigned: Presentation[] = [];
     for (const presentation of session.presentations) {
       const count = presentation.questionerIds.length || config.questionersPerPresenter;
-      presentation.questionerIds = pickQuestioners(presentation.presenterId, session.date, count);
+      const forbidden = ctx.reciprocalPreference === 'forbid'
+        ? new Set(assigned.filter(previous => previous.questionerIds.includes(presentation.presenterId)).map(previous => previous.presenterId))
+        : undefined;
+      presentation.questionerIds = pickQuestioners(presentation.presenterId, session.date, count, forbidden);
+      assigned.push(presentation);
     }
   }
 
@@ -365,486 +355,53 @@ function rebuildQuestionersForSessions(
 // #region Annealing
 
 export function mutate(
-  sessions: Session[],
-  personIds: string[],
-  ctx: CostContext,
-  guidance: ConstraintGuidance,
-  historicalSessions: Session[],
-  config: ScheduleConfig,
+  sessions: Session[], personIds: string[], ctx: CostContext, guidance: ConstraintGuidance,
+  historicalSessions: Session[], config: ScheduleConfig,
   unavailMap: Map<string, Set<string>> = new Map(),
 ): Session[] {
-  if (!sessions.length) return sessions;
-  const clone = deepCloneSessions(sessions);
-  if (!personIds.length) return clone;
-
-  const allSessions = [...historicalSessions, ...clone];
-
-  // ── Shared helpers ─────────────────────────────────────────────────────────
-  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap);
-
-  /** Raw (unscaled) per-person presenter appearance counts across allSessions. */
-  const rawPresenterCounts = (): Map<string, number> => {
-    const counts = new Map<string, number>(personIds.map(id => [id, 0]));
-    for (const s of allSessions) {
-      for (const p of s.presentations) {
-        counts.set(p.presenterId, (counts.get(p.presenterId) ?? 0) + 1);
-      }
-    }
-    return counts;
-  };
-
-  /** Expected appearances per person derived from frequency-multiplier weights. */
-  const expectedCounts = (total: number): Map<string, number> => {
-    const freqWeights = personIds.map(id => guidance.presenterWeights?.get(id) ?? 1);
-    const totalFreq = freqWeights.reduce((s, w) => s + w, 0);
-    return new Map(personIds.map((id, i) => [id, totalFreq > 0 ? total * freqWeights[i] / totalFreq : total / personIds.length]));
-  };
-
-  // ── Strategy selection ─────────────────────────────────────────────────────
-  const strategies = Object.entries(MUTATION_WEIGHTS) as [keyof typeof MUTATION_WEIGHTS, number][];
-  const totalWeight = strategies.reduce((s, [, w]) => s + w, 0);
-  let pick = Math.random() * totalWeight;
-  let strategy: keyof typeof MUTATION_WEIGHTS = strategies[0][0];
-  for (const [k, w] of strategies) {
-    pick -= w;
-    if (pick <= 0) { strategy = k; break; }
-  }
-
-  switch (strategy) {
-
-    // ── 1. Swap entire presentation slots between two random sessions ────────
-    // Improves presentation-gap uniformity and load balance simultaneously;
-    // rebuilds questioners for the relocated presenter.
-    case 'swapPresenters': {
-      const eligible = clone.filter(s => s.presentations.length > 0);
-      if (eligible.length < 2) break;
-      for (let attempt = 0; attempt < 20; attempt++) {
-        const ia = Math.floor(Math.random() * eligible.length);
-        let ib = Math.floor(Math.random() * (eligible.length - 1));
-        if (ib >= ia) ib++;
-        const sessA = eligible[ia];
-        const sessB = eligible[ib];
-        const pi = Math.floor(Math.random() * sessA.presentations.length);
-        const pj = Math.floor(Math.random() * sessB.presentations.length);
-        const idA = sessA.presentations[pi].presenterId;
-        const idB = sessB.presentations[pj].presenterId;
-        if (idA === idB) continue;
-        const unavailA = unavailMap.get(sessA.date) ?? new Set<string>();
-        const unavailB = unavailMap.get(sessB.date) ?? new Set<string>();
-        if (unavailA.has(idB) || unavailB.has(idA)) continue;
-        const inA = new Set(sessA.presentations.map(p => p.presenterId));
-        const inB = new Set(sessB.presentations.map(p => p.presenterId));
-        if (inB.has(idA) || inA.has(idB)) continue;
-        // Swap presenter ids; rebuild questioners for each moved presenter.
-        sessA.presentations[pi].presenterId = idB;
-        sessB.presentations[pj].presenterId = idA;
-        sessA.presentations[pi].questionerIds = pickQuestioners(
-          idB, sessA.date, sessA.presentations[pi].questionerIds.length || config.questionersPerPresenter,
-        );
-        sessB.presentations[pj].questionerIds = pickQuestioners(
-          idA, sessB.date, sessB.presentations[pj].questionerIds.length || config.questionersPerPresenter,
-        );
-        break;
-      }
-      break;
-    }
-
-    // ── 2. Reassign questioners for one presentation ─────────────────────────
-    // Targets the relevance and questioner-frequency penalties without
-    // disturbing the presenter assignment.
-    case 'reassignQuestioners': {
-      const eligible = clone.filter(s => s.presentations.length > 0);
-      if (!eligible.length) break;
-      const sess = eligible[Math.floor(Math.random() * eligible.length)];
-      const pres = sess.presentations[Math.floor(Math.random() * sess.presentations.length)];
-      const count = pres.questionerIds.length || config.questionersPerPresenter;
-      pres.questionerIds = pickQuestioners(pres.presenterId, sess.date, count);
-      break;
-    }
-
-    // ── 3. Replace presenter with most under-represented eligible person ─────
-    // Directly reduces presenterLoad variance by inserting an under-represented
-    // person and ejecting their slot (rebuilt questioners follow).
-    case 'replacePresenter': {
-      const eligible = clone.filter(s => s.presentations.length > 0);
-      if (!eligible.length) break;
-      const sess = eligible[Math.floor(Math.random() * eligible.length)];
-      const pIdx = Math.floor(Math.random() * sess.presentations.length);
-      const unavail = unavailMap.get(sess.date) ?? new Set<string>();
-      const inSession = new Set(sess.presentations.map(p => p.presenterId));
-      const counts = rawPresenterCounts();
-      const totalObs = personIds.reduce((s, id) => s + (counts.get(id) ?? 0), 0);
-      const expected = expectedCounts(totalObs);
-      const candidates = personIds.filter(id => !unavail.has(id) && !inSession.has(id));
-      if (!candidates.length) break;
-      // Sort ascending by (actual - expected): most under-represented at front.
-      candidates.sort((a, b) =>
-        ((counts.get(a) ?? 0) - (expected.get(a) ?? 0)) -
-        ((counts.get(b) ?? 0) - (expected.get(b) ?? 0)),
-      );
-      // Pick randomly from the most under-represented third.
-      const pool = candidates.slice(0, Math.max(1, Math.ceil(candidates.length * 0.33)));
-      const replacement = pool[Math.floor(Math.random() * pool.length)];
-      const pres = sess.presentations[pIdx];
-      pres.presenterId = replacement;
-      pres.questionerIds = pickQuestioners(
-        replacement, sess.date, pres.questionerIds.length || config.questionersPerPresenter,
-      );
-      break;
-    }
-
-    // ── 4. Targeted frequency-multiplier deviation fix ───────────────────────
-    // Finds the person deviating most from their frequency-multiplier target
-    // (over-represented) and swaps them with the most under-represented person
-    // in one presentation slot.
-    case 'frequencyTargeted': {
-      if (!allSessions.length) break;
-      const counts = rawPresenterCounts();
-      const totalObs = personIds.reduce((s, id) => s + (counts.get(id) ?? 0), 0);
-      const expected = expectedCounts(totalObs);
-      const deviations = personIds.map(id => ({
-        id,
-        dev: (counts.get(id) ?? 0) - (expected.get(id) ?? 0),
-      }));
-      deviations.sort((a, b) => a.dev - b.dev);
-      const underRep = deviations[0];   // most under-represented
-      const overRep = deviations[deviations.length - 1]; // most over-represented
-      // Skip if already balanced (deviation < 1 presentation).
-      if (overRep.dev < 1 || underRep.dev > -1) break;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        const si = Math.floor(Math.random() * clone.length);
-        const sess = clone[si];
-        const unavail = unavailMap.get(sess.date) ?? new Set<string>();
-        if (unavail.has(underRep.id)) continue;
-        const overIdx = sess.presentations.findIndex(p => p.presenterId === overRep.id);
-        if (overIdx === -1) continue;
-        const inSession = new Set(sess.presentations.map(p => p.presenterId));
-        if (inSession.has(underRep.id)) continue;
-        const pres = sess.presentations[overIdx];
-        pres.presenterId = underRep.id;
-        pres.questionerIds = pickQuestioners(
-          underRep.id, sess.date, pres.questionerIds.length || config.questionersPerPresenter,
-        );
-        break;
-      }
-      break;
-    }
-
-    case 'gapTargeted': {
-      const dates = allSessions.map(session => Date.parse(`${session.date}T00:00:00Z`) / 86400000);
-      if (dates.length < 2) break;
-      const orderedDates = [...dates].sort((a, b) => a - b);
-      const spacings = orderedDates.slice(1).map((date, index) => date - orderedDates[index]!).sort((a, b) => a - b);
-      const nominal = spacings[Math.floor(spacings.length / 2)] ?? 7;
-      const first = orderedDates[0]! - nominal / 2;
-      const last = orderedDates[orderedDates.length - 1]! + nominal / 2;
-      const appearancesByPerson = new Map<string, number[]>();
-      const slotsByPerson = new Map(personIds.map(id => [id, [] as Array<{ session: Session; index: number; day: number }>]));
-      const mutableSessions = new Set(clone);
-      allSessions.forEach((session, sessionIndex) => session.presentations.forEach((presentation, index) => {
-        slotsByPerson.get(presentation.presenterId)?.push({ session, index, day: dates[sessionIndex]! });
-      }));
-      const clustered: Array<{ session: Session; index: number; id: string; ratio: number }> = [];
-      for (const id of personIds) {
-        const appearances = slotsByPerson.get(id)!.sort((a, b) => a.day - b.day);
-        appearancesByPerson.set(id, appearances.map(item => item.day));
-        const target = (last - first) / (appearances.length + 1);
-        for (let index = 1; index < appearances.length; index++) {
-          const later = appearances[index]!;
-          if (!mutableSessions.has(later.session)) continue;
-          const ratio = (later.day - appearances[index - 1]!.day) / Math.max(1, target);
-          if (ratio < Math.max(0.9, ctx.gapBalance.presenter.shortGapRatio))
-            clustered.push({ session: later.session, index: later.index, id, ratio });
-        }
-      }
-      if (!clustered.length) break;
-      clustered.sort((a, b) => a.ratio - b.ratio);
-      const source = clustered[Math.floor(Math.random() * Math.min(3, clustered.length))]!;
-      const sourceDate = Date.parse(`${source.session.date}T00:00:00Z`) / 86400000;
-      const sourceDates = appearancesByPerson.get(source.id)!;
-      const beforeSource = personGapCost(sourceDates, first, last, ctx.gapBalance.presenter);
-      const replaceDate = (values: number[], from: number, to: number) => {
-        const next = [...values];
-        const index = next.indexOf(from);
-        if (index < 0) return next;
-        next[index] = to;
-        return next;
-      };
-      const candidates: Array<{ session: Session; index: number; gain: number }> = [];
-      const sourceOccupied = new Set(source.session.presentations.map(presentation => presentation.presenterId));
-      const beforeByPerson = new Map<string, number>();
-      for (const session of clone) {
-        if (session === source.session || unavailMap.get(session.date)?.has(source.id)) continue;
-        if (session.presentations.some(presentation => presentation.presenterId === source.id)) continue;
-        const candidateDate = Date.parse(`${session.date}T00:00:00Z`) / 86400000;
-        const sourceAfter = personGapCost(replaceDate(sourceDates, sourceDate, candidateDate), first, last, ctx.gapBalance.presenter);
-        for (let index = 0; index < session.presentations.length; index++) {
-          const otherId = session.presentations[index]!.presenterId;
-          if (sourceOccupied.has(otherId) || unavailMap.get(source.session.date)?.has(otherId)) continue;
-          const otherDates = appearancesByPerson.get(otherId);
-          if (!otherDates) continue;
-          let beforeOther = beforeByPerson.get(otherId);
-          if (beforeOther === undefined) {
-            beforeOther = personGapCost(otherDates, first, last, ctx.gapBalance.presenter);
-            beforeByPerson.set(otherId, beforeOther);
-          }
-          const gain = beforeSource + beforeOther - sourceAfter
-            - personGapCost(replaceDate(otherDates, candidateDate, sourceDate), first, last, ctx.gapBalance.presenter);
-          if (gain > 0.001) candidates.push({ session, index, gain });
-        }
-      }
-      if (!candidates.length) break;
-      candidates.sort((a, b) => b.gain - a.gain);
-      const chosen = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))]!;
-      const sourcePresentation = source.session.presentations[source.index]!;
-      const otherPresentation = chosen.session.presentations[chosen.index]!;
-      const otherId = otherPresentation.presenterId;
-      sourcePresentation.presenterId = otherId;
-      otherPresentation.presenterId = source.id;
-      sourcePresentation.questionerIds = pickQuestioners(otherId, source.session.date,
-        sourcePresentation.questionerIds.length || config.questionersPerPresenter);
-      otherPresentation.questionerIds = pickQuestioners(source.id, chosen.session.date,
-        otherPresentation.questionerIds.length || config.questionersPerPresenter);
-      break;
-    }
-
-    case 'reciprocalTargeted': {
-      const reciprocal: Array<{ session: Session; presentation: Presentation; questionerIndex: number }> = [];
-      for (const session of clone) {
-        const pairs = new Set(session.presentations.flatMap(presentation => presentation.questionerIds.map(id => `${presentation.presenterId}|${id}`)));
-        for (const presentation of session.presentations)
-          presentation.questionerIds.forEach((id, questionerIndex) => {
-            if (pairs.has(`${id}|${presentation.presenterId}`)) reciprocal.push({ session, presentation, questionerIndex });
-          });
-      }
-      if (!reciprocal.length) break;
-      const selected = reciprocal[Math.floor(Math.random() * reciprocal.length)]!;
-      const { session, presentation, questionerIndex } = selected;
-      const unavailable = unavailMap.get(session.date) ?? new Set<string>();
-      const occupied = new Set(presentation.questionerIds);
-      const reversePresenters = new Set(session.presentations
-        .filter(other => other.questionerIds.includes(presentation.presenterId)).map(other => other.presenterId));
-      const candidates = personIds.filter(id => id !== presentation.presenterId && !occupied.has(id)
-        && !unavailable.has(id) && !reversePresenters.has(id)
-        && !noOverlapForbidden(presentation.presenterId, id, guidance));
-      if (!candidates.length) break;
-      candidates.sort((a, b) => affinityPairWeight(presentation.presenterId, b, guidance) - affinityPairWeight(presentation.presenterId, a, guidance));
-      presentation.questionerIds[questionerIndex] = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))]!;
-      break;
-    }
-
-    // ── Fully rebuild one session's assignments ───────────────────────────────
-    // Escapes deep local optima by regenerating all presenter + questioner
-    // assignments for a single session, weighted toward under-represented people.
-    case 'sessionRebuild': {
-      const eligible = clone.filter(s => s.presentations.length > 0);
-      if (!eligible.length) break;
-      const sess = eligible[Math.floor(Math.random() * eligible.length)];
-      const unavail = unavailMap.get(sess.date) ?? new Set<string>();
-      // Exclude this session's contributions from counts so the rebuild is fair.
-      const counts = rawPresenterCounts();
-      for (const p of sess.presentations) {
-        counts.set(p.presenterId, Math.max(0, (counts.get(p.presenterId) ?? 1) - 1));
-      }
-      const totalObs = personIds.reduce((s, id) => s + (counts.get(id) ?? 0), 0);
-      const n = sess.presentations.length;
-      const expected = expectedCounts(totalObs + n);
-      const candidates = personIds.filter(id => !unavail.has(id));
-      if (candidates.length < n) break;
-      const pickedPresenters = new Set<string>();
-      const newPresentations: Presentation[] = [];
-      for (let j = 0; j < n; j++) {
-        const pool = candidates.filter(id => !pickedPresenters.has(id));
-        if (!pool.length) break;
-        // Weight: how many more appearances the person "deserves" vs current count.
-        const weights = pool.map(id =>
-          Math.max(0.01, (expected.get(id) ?? 1) - (counts.get(id) ?? 0)),
-        );
-        const total = weights.reduce((s, w) => s + w, 0);
-        let r = Math.random() * total;
-        let chosen = pool.length - 1;
-        for (let k = 0; k < weights.length; k++) {
-          r -= weights[k];
-          if (r <= 0) { chosen = k; break; }
-        }
-        const presenterId = pool[chosen];
-        pickedPresenters.add(presenterId);
-        newPresentations.push({
-          presenterId,
-          questionerIds: pickQuestioners(presenterId, sess.date, config.questionersPerPresenter),
-        });
-      }
-      sess.presentations = newPresentations;
-      break;
-    }
-  }
-
-  return clone;
-}
-
-function mutateQuestionersOnly(
-  sessions: Session[],
-  personIds: string[],
-  ctx: CostContext,
-  guidance: ConstraintGuidance,
-  config: ScheduleConfig,
-  unavailMap: Map<string, Set<string>> = new Map(),
-): Session[] {
-  if (!sessions.length) return sessions;
-
-  const clone = deepCloneSessions(sessions);
-  const eligible = clone.filter(session => session.presentations.length > 0);
-  if (!eligible.length || !personIds.length) {
-    return clone;
-  }
-
-  const pickQuestioners = buildQuestionerPicker(personIds, ctx, guidance, unavailMap);
-  const session = eligible[Math.floor(Math.random() * eligible.length)];
-  const presentation = session.presentations[Math.floor(Math.random() * session.presentations.length)];
-  const count = presentation.questionerIds.length || config.questionersPerPresenter;
-  presentation.questionerIds = pickQuestioners(presentation.presenterId, session.date, count);
-  return clone;
+  const random = Math.random;
+  return mutateWithStrategies({
+    sessions, personIds, cost: ctx, guidance, historicalSessions, config,
+    unavailable: unavailMap, random,
+    pickQuestioners: buildQuestionerPicker(personIds, ctx, guidance, unavailMap, [], undefined, random),
+  }, MUTATION_WEIGHTS);
 }
 
 export function simulatedAnnealing(
-  initial: Session[],
-  ctx: CostContext,
-  historicalSessions: Session[],
-  config: ScheduleConfig,
-  hammingRef: Session[] | null,
-  hammingWeight: number,
+  initial: Session[], ctx: CostContext, historicalSessions: Session[], config: ScheduleConfig,
+  hammingRef: Session[] | null, hammingWeight: number,
   unavailMap: Map<string, Set<string>> = new Map(),
-  maxIter = ANNEALING_CONFIG.maxIter,
-  diagnostics?: SolverDiagnostics,
+  maxIter = ANNEALING_CONFIG.maxIter, diagnostics?: SolverDiagnostics,
 ): Session[] {
-  const started = performance.now();
   const guidance = buildConstraintGuidance(ctx);
-
-  const personIds = [...ctx.personKeywords.keys()];
-  const totalCost = (s: Session[]) =>
-    computeCost(s, ctx, guidance, historicalSessions) +
-    (hammingRef ? hammingWeight * hammingDistance(s, hammingRef) : 0);
-
-  let current = deepCloneSessions(initial);
-  let currentCost = totalCost(current);
-  let best = deepCloneSessions(current);
-  let bestCost = currentCost;
-  let stagnantIterations = 0;
-  let iterations = 0;
-  let accepted = 0;
-  let invalidNeighbors = 0;
-  let unchangedNeighbors = 0;
-
-  for (let iter = 0; iter < maxIter; iter++) {
-    const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
-    let neighbor: Session[] | null = null;
-    const currentKey = JSON.stringify(current);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      iterations++;
-      const candidate = mutate(current, personIds, ctx, guidance, historicalSessions, config, unavailMap);
-      if (validateAssignmentsWithContext(candidate, ctx, guidance, unavailMap).length) { invalidNeighbors++; continue; }
-      if (JSON.stringify(candidate) === currentKey) { unchangedNeighbors++; continue; }
-      neighbor = candidate;
-      break;
-    }
-    if (!neighbor) { stagnantIterations++; continue; }
-    const neighborCost = totalCost(neighbor);
-    const delta = neighborCost - currentCost;
-
-    if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
-      accepted++;
-      current = neighbor;
-      currentCost = neighborCost;
-      if (currentCost < bestCost) {
-        best = deepCloneSessions(current);
-        bestCost = currentCost;
-        stagnantIterations = 0;
-      } else {
-        stagnantIterations += 1;
-      }
-    } else {
-      stagnantIterations += 1;
-    }
-
-    if (stagnantIterations >= ANNEALING_CONFIG.maxStagnantIter) {
-      break;
-    }
-  }
-  if (diagnostics) Object.assign(diagnostics, { initialCost: totalCost(initial), finalCost: bestCost,
-    iterations, accepted, invalidNeighbors, unchangedNeighbors,
-    durationMs: Math.round(performance.now() - started), restarts: 1 });
-  return best;
+  return runAnnealing({
+    initial, cost: ctx, guidance, historicalSessions, unavailable: unavailMap,
+    reference: hammingRef, referenceWeight: hammingWeight, random: Math.random,
+    maxIterations: maxIter, diagnostics,
+    propose: current => mutate(current, [...ctx.personKeywords.keys()], ctx, guidance,
+      historicalSessions, config, unavailMap),
+  });
 }
 
 export function simulatedAnnealingQuestionersOnly(
-  initial: Session[],
-  ctx: CostContext,
-  historicalSessions: Session[],
-  config: ScheduleConfig,
-  hammingRef: Session[] | null,
-  hammingWeight: number,
+  initial: Session[], ctx: CostContext, historicalSessions: Session[], config: ScheduleConfig,
+  hammingRef: Session[] | null, hammingWeight: number,
   unavailMap: Map<string, Set<string>> = new Map(),
-  maxIter = ANNEALING_CONFIG.maxIter,
-  diagnostics?: SolverDiagnostics,
+  maxIter = ANNEALING_CONFIG.maxIter, diagnostics?: SolverDiagnostics,
 ): Session[] {
-  const started = performance.now();
   const guidance = buildConstraintGuidance(ctx);
   const personIds = [...ctx.personKeywords.keys()];
-  const totalCost = (sessions: Session[]) =>
-    computeCost(sessions, ctx, guidance, historicalSessions) +
-    (hammingRef ? hammingWeight * hammingDistance(sessions, hammingRef) : 0);
-
-  let current = deepCloneSessions(initial);
-  let currentCost = totalCost(current);
-  let best = deepCloneSessions(current);
-  let bestCost = currentCost;
-  let stagnantIterations = 0;
-  let iterations = 0;
-  let accepted = 0;
-  let invalidNeighbors = 0;
-  let unchangedNeighbors = 0;
-
-  for (let iter = 0; iter < maxIter; iter++) {
-    const temp = ANNEALING_CONFIG.initialTemp * ANNEALING_CONFIG.coolingRate ** iter;
-    let neighbor: Session[] | null = null;
-    const currentKey = JSON.stringify(current);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      iterations++;
-      const candidate = mutateQuestionersOnly(current, personIds, ctx, guidance, config, unavailMap);
-      if (validateAssignmentsWithContext(candidate, ctx, guidance, unavailMap).length) { invalidNeighbors++; continue; }
-      if (JSON.stringify(candidate) === currentKey) { unchangedNeighbors++; continue; }
-      neighbor = candidate;
-      break;
-    }
-    if (!neighbor) { stagnantIterations++; continue; }
-    const neighborCost = totalCost(neighbor);
-    const delta = neighborCost - currentCost;
-
-    if (delta < 0 || Math.random() < Math.exp(-delta / temp)) {
-      accepted++;
-      current = neighbor;
-      currentCost = neighborCost;
-      if (currentCost < bestCost) {
-        best = deepCloneSessions(current);
-        bestCost = currentCost;
-        stagnantIterations = 0;
-      } else {
-        stagnantIterations += 1;
-      }
-    } else {
-      stagnantIterations += 1;
-    }
-
-    if (stagnantIterations >= ANNEALING_CONFIG.maxStagnantIter) {
-      break;
-    }
-  }
-
-  if (diagnostics) Object.assign(diagnostics, { initialCost: totalCost(initial), finalCost: bestCost,
-    iterations, accepted, invalidNeighbors, unchangedNeighbors,
-    durationMs: Math.round(performance.now() - started), restarts: 1 });
-
-  return best;
+  const random = Math.random;
+  return runAnnealing({
+    initial, cost: ctx, guidance, historicalSessions, unavailable: unavailMap,
+    reference: hammingRef, referenceWeight: hammingWeight, random,
+    maxIterations: maxIter, diagnostics,
+    propose: sessions => mutateQuestionersOnly({
+      sessions, personIds, cost: ctx, guidance, historicalSessions, config,
+      unavailable: unavailMap, random,
+      pickQuestioners: buildQuestionerPicker(personIds, ctx, guidance, unavailMap, [], undefined, random),
+    }),
+  });
 }
 
 export const annealingSolver: ScheduleSolver = {
@@ -873,9 +430,13 @@ export const annealingSolver: ScheduleSolver = {
       const initial = buildRandomSchedule(personIds, openDates, config, ctx, [], unavailMap);
       const run = {} as SolverDiagnostics;
       const optimized = simulatedAnnealing(initial, ctx, [], config, null, 0, unavailMap, ANNEALING_CONFIG.maxIter, run);
+      const repairStarted = performance.now();
+      const repaired = repairQuestioners(optimized, [], ctx, guidance, unavailMap, Math.random);
+      run.durationMs += Math.round(performance.now() - repairStarted);
+      const cost = computeCost(repaired, ctx, guidance);
+      run.finalCost = cost;
       diagnostics.push(run);
-      const cost = computeCost(optimized, ctx, guidance);
-      if (cost < bestCost) { best = optimized; bestCost = cost; }
+      if (cost < bestCost) { best = repaired; bestCost = cost; }
     }
     const result = best ?? [];
     const violations = validateScheduleAssignments(result, input);
@@ -925,7 +486,7 @@ export const annealingSolver: ScheduleSolver = {
       if (activeSessions.length === 0) return frozenSessions;
       const unavailMap = buildUnavailMap(unavailabilities, config.id, input.persons, activeSessions.map(session => session.date));
       const run = {} as SolverDiagnostics;
-      const initial = rebuildQuestionersForSessions(activeSessions, personIds, ctx, config, unavailMap);
+      const initial = rebuildQuestionersForSessions(activeSessions, personIds, ctx, config, unavailMap, frozenSessions);
       const optimized = simulatedAnnealingQuestionersOnly(
         initial,
         ctx,
@@ -937,11 +498,15 @@ export const annealingSolver: ScheduleSolver = {
         ANNEALING_CONFIG.maxIter,
         run,
       );
+      const repairStarted = performance.now();
+      const repaired = repairQuestioners(optimized, frozenSessions, ctx, buildConstraintGuidance(ctx), unavailMap, Math.random);
+      run.durationMs += Math.round(performance.now() - repairStarted);
+      run.finalCost = computeCost(repaired, ctx, buildConstraintGuidance(ctx), frozenSessions);
 
-      const violations = validateScheduleAssignments(optimized, input);
+      const violations = validateScheduleAssignments(repaired, input);
       if (violations.length) throw new Error(violations[0]);
       if (input.diagnostics) Object.assign(input.diagnostics, run);
-      return frozenSessions.concat(optimized);
+      return frozenSessions.concat(repaired);
     }
 
     const mutableDates = generateSessionDates({ ...config, startDate: changeDate });
@@ -967,10 +532,14 @@ export const annealingSolver: ScheduleSolver = {
         initial, ctx, frozenSessions, config,
         hammingRef, ANNEALING_CONFIG.hammingWeight, unavailMap, ANNEALING_CONFIG.maxIter, run,
       );
+      const repairStarted = performance.now();
+      const repaired = repairQuestioners(optimized, frozenSessions, ctx, guidance, unavailMap, Math.random);
+      run.durationMs += Math.round(performance.now() - repairStarted);
+      const cost = computeCost(repaired, ctx, guidance, frozenSessions)
+        + (hammingRef ? ANNEALING_CONFIG.hammingWeight * hammingDistance(repaired, hammingRef) : 0);
+      run.finalCost = cost;
       diagnostics.push(run);
-      const cost = computeCost(optimized, ctx, guidance, frozenSessions)
-        + (hammingRef ? ANNEALING_CONFIG.hammingWeight * hammingDistance(optimized, hammingRef) : 0);
-      if (cost < bestCost) { best = optimized; bestCost = cost; }
+      if (cost < bestCost) { best = repaired; bestCost = cost; }
     }
     const result = best ?? [];
     const violations = validateScheduleAssignments(result, input);

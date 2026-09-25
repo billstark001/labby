@@ -73,6 +73,13 @@ export interface ScheduleConfig {
     presenter?: Partial<GapBalancePolicy>;
     questioner?: Partial<GapBalancePolicy>;
   };
+  /** Independent, per-schedule controls for initial questioner assignment and targeted repair. */
+  questionerOptimization?: {
+    assignment?: Partial<QuestionerAssignmentPolicy>;
+    repair?: Partial<QuestionerRepairPolicy>;
+  };
+  /** Per-schedule objective weights; omitted fields use COST_WEIGHTS. */
+  costWeights?: Partial<ScheduleCostWeights>;
   startDate: string; // ISO date, first possible session
   endDate: string; // ISO date, last possible session
   /**
@@ -87,6 +94,40 @@ export interface ScheduleConfig {
   /** Arbitrary extension metadata. */
   metadata?: Record<string, unknown>;
   modifiedAt?: number;
+}
+
+export interface QuestionerAssignmentPolicy {
+  /** Chance to prefer a presenter/questioner pair used least often so far. */
+  noveltyChance: number;
+  /** Chance to prefer the least-loaded eligible questioner so far. */
+  balanceChance: number;
+}
+
+export interface QuestionerRepairPolicy {
+  /** Maximum targeted replacement/swap attempts after annealing. */
+  iterations: number;
+  /** Extra emphasis on repeated directed pairs during repair. */
+  pairWeight: number;
+  /** Extra emphasis on count imbalance during repair. */
+  countWeight: number;
+}
+
+export interface QuestionerOptimizationPolicy {
+  assignment: QuestionerAssignmentPolicy;
+  repair: QuestionerRepairPolicy;
+}
+
+export interface ScheduleCostWeights {
+  uniformity: number;
+  reciprocal: number;
+  questionerPair: number;
+  relevance: number;
+  presenterLoad: number;
+  questionerCount: number;
+  questionerGap: number;
+  totalRole: number;
+  invalidAssignment: number;
+  constraint: number;
 }
 
 export interface GapBalancePolicy {
@@ -148,7 +189,8 @@ export interface ScheduleMetrics {
   questionerPenalty: number;
   relevancePenalty: number;
   presenterLoadPenalty: number;
-  questionerLoadPenalty: number;
+  questionerCountPenalty: number;
+  questionerGapPenalty: number;
   totalRolePenalty: number;
   invalidAssignmentPenalty: number;
   constraintPenalty: number;

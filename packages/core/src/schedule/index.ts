@@ -1,11 +1,10 @@
 /**
  * Public API entry points for the Labby scheduling solver.
  *
- * Tunable constants are re-exported so callers can adjust them without
- * reaching into internal modules:
+ * Model defaults and search controls are re-exported here:
  *
  *   import { COST_WEIGHTS, MUTATION_WEIGHTS, ANNEALING_CONFIG } from './schedule/index.js';
- *   COST_WEIGHTS.presenterLoad = 8;   // penalize load imbalance more
+ *   config.costWeights = { presenterLoad: 12 }; // per-schedule override
  *   MUTATION_WEIGHTS.sessionRebuild = 0.3; // more large-jump mutations
  *   ANNEALING_CONFIG.maxIter = 10_000;
  */
@@ -38,9 +37,9 @@ export {
   mutatePresentations,
 } from './mutation.js';
 
-export { COST_WEIGHTS, DEFAULT_GAP_BALANCE } from './constraints.js';
+export { COST_WEIGHTS, DEFAULT_GAP_BALANCE, DEFAULT_QUESTIONER_OPTIMIZATION } from './constraints.js';
 export { buildCostContext, buildConstraintGuidance, noOverlapForbidden, validateScheduleAssignments } from './constraints.js';
-export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing.js';
+export { MUTATION_WEIGHTS, ANNEALING_CONFIG } from './annealing-strategies.js';
 export { solveConstrained } from './constrained.js';
 
 // ---------------------------------------------------------------------------
@@ -54,12 +53,13 @@ export { generateId, generateSessionDates, isWholeGroupClosure, validateUnavaila
 function metricSummary(key: keyof ScheduleMetrics, value: number): string {
   switch (key) {
     case 'totalCost': return `Overall objective value: ${value.toFixed(3)} (lower is better).`;
-    case 'uniformityPenalty': return `Presenter/questioner interval non-uniformity contributes ${value.toFixed(3)}.`;
+    case 'uniformityPenalty': return `Presenter interval non-uniformity contributes ${value.toFixed(3)}.`;
     case 'reciprocalPenalty': return `Same-session reciprocal pairs contribute ${value.toFixed(3)}.`;
     case 'questionerPenalty': return `Repeated questioner–presenter pairs contribute ${value.toFixed(3)}.`;
     case 'relevancePenalty': return `Similarity mismatch contributes ${value.toFixed(3)}.`;
     case 'presenterLoadPenalty': return `Presenter load imbalance variance is ${value.toFixed(3)}.`;
-    case 'questionerLoadPenalty': return `Questioner load imbalance variance is ${value.toFixed(3)}.`;
+    case 'questionerCountPenalty': return `Question count imbalance contributes ${value.toFixed(3)}.`;
+    case 'questionerGapPenalty': return `Question timing imbalance contributes ${value.toFixed(3)}.`;
     case 'totalRolePenalty': return `Overall role imbalance variance is ${value.toFixed(3)}.`;
     case 'invalidAssignmentPenalty': return `Hard assignment violations contribute ${value.toFixed(3)}.`;
     default: return `Constraint effects contribute ${value.toFixed(3)}.`;
@@ -73,7 +73,8 @@ export function explainScheduleMetrics(metrics: ScheduleMetrics): MetricExplanat
     'questionerPenalty',
     'relevancePenalty',
     'presenterLoadPenalty',
-    'questionerLoadPenalty',
+    'questionerCountPenalty',
+    'questionerGapPenalty',
     'totalRolePenalty',
     'invalidAssignmentPenalty',
     'constraintPenalty',
@@ -94,7 +95,7 @@ export function computeScheduleMetrics(
 ): ScheduleMetrics {
   const ctx = buildCostContext(input);
   const guidance = buildConstraintGuidance(ctx);
-  return toScheduleMetrics(computeCostBreakdown(plan.sessions, ctx, guidance, historicalSessions));
+  return toScheduleMetrics(computeCostBreakdown(plan.sessions, ctx, guidance, historicalSessions), ctx);
 }
 
 export function computeScheduleQuality(

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { Person, ScheduleConfig, Session, SolverInput } from '../src/types';
-import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, validateScheduleAssignments } from '../src/schedule/index';
-import { affinityPairWeight, noOverlapForbidden, personGapCost } from '../src/schedule/constraints';
+import { buildConstraintGuidance, buildCostContext, computeScheduleMetrics, computeScheduleQuality, COST_WEIGHTS, validateScheduleAssignments } from '../src/schedule/index';
+import { affinityPairWeight, noOverlapForbidden, personGapCost, weightedTotalCost } from '../src/schedule/constraints';
 
 const config: ScheduleConfig = {
   id: 'config', daysOfWeek: [1], timeRange: ['10:00', '11:00'],
@@ -19,6 +19,25 @@ const session = (date: string, pairs: Array<[string, string]>): Session => ({
 const metrics = (sessions: Session[], input: SolverInput = base) => computeScheduleMetrics({ id: 'plan', configId: config.id, createdAt: 0, sessions }, input);
 
 describe('schedule quality objective and tag selectors', () => {
+  test('every objective weight is configurable with default fallback', () => {
+    const terms = {
+      uniformityPenalty: 1, reciprocalPenalty: 1, questionerPenalty: 1,
+      relevancePenalty: 1, presenterLoadPenalty: 1, questionerCountPenalty: 1,
+      questionerGapPenalty: 1, totalRolePenalty: 1, invalidAssignmentPenalty: 1,
+      constraintPenalty: 1,
+    };
+    const defaults = buildCostContext(base).costWeights;
+    expect(defaults).toEqual(COST_WEIGHTS);
+    expect(Object.isFrozen(COST_WEIGHTS)).toBe(true);
+    for (const key of Object.keys(COST_WEIGHTS) as Array<keyof typeof COST_WEIGHTS>) {
+      const modified = buildCostContext({ ...base, config: { ...config, costWeights: { [key]: 0 } } }).costWeights;
+      expect(modified[key]).toBe(0);
+      expect(weightedTotalCost(terms, modified)).toBeCloseTo(weightedTotalCost(terms, defaults) - defaults[key]);
+    }
+    expect(buildCostContext({ ...base, config: { ...config, costWeights: { relevance: Number.NaN, questionerPair: -2 } } }).costWeights)
+      .toMatchObject({ relevance: COST_WEIGHTS.relevance, questionerPair: 0 });
+  });
+
   test('a one-week repeat is more costly than an even interval for the same person', () => {
     const close = [session('2026-01-05', [['a', 'c']]), session('2026-01-12', [['a', 'd']]), session('2026-02-23', [['b', 'c']])];
     const spread = [session('2026-01-05', [['a', 'c']]), session('2026-02-02', [['a', 'd']]), session('2026-02-23', [['b', 'c']])];

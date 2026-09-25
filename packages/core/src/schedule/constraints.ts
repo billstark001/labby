@@ -1,17 +1,20 @@
 /**
  * Cost function and constraint evaluation for the scheduling solver.
  *
- * All penalty weights are configurable by editing COST_WEIGHTS.
+ * COST_WEIGHTS defines immutable model defaults; schedules can override individual weights.
  */
 
 import { getPersonSimilarity } from '../nlp.js';
 import type {
   ScheduleMetrics,
+  ScheduleConfig,
   Session,
   SolverInput,
   ScheduleConstraint,
   SimilarityLookup,
   GapBalancePolicy,
+  QuestionerOptimizationPolicy,
+  ScheduleCostWeights,
 } from '../types.js';
 import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 
@@ -19,27 +22,62 @@ import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 // Configurable cost weights
 // ---------------------------------------------------------------------------
 
+const _f = <T>(value: T): Readonly<T> => Object.freeze(value);
+
 /**
  * Weight applied to each term of the objective function.
  * Increase a weight to penalize that term more heavily during optimization.
  */
-export const COST_WEIGHTS = {
+export const COST_WEIGHTS: Readonly<ScheduleCostWeights> = _f({
   uniformity: 12,
   reciprocal: 1,
-  /** Exponential penalty for repeated (questioner → presenter) pairs. */
-  questioner: 1,
+  questionerPair: 1,
   /** |sim(questioner, presenter) − r| summed over all pairs. */
   relevance: 0.8,
   /** Uniformity penalty of per-person presenter appearance counts. */
   presenterLoad: 8,
-  /** Uniformity penalty of per-person questioner appearance counts & gaps. */
-  questionerLoad: 8,
+  questionerCount: 8,
+  questionerGap: 8,
   /** Uniformity penalty of each person's total role count (presenter + questioner). */
   totalRole: 2,
   /** Hard penalty for self-questioning or duplicate questioners within one presentation. */
   invalidAssignment: 114514,
   constraint: 1,
-};
+});
+
+export const DEFAULT_QUESTIONER_OPTIMIZATION: Readonly<QuestionerOptimizationPolicy> = _f({
+  assignment: _f({ noveltyChance: 0, balanceChance: 0 }),
+  repair: _f({ iterations: 0, pairWeight: 0, countWeight: 0 }),
+});
+
+function resolveCostWeights(configured: ScheduleConfig['costWeights']): ScheduleCostWeights {
+  return Object.fromEntries((Object.keys(COST_WEIGHTS) as (keyof ScheduleCostWeights)[]).map(key => {
+    const value = configured?.[key];
+    const maximum = key === 'invalidAssignment' ? 1_000_000 : 100;
+    return [key, value !== undefined && Number.isFinite(value)
+      ? Math.min(maximum, Math.max(0, value)) : COST_WEIGHTS[key]];
+  })) as unknown as ScheduleCostWeights;
+}
+
+function resolveQuestionerOptimization(
+  value: ScheduleConfig['questionerOptimization'],
+): QuestionerOptimizationPolicy {
+  const bounded = (candidate: number | undefined, fallback: number, maximum: number) =>
+    candidate !== undefined && Number.isFinite(candidate)
+      ? Math.min(maximum, Math.max(0, candidate)) : fallback;
+  const defaults = DEFAULT_QUESTIONER_OPTIMIZATION;
+  return {
+    assignment: {
+      noveltyChance: bounded(value?.assignment?.noveltyChance, defaults.assignment.noveltyChance, 1),
+      balanceChance: bounded(value?.assignment?.balanceChance, defaults.assignment.balanceChance, 1),
+    },
+    repair: {
+      iterations: Math.floor(bounded(value?.repair?.iterations, defaults.repair.iterations, 500)),
+      pairWeight: bounded(value?.repair?.pairWeight, defaults.repair.pairWeight, 50),
+      countWeight: bounded(value?.repair?.countWeight, defaults.repair.countWeight, 50),
+    },
+  };
+}
 
 export const DEFAULT_GAP_BALANCE = {
   presenter: { shortGapRatio: 0.8, shortGapWeight: 20, spreadWeight: 4 },
@@ -69,6 +107,8 @@ export interface CostContext {
   reciprocalPreference: 'forbid' | 'discourage' | 'neutral' | 'encourage';
   constraints?: ScheduleConstraint[];
   gapBalance: Record<'presenter' | 'questioner', GapBalancePolicy>;
+  questionerOptimization: QuestionerOptimizationPolicy;
+  costWeights: ScheduleCostWeights;
 }
 
 export interface CostBreakdown {
@@ -77,7 +117,8 @@ export interface CostBreakdown {
   questionerPenalty: number;
   relevancePenalty: number;
   presenterLoadPenalty: number;
-  questionerLoadPenalty: number;
+  questionerCountPenalty: number;
+  questionerGapPenalty: number;
   totalRolePenalty: number;
   invalidAssignmentPenalty: number;
   constraintPenalty: number;
@@ -379,7 +420,7 @@ export function computeCostBreakdown(
 
         if (q === pres.presenterId) invalidAssignmentPenalty += 1;
         if (seen.has(q)) invalidAssignmentPenalty += 0.5;
-        if (noOverlapForbidden(pres.presenterId, q, guidance)) constraintPenalty += COST_WEIGHTS.invalidAssignment;
+        if (noOverlapForbidden(pres.presenterId, q, guidance)) constraintPenalty += ctx.costWeights.invalidAssignment;
         for (const c of guidance.affinity) {
           if (pairMatches(c, pres.presenterId, q)) constraintPenalty -= Math.log(Math.max(0.01, c.boost)) * 4;
         }
@@ -396,7 +437,7 @@ export function computeCostBreakdown(
         const [a, b] = pair.split('|');
         if (a! < b! && directedPairs.has(`${b}|${a}`)) {
           reciprocalPenalty += ctx.reciprocalPreference === 'forbid'
-            ? COST_WEIGHTS.invalidAssignment
+            ? ctx.costWeights.invalidAssignment
             : ctx.reciprocalPreference === 'discourage' ? 10 : -10;
         }
       }
@@ -409,7 +450,8 @@ export function computeCostBreakdown(
   // 3. Uniformity penalty
   const uniformityPenaltyValue = perPersonGapPenalty(presenterIndices, dateDays, personIds, ctx.gapBalance.presenter);
   const presenterLoadPenalty = uniformityPenalty(presenterAllCounts);
-  const questionerLoadPenalty = uniformityPenalty(questionerAllCounts) + perPersonGapPenalty(questionerIndices, dateDays, personIds, ctx.gapBalance.questioner);
+  const questionerCountPenalty = uniformityPenalty(questionerAllCounts);
+  const questionerGapPenalty = perPersonGapPenalty(questionerIndices, dateDays, personIds, ctx.gapBalance.questioner);
 
   // 4. Domain relevance – |sim(q, presenter) − r|
   let relevancePenalty = 0;
@@ -447,29 +489,34 @@ export function computeCostBreakdown(
     questionerPenalty,
     relevancePenalty,
     presenterLoadPenalty,
-    questionerLoadPenalty,
+    questionerCountPenalty,
+    questionerGapPenalty,
     totalRolePenalty,
     invalidAssignmentPenalty,
     constraintPenalty,
   };
 }
 
-export function weightedTotalCost(breakdown: CostBreakdown): number {
+export function weightedTotalCost(
+  breakdown: CostBreakdown,
+  weights: ScheduleCostWeights = COST_WEIGHTS,
+): number {
   return (
-    breakdown.uniformityPenalty * COST_WEIGHTS.uniformity
-    + breakdown.reciprocalPenalty * COST_WEIGHTS.reciprocal
-    + breakdown.questionerPenalty * COST_WEIGHTS.questioner
-    + breakdown.relevancePenalty * COST_WEIGHTS.relevance
-    + breakdown.presenterLoadPenalty * COST_WEIGHTS.presenterLoad
-    + breakdown.questionerLoadPenalty * COST_WEIGHTS.questionerLoad
-    + breakdown.totalRolePenalty * COST_WEIGHTS.totalRole
-    + breakdown.invalidAssignmentPenalty * COST_WEIGHTS.invalidAssignment
-    + breakdown.constraintPenalty * COST_WEIGHTS.constraint
+    breakdown.uniformityPenalty * weights.uniformity
+    + breakdown.reciprocalPenalty * weights.reciprocal
+    + breakdown.questionerPenalty * weights.questionerPair
+    + breakdown.relevancePenalty * weights.relevance
+    + breakdown.presenterLoadPenalty * weights.presenterLoad
+    + breakdown.questionerCountPenalty * weights.questionerCount
+    + breakdown.questionerGapPenalty * weights.questionerGap
+    + breakdown.totalRolePenalty * weights.totalRole
+    + breakdown.invalidAssignmentPenalty * weights.invalidAssignment
+    + breakdown.constraintPenalty * weights.constraint
   );
 }
 
-export function toScheduleMetrics(breakdown: CostBreakdown): ScheduleMetrics {
-  return { ...breakdown, totalCost: weightedTotalCost(breakdown) };
+export function toScheduleMetrics(breakdown: CostBreakdown, ctx: CostContext): ScheduleMetrics {
+  return { ...breakdown, totalCost: weightedTotalCost(breakdown, ctx.costWeights) };
 }
 
 export function buildCostContext(input: SolverInput): CostContext {
@@ -485,6 +532,8 @@ export function buildCostContext(input: SolverInput): CostContext {
       presenter: resolveGapBalance(input.config.gapBalance?.presenter, DEFAULT_GAP_BALANCE.presenter),
       questioner: resolveGapBalance(input.config.gapBalance?.questioner, DEFAULT_GAP_BALANCE.questioner),
     },
+    questionerOptimization: resolveQuestionerOptimization(input.config.questionerOptimization),
+    costWeights: resolveCostWeights(input.config.costWeights),
   };
 }
 
@@ -494,7 +543,10 @@ export function computeCost(
   guidance: ConstraintGuidance,
   historicalSessions: Session[] = [],
 ): number {
-  return weightedTotalCost(computeCostBreakdown(sessions, ctx, guidance, historicalSessions));
+  return weightedTotalCost(
+    computeCostBreakdown(sessions, ctx, guidance, historicalSessions),
+    ctx.costWeights,
+  );
 }
 
 /** Validate the hard assignment rules against the people and constraints in a solve. */

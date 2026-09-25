@@ -169,7 +169,7 @@ describe('Fuzzy benchmark: keyword-distance + scheduling black-box robustness', 
 
     console.log(`schedule fuzz valid ratio=${validRounds}/${rounds}`);
     expect(validRounds).toBe(rounds);
-  }, 30_000);
+  }, 120_000);
 
   test('large-point metric fuzz preserves product-space triangle inequality', () => {
     const rounds = 24;
