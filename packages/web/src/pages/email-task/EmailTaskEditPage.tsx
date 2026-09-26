@@ -1,8 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { markdown } from '@codemirror/lang-markdown';
 import {
   DEFAULT_TEMPLATE_PRESETS,
   EMAIL_TASK_TIMEZONE_SCHEDULE,
@@ -37,6 +33,7 @@ import { useAsyncResource } from '@/lib/use-async-resource';
 import { usePendingAction } from '@/lib/use-pending-action';
 import * as s from '@/styles/components.css';
 import { AttachmentSettingsDialog, type EmailAttachmentType } from './AttachmentSettingsDialog';
+import { CodeMirrorEditor } from './CodeMirrorEditor';
 
 const DAY_OPTIONS = [
   { value: 0, label: 'Sun' },
@@ -47,69 +44,6 @@ const DAY_OPTIONS = [
   { value: 5, label: 'Fri' },
   { value: 6, label: 'Sat' },
 ];
-
-interface CodeMirrorEditorProps {
-  value: string;
-  onChange: (value: string) => void;
-}
-
-function CodeMirrorEditor({ value, onChange }: CodeMirrorEditorProps) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const externalUpdate = useRef(false);
-
-  useEffect(() => {
-    if (!hostRef.current) return;
-    const view = new EditorView({
-      parent: hostRef.current,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          lineNumbers(),
-          history(),
-          markdown(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
-          EditorView.theme({
-            '&': {
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              minHeight: '260px',
-              fontSize: '13px',
-            },
-            '.cm-content': {
-              minHeight: '240px',
-            },
-          }),
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged && !externalUpdate.current) {
-              onChange(update.state.doc.toString());
-            }
-          }),
-        ],
-      }),
-    });
-    viewRef.current = view;
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    const currentDoc = view.state.doc.toString();
-    if (currentDoc === value) return;
-    externalUpdate.current = true;
-    try {
-      view.dispatch({ changes: { from: 0, to: currentDoc.length, insert: value } });
-    } finally {
-      externalUpdate.current = false;
-    }
-  }, [value]);
-
-  return <div ref={hostRef} />;
-}
 
 function parseEmails(input: string): string[] {
   return input
