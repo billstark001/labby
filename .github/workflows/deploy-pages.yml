@@ -38,7 +38,7 @@ jobs:
       - name: Build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/
-        run: pnpm --filter @labby/web build:frontend
+        run: pnpm build:web
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
