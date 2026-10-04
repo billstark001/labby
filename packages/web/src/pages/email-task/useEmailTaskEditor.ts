@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useForm, useSelector } from '@tanstack/preact-form';
 import {
-  DEFAULT_TEMPLATE_PRESETS,
   EMAIL_TASK_TIMEZONE_SCHEDULE,
   EMAIL_TASK_TIMEZONE_SYSTEM,
   SYSTEM_DEFAULT_TIMEZONE,
@@ -14,9 +14,6 @@ import {
   type Person,
   type ScheduleConfig,
   type SchedulePlan,
-  type ScheduleDateGranularity,
-  type ScheduleIcsMode,
-  type TemplateFormat,
 } from '@labby/core';
 import { toast } from '@/components/ui';
 import { confirmDialog } from '@/components/ui/Dialog';
@@ -27,7 +24,7 @@ import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
 import { navigate } from '@/lib/router';
 import { usePendingAction } from '@/lib/use-pending-action';
-import type { EmailAttachmentType } from './AttachmentSettingsDialog';
+import { emptyEmailTaskFormValues, emailTaskFormValuesFromTask, type EmailTaskFormValues } from './emailTaskFormValues';
 
 export const DAY_OPTIONS = [
   { value: 0, label: 'Sun' },
@@ -78,24 +75,25 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   const [ready, setReady] = useState(false);
 
   const [selectedTaskId, setSelectedTaskId] = useState<string>(taskId ?? '');
-  const [configId, setConfigId] = useState('');
-  const [isDisabled, setIsDisabled] = useState(false);
-  const [selectedDays, setSelectedDays] = useState<number[]>([1, 3, 5]);
-  const [sendTime, setSendTime] = useState('09:00');
-  const [taskTimezone, setTaskTimezone] = useState(SYSTEM_DEFAULT_TIMEZONE);
+  const defaultValuesRef = useRef(task
+    ? emailTaskFormValuesFromTask(task, i18n.lang.value)
+    : emptyEmailTaskFormValues(configs[0]?.id ?? '', i18n.lang.value));
+  const form = useForm({
+    defaultValues: defaultValuesRef.current,
+  });
+  function resetToValues(nextValues: EmailTaskFormValues): void {
+    defaultValuesRef.current = nextValues;
+    form.reset(nextValues);
+  }
+  const values = useSelector(form.store, (state) => state.values);
+  const isDirty = useSelector(form.store, (state) => state.isDirty);
+  const {
+    configId, taskTimezone, templateText, templateFormat, injectionLanguage, dateGranularity,
+    subjectTemplate, senderNameTemplate, attachmentTypes, icsLinkMode, icsContentTemplate,
+    serveScheduleIcs,
+  } = values;
+
   const systemTimezone = initialSystemTimezone;
-  const [emailsText, setEmailsText] = useState('');
-  const [recentTimes, setRecentTimes] = useState(0);
-  const [senderNameTemplate, setSenderNameTemplate] = useState('');
-  const [subjectTemplate, setSubjectTemplate] = useState('');
-  const [templateText, setTemplateText] = useState('');
-  const [templateFormat, setTemplateFormat] = useState<TemplateFormat>('markdown');
-  const [injectionLanguage, setInjectionLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
-  const [dateGranularity, setDateGranularity] = useState<ScheduleDateGranularity>('date');
-  const [notes, setNotes] = useState('');
-  const [serveScheduleIcs, setServeScheduleIcs] = useState(false);
-  const [icsLinkMode, setIcsLinkMode] = useState<ScheduleIcsMode>('presenters');
-  const [icsContentTemplate, setIcsContentTemplate] = useState('');
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
   const [showIcsPreviewDialog, setShowIcsPreviewDialog] = useState(false);
   const [icsPreview, setIcsPreview] = useState({ text: '', error: '' });
@@ -108,11 +106,6 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   const [varDialogSource, setVarDialogSource] = useState<'email' | 'ics'>('email');
   const [showAttachmentDialog, setShowAttachmentDialog] = useState(false);
   const [docLanguage, setDocLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
-  const [isDirty, setIsDirty] = useState(false);
-  const [attachmentTypes, setAttachmentTypes] = useState<EmailAttachmentType[]>([
-    'schedule-semester-csv',
-    'schedule-semester-ics',
-  ]);
 
   const selectedConfig = useMemo(
     () => configs.find((item) => item.id === configId),
@@ -194,63 +187,12 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
 
   function applyTaskToForm(task: EmailTask): void {
     setSelectedTaskId(task.id);
-    setConfigId(task.configId);
-    setIsDisabled(task.disabled ?? false);
-    setSelectedDays(task.daysOfWeek);
-    setSendTime(task.sendTime ?? '09:00');
-    const timezoneSource = task.metadata?.timezoneSource;
-    if (timezoneSource === 'schedule') {
-      setTaskTimezone(EMAIL_TASK_TIMEZONE_SCHEDULE);
-    } else if (timezoneSource === 'system') {
-      setTaskTimezone(EMAIL_TASK_TIMEZONE_SYSTEM);
-    } else {
-      setTaskTimezone(task.timezone ?? (typeof task.metadata?.timezone === 'string' ? task.metadata.timezone : SYSTEM_DEFAULT_TIMEZONE));
-    }
-    setEmailsText(task.emails.join(', '));
-    setRecentTimes(task.recentTimes);
-    setSenderNameTemplate(task.senderNameTemplate ?? '');
-    setSubjectTemplate(task.subjectTemplate ?? '');
-    setTemplateText(task.templateText);
-    setTemplateFormat(((task.metadata?.format as TemplateFormat | undefined) ?? 'markdown'));
-    setInjectionLanguage(((task.metadata?.injectionLanguage as 'en' | 'zh-CN' | 'ja-JP' | undefined) ?? i18n.lang.value));
-    setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
-    setNotes(task.notes ?? '');
-    setServeScheduleIcs((task.metadata?.serveScheduleIcs as boolean | undefined) ?? false);
-    setIcsLinkMode(task.metadata?.icsLinkMode === 'meeting' ? 'meeting' : 'presenters');
-    setIcsContentTemplate(typeof task.metadata?.icsContentTemplate === 'string' ? task.metadata.icsContentTemplate : '');
-    const metadataAttachmentTypes = task.metadata?.attachmentTypes;
-    if (Array.isArray(metadataAttachmentTypes)) {
-      const nextTypes = metadataAttachmentTypes
-        .filter((item): item is string => typeof item === 'string')
-        .filter((item): item is EmailAttachmentType => item === 'schedule-semester-csv' || item === 'schedule-semester-ics');
-      setAttachmentTypes([...new Set(nextTypes)]);
-    } else {
-      setAttachmentTypes(['schedule-semester-csv', 'schedule-semester-ics']);
-    }
-    setIsDirty(false);
+    resetToValues(emailTaskFormValuesFromTask(task, i18n.lang.value));
   }
 
   function resetForm(nextConfigId?: string): void {
     setSelectedTaskId('');
-    setConfigId(nextConfigId ?? configs[0]?.id ?? '');
-    setIsDisabled(false);
-    setSelectedDays([1, 3, 5]);
-    setSendTime('09:00');
-    setTaskTimezone(SYSTEM_DEFAULT_TIMEZONE);
-    setEmailsText('');
-    setRecentTimes(0);
-    setSenderNameTemplate('');
-    setSubjectTemplate('');
-    setTemplateText(DEFAULT_TEMPLATE_PRESETS[0]?.content ?? '');
-    setTemplateFormat(DEFAULT_TEMPLATE_PRESETS[0]?.format ?? 'markdown');
-    setInjectionLanguage(i18n.lang.value);
-    setDateGranularity('date');
-    setNotes('');
-    setServeScheduleIcs(false);
-    setIcsLinkMode('presenters');
-    setIcsContentTemplate('');
-    setAttachmentTypes(['schedule-semester-csv', 'schedule-semester-ics']);
-    setIsDirty(false);
+    resetToValues(emptyEmailTaskFormValues(nextConfigId ?? configs[0]?.id ?? '', i18n.lang.value));
   }
 
   useEffect(() => {
@@ -280,7 +222,7 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
       window.history.pushState(null, '', e.oldURL);
       confirmDialog(t('unsavedChangesWarning'), '', () => {
         // User confirmed leaving - navigate to the new URL and mark clean
-        setIsDirty(false);
+        resetToValues(form.state.values);
         skipNextHashChangeRef.current = true;
         window.history.pushState(null, '', e.newURL);
       }, undefined, t('confirm'));
@@ -295,6 +237,11 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   }, [isDirty]);
 
   async function saveTask(): Promise<void> {
+    const {
+      configId, isDisabled, selectedDays, sendTime, taskTimezone, emailsText, recentTimes,
+      senderNameTemplate, subjectTemplate, templateText, templateFormat, injectionLanguage,
+      dateGranularity, notes, serveScheduleIcs, icsLinkMode, icsContentTemplate, attachmentTypes,
+    } = form.state.values;
     if (!configId) return;
     if (taskId && !await db.emailTasks.get(taskId)) {
       toast.error(t('emailTaskNotFound'));
@@ -309,7 +256,7 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
           ? 'default'
           : 'task';
     const explicitTimezone = timezoneSource === 'task' ? taskTimezone : undefined;
-    const task: EmailTask = {
+    const savedTask: EmailTask = {
       id: nextId,
       configId,
       disabled: isDisabled,
@@ -337,9 +284,9 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
         sendTime,
       },
     };
-    await db.emailTasks.put(task);
-    setCurrentTask(task);
-    setIsDirty(false);
+    await db.emailTasks.put(savedTask);
+    setCurrentTask(savedTask);
+    resetToValues(form.state.values);
     setSelectedTaskId(nextId);
     navigate(`/email-tasks/edit/${nextId}`);
   }
@@ -406,39 +353,34 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   async function toggleDisabled(): Promise<void> {
     const current = selectedTaskId ? await db.emailTasks.get(selectedTaskId) : undefined;
     if (!current) return;
-    await db.emailTasks.put({
-      ...current,
-      disabled: !current.disabled,
-      modifiedAt: Date.now(),
-    });
+    const nextDisabled = !current.disabled;
+    await db.emailTasks.put({ ...current, disabled: nextDisabled, modifiedAt: Date.now() });
     setCurrentTask(await db.emailTasks.get(selectedTaskId));
-    setIsDisabled((prev) => !prev);
+    if (form.state.isDirty) form.setFieldValue('isDisabled', nextDisabled);
+    else resetToValues({ ...form.state.values, isDisabled: nextDisabled });
   }
 
   function toggleDay(day: number): void {
-    setIsDirty(true);
-    setSelectedDays((prev) => prev.includes(day)
-      ? prev.filter((value) => value !== day)
-      : [...prev, day].sort((a, b) => a - b));
+    form.setFieldValue('selectedDays', (previous) => previous.includes(day)
+      ? previous.filter((value) => value !== day)
+      : [...previous, day].sort((a, b) => a - b));
   }
 
   function insertScheduleTableSnippet(): void {
-    setIsDirty(true);
-    if (templateFormat === 'html') {
-      setTemplateText((prev) => `${prev}\n\n<table border="1" cellpadding="6" cellspacing="0">\n  <thead><tr><th>Date</th><th>Presenter</th><th>Questioners</th></tr></thead>\n  <tbody>\n    <tr><td>{{ now }}</td><td>{{ recipient }}</td><td>{{ summary }}</td></tr>\n  </tbody>\n</table>`.trim());
+    if (form.state.values.templateFormat === 'html') {
+      form.setFieldValue('templateText', (previous) => `${previous}\n\n<table border="1" cellpadding="6" cellspacing="0">\n  <thead><tr><th>Date</th><th>Presenter</th><th>Questioners</th></tr></thead>\n  <tbody>\n    <tr><td>{{ now }}</td><td>{{ recipient }}</td><td>{{ summary }}</td></tr>\n  </tbody>\n</table>`.trim());
       return;
     }
-    setTemplateText((prev) => `${prev}\n\n| Date | Presenter | Questioners |\n| --- | --- | --- |\n| {{ now }} | {{ recipient }} | {{ summary }} |`.trim());
+    form.setFieldValue('templateText', (previous) => `${previous}\n\n| Date | Presenter | Questioners |\n| --- | --- | --- |\n| {{ now }} | {{ recipient }} | {{ summary }} |`.trim());
   }
 
   function insertIcsLinkSnippet(): void {
-    setIsDirty(true);
     const label = t('emailTaskIcsLinkLabel');
-    if (templateFormat === 'html') {
-      setTemplateText((prev) => `${prev}\n\n<p><a href="{{ scheduleIcsUrl }}">${label}</a></p>`.trim());
+    if (form.state.values.templateFormat === 'html') {
+      form.setFieldValue('templateText', (previous) => `${previous}\n\n<p><a href="{{ scheduleIcsUrl }}">${label}</a></p>`.trim());
       return;
     }
-    setTemplateText((prev) => `${prev}\n\n[${label}]({{ scheduleIcsUrl }})`.trim());
+    form.setFieldValue('templateText', (previous) => `${previous}\n\n[${label}]({{ scheduleIcsUrl }})`.trim());
   }
 
   function openVariableReference(source: 'email' | 'ics'): void {
@@ -478,19 +420,14 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   }
 
   return {
-    t, action, capability, currentTask, ready, selectedTaskId, configId, setConfigId,
-    isDisabled, setIsDisabled, selectedDays, sendTime, setSendTime, taskTimezone, setTaskTimezone,
-    emailsText, setEmailsText, recentTimes, setRecentTimes, senderNameTemplate, setSenderNameTemplate,
-    subjectTemplate, setSubjectTemplate, templateText, setTemplateText, templateFormat, setTemplateFormat,
-    injectionLanguage, setInjectionLanguage, dateGranularity, setDateGranularity, notes, setNotes,
-    serveScheduleIcs, setServeScheduleIcs, icsLinkMode, setIcsLinkMode, icsContentTemplate, setIcsContentTemplate,
+    t, action, capability, currentTask, ready, selectedTaskId, form, values,
     showPreviewDialog, setShowPreviewDialog, showIcsPreviewDialog, setShowIcsPreviewDialog, icsPreview,
     sendNowOpen, setSendNowOpen, sendRecipientsText, setSendRecipientsText, sendingNow, sendNowError, setSendNowError,
     showDaysDialog, setShowDaysDialog, showVarDialog, setShowVarDialog, varDialogSource,
-    showAttachmentDialog, setShowAttachmentDialog, docLanguage, setDocLanguage, setIsDirty,
-    attachmentTypes, setAttachmentTypes, configs, resolvedPreviewTimezone, previewResult, previewSubject,
-    previewSenderName, attachmentSummary, applyTaskToForm, resetForm, saveTask, removeTask,
-    copyNextEmail, copyPublicIcsLink, triggerSendNow, toggleSkipNext, toggleDisabled, toggleDay,
-    insertScheduleTableSnippet, insertIcsLinkSnippet, openVariableReference, openIcsPreview,
+    showAttachmentDialog, setShowAttachmentDialog, docLanguage, setDocLanguage,
+    configs, resolvedPreviewTimezone, previewResult, previewSubject, previewSenderName, attachmentSummary,
+    applyTaskToForm, resetForm, saveTask, removeTask, copyNextEmail, copyPublicIcsLink,
+    triggerSendNow, toggleSkipNext, toggleDisabled, toggleDay, insertScheduleTableSnippet,
+    insertIcsLinkSnippet, openVariableReference, openIcsPreview,
   };
 }

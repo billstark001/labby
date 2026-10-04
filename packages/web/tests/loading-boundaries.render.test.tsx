@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 const source = vi.hoisted(() => ({
   taskGet: (_id: string): Promise<unknown> => Promise.resolve(undefined),
+  taskPut: (_task: unknown): Promise<void> => Promise.resolve(),
   personsList: (_query: unknown): Promise<unknown> => Promise.resolve({ items: [], total: 0 }),
   personBundle: (_ids: string[]): Promise<unknown> => Promise.resolve({
     keywords: [], personTags: [], referencedPersonIds: [],
@@ -20,7 +21,7 @@ const source = vi.hoisted(() => ({
 vi.mock('@/db', () => {
   const emptyStore = { list: async () => ({ items: [], total: 0 }) };
   const db = {
-    emailTasks: { get: (id: string) => source.taskGet(id), ...emptyStore },
+    emailTasks: { get: (id: string) => source.taskGet(id), put: (task: unknown) => source.taskPut(task), ...emptyStore },
     configs: { list: async () => ({ items: source.configs, total: source.configs.length }) },
     persons: { list: async () => ({ items: source.persons, total: source.persons.length }) },
     schedules: { list: async () => ({ items: source.schedules, total: source.schedules.length }) },
@@ -56,6 +57,7 @@ afterEach(async () => {
     container.remove();
   }
   source.taskGet = async () => undefined;
+  source.taskPut = async () => {};
   source.personsList = async () => ({ items: [], total: 0 });
   source.personBundle = async () => ({ keywords: [], personTags: [], referencedPersonIds: [] });
   source.keywords = [];
@@ -147,6 +149,42 @@ it('uses one stable task-enabled checkbox label with checked meaning enabled', a
   await act(() => checkbox.click());
   expect(checkbox.checked).toBe(true);
   expect(label.textContent).toBe(i18n.t('emailTaskEnabled'));
+});
+
+it('saves all ICS form values even when the public link is switched off', async () => {
+  source.taskGet = async () => ({
+    id: 'task-1', configId: 'config-1', daysOfWeek: [1], emails: [], recentTimes: 0,
+    templateText: 'hello', metadata: { serveScheduleIcs: true, icsContentTemplate: 'Old room' },
+  });
+  const saved: unknown[] = [];
+  source.taskPut = async (task) => { saved.push(task); };
+  const container = mount();
+  await act(() => render(<EmailTaskEditPage taskId="task-1" />, container));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  const mode = container.querySelector('#ics-link-mode') as HTMLSelectElement;
+  await act(() => { mode.value = 'meeting'; mode.dispatchEvent(new Event('change', { bubbles: true })); });
+  const editor = EditorView.findFromDOM(container.querySelector('.cm-editor')!)!;
+  await act(() => editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: 'New room' } }));
+  const icsLabel = [...container.querySelectorAll('label')].find(element => element.textContent === i18n.t('emailTaskServeScheduleIcs'))!;
+  await act(() => icsLabel.parentElement!.querySelector('input[type="checkbox"]')!.click());
+  const unsavedEvent = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(unsavedEvent);
+  expect(unsavedEvent.defaultPrevented).toBe(true);
+  await act(async () => {
+    [...container.querySelectorAll('button')].find(button => button.textContent === i18n.t('save'))!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toMatchObject({ metadata: {
+    serveScheduleIcs: false,
+    icsLinkMode: 'meeting',
+    icsContentTemplate: 'New room',
+  } });
+  const savedEvent = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(savedEvent);
+  expect(savedEvent.defaultPrevented).toBe(false);
 });
 
 it('opens a separate ICS preview and an ICS variable reference', async () => {

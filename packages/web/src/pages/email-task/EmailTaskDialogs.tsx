@@ -12,10 +12,11 @@ export function EmailTaskDialogs({ editor }: EmailTaskDialogProps) {
     t, action, sendNowOpen, setSendNowOpen, sendingNow, triggerSendNow, sendRecipientsText,
     setSendRecipientsText, sendNowError, showPreviewDialog, setShowPreviewDialog, previewResult,
     copyNextEmail, showIcsPreviewDialog, setShowIcsPreviewDialog, icsPreview, showDaysDialog,
-    setShowDaysDialog, selectedDays, toggleDay, showVarDialog, setShowVarDialog,
+    setShowDaysDialog, toggleDay, showVarDialog, setShowVarDialog,
     docLanguage, setDocLanguage, varDialogSource, showAttachmentDialog, setShowAttachmentDialog,
-    attachmentTypes, setAttachmentTypes, setIsDirty,
+    form, values,
   } = editor;
+  const { selectedDays, attachmentTypes } = values;
 
   return <>
       {sendNowOpen && <Dialog
@@ -131,8 +132,7 @@ export function EmailTaskDialogs({ editor }: EmailTaskDialogProps) {
           onClose={() => setShowAttachmentDialog(false)}
           selected={attachmentTypes}
           onChange={(next) => {
-            setIsDirty(true);
-            setAttachmentTypes(next);
+            form.setFieldValue('attachmentTypes', next);
           }}
         />
       )}
