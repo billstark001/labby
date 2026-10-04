@@ -27,6 +27,7 @@ export {
 
 export {
   EMAIL_TEMPLATE_VARIABLE_DOCS,
+  ICS_TEMPLATE_VARIABLE_DOCS,
   buildEmailTemplateScheduleVariables,
   buildScheduleRows,
   buildScheduleTableHtml,
@@ -42,6 +43,7 @@ export {
   type ScheduleRow,
   type ScheduleDateDisplayOptions,
   type ScheduleDateGranularity,
+  type ScheduleIcsMode,
   type ScheduleRowBuildOptions,
   type ScheduleTableLabels,
   type ScheduleExportMode,

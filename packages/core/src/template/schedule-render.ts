@@ -1,5 +1,6 @@
 import type { Person, ScheduleConfig, SchedulePlan } from '../types.js';
 import { getEnvironmentTimeZone, getTimeZoneOffsetMinutes, normalizeTimeZone } from '../timezone.js';
+import { renderTemplate } from './renderer.js';
 
 export interface ScheduleTableLabels {
   date: string;
@@ -10,6 +11,7 @@ export interface ScheduleTableLabels {
 export type ScheduleExportMode = 'semester' | 'window' | 'once';
 export type ScheduleWindowUnit = 'week' | 'month' | 'quarter';
 export type ScheduleDateGranularity = 'date' | 'date-time' | 'month-day' | 'month-day-time';
+export type ScheduleIcsMode = 'presenters' | 'meeting';
 
 export interface ScheduleDateDisplayOptions {
   locale?: string;
@@ -53,6 +55,36 @@ export interface EmailTemplateVariableDoc {
     'ja-JP': string;
   };
 }
+
+export const ICS_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
+  { name: 'sessionDate', type: 'string', descriptions: {
+    en: 'Meeting date in YYYY-MM-DD format.', 'zh-CN': '组会日期，格式为 YYYY-MM-DD。', 'ja-JP': 'ミーティングの日付（YYYY-MM-DD）。',
+  } },
+  { name: 'sessionStartTime', type: 'string', descriptions: {
+    en: 'Meeting start time in the schedule timezone.', 'zh-CN': '排班时区中的组会开始时间。', 'ja-JP': 'スケジュールのタイムゾーンでの開始時刻。',
+  } },
+  { name: 'sessionEndTime', type: 'string', descriptions: {
+    en: 'Meeting end time in the schedule timezone.', 'zh-CN': '排班时区中的组会结束时间。', 'ja-JP': 'スケジュールのタイムゾーンでの終了時刻。',
+  } },
+  { name: 'eventStart', type: 'string', descriptions: {
+    en: 'This ICS event start as a UTC ISO timestamp.', 'zh-CN': '当前 ICS 事件的 UTC ISO 开始时间。', 'ja-JP': 'この ICS イベントの UTC ISO 開始日時。',
+  } },
+  { name: 'eventEnd', type: 'string', descriptions: {
+    en: 'This ICS event end as a UTC ISO timestamp.', 'zh-CN': '当前 ICS 事件的 UTC ISO 结束时间。', 'ja-JP': 'この ICS イベントの UTC ISO 終了日時。',
+  } },
+  { name: 'timeZone', type: 'string', descriptions: {
+    en: 'Resolved schedule timezone.', 'zh-CN': '最终采用的排班时区。', 'ja-JP': '確定したスケジュールのタイムゾーン。',
+  } },
+  { name: 'presenter', type: 'string', descriptions: {
+    en: 'Current presenter name; empty in meeting mode.', 'zh-CN': '当前发表者姓名；组会模式下为空。', 'ja-JP': '現在の発表者名。ミーティングモードでは空文字列。',
+  } },
+  { name: 'presenters', type: 'string[]', descriptions: {
+    en: 'Names of all presenters in this meeting.', 'zh-CN': '本场组会中所有发表者的姓名。', 'ja-JP': 'このミーティングの全発表者名。',
+  } },
+  { name: 'questioners', type: 'string[]', descriptions: {
+    en: 'Current presenter’s questioners, or all unique questioners in meeting mode.', 'zh-CN': '当前发表者的提问者；组会模式下为所有不重复的提问者。', 'ja-JP': '現在の発表者の質問者。ミーティングモードでは重複のない全質問者。',
+  } },
+];
 
 export interface BuildEmailTemplateScheduleVariablesOptions {
   plan?: SchedulePlan | null;
@@ -342,13 +374,17 @@ export function buildScheduleCsvText(rows: ScheduleRow[]): string {
   return lines.join('\n');
 }
 
-/** Format a date + time as iCalendar DATE-TIME. */
-function icsDateTime(dateStr: string, timeStr: string, timeZone: string): string {
+/** Convert a schedule-local date and time to a UTC instant. */
+function icsInstant(dateStr: string, timeStr: string, timeZone: string): number {
   const localAsUtc = Date.parse(`${dateStr}T${timeStr}:00Z`);
   let offset = getTimeZoneOffsetMinutes(timeZone, new Date(localAsUtc)) ?? 0;
   let instant = localAsUtc - offset * 60_000;
   offset = getTimeZoneOffsetMinutes(timeZone, new Date(instant)) ?? offset;
   instant = localAsUtc - offset * 60_000;
+  return instant;
+}
+
+function icsDateTime(instant: number): string {
   return `${new Date(instant).toISOString().slice(0, 19).replaceAll('-', '').replaceAll(':', '')}Z`;
 }
 
@@ -365,8 +401,8 @@ export function buildScheduleIcs(
   personMap: Map<string, Person>,
   displayName: (person: Person) => string,
   config: ScheduleConfig | undefined,
-  labels = { presenter: 'Presenter', questioners: 'Questioners' },
-  options: { timeZone?: string } = {},
+  labels: { presenter: string; questioners: string; meeting?: string } = { presenter: 'Presenter', questioners: 'Questioners' },
+  options: { timeZone?: string; mode?: ScheduleIcsMode; contentTemplate?: string; templateContext?: Record<string, unknown> } = {},
 ): string {
   const startTime = config?.timeRange[0] ?? '09:00';
   const endTime = config?.timeRange[1] ?? '10:00';
@@ -375,22 +411,56 @@ export function buildScheduleIcs(
 
   const events: string[] = [];
   for (const session of plan.sessions) {
-    for (const pres of session.presentations) {
+    const presentations = session.presentations.map((pres) => {
       const presenter = personMap.get(pres.presenterId);
-      const presenterName = presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId);
-      const questionerNames = pres.questionerIds.map((qid) => {
-        const q = personMap.get(qid);
-        return q ? displayName(q) : fallbackEntityId(qid);
-      });
-
-      const dtStart = icsDateTime(session.date, startTime, timeZone);
-      const endDate = endTime <= startTime
-        ? new Date(Date.parse(`${session.date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
-        : session.date;
-      const dtEnd = icsDateTime(endDate, endTime, timeZone);
-      const uid = `labby-${plan.id}-${pres.presenterId}-${session.date}@labby`;
-      const summary = `${labels.presenter}: ${presenterName}`;
-      const description = questionerNames.length > 0 ? `${labels.questioners}: ${questionerNames.join(', ')}` : '';
+      return {
+        ...pres,
+        presenterName: presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId),
+        questionerNames: pres.questionerIds.map((qid) => {
+          const questioner = personMap.get(qid);
+          return questioner ? displayName(questioner) : fallbackEntityId(qid);
+        }),
+      };
+    });
+    const endDate = endTime <= startTime
+      ? new Date(Date.parse(`${session.date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
+      : session.date;
+    const meetingStart = icsInstant(session.date, startTime, timeZone);
+    const meetingEnd = icsInstant(endDate, endTime, timeZone);
+    const durationMinutes = Math.max(1, Math.round((meetingEnd - meetingStart) / 60_000));
+    const mode = options.mode === 'meeting' ? 'meeting' : 'presenters';
+    const eventCount = mode === 'meeting' ? 1 : presentations.length;
+    for (let index = 0; index < eventCount; index++) {
+      const pres = mode === 'meeting' ? undefined : presentations[index];
+      // When a meeting is shorter than the presenter count, one-minute events must overlap.
+      const startMinute = mode === 'meeting' ? 0 : Math.min(Math.floor(durationMinutes * index / eventCount), durationMinutes - 1);
+      const endMinute = mode === 'meeting' ? durationMinutes : Math.max(startMinute + 1, Math.floor(durationMinutes * (index + 1) / eventCount));
+      const dtStart = icsDateTime(meetingStart + startMinute * 60_000);
+      const dtEnd = icsDateTime(meetingStart + endMinute * 60_000);
+      const uid = mode === 'meeting'
+        ? `labby-${plan.id}-meeting-${session.date}@labby`
+        : `labby-${plan.id}-${pres!.presenterId}-${session.date}@labby`;
+      const summary = pres ? `${labels.presenter}: ${pres.presenterName}` : (labels.meeting ?? 'Group meeting');
+      const defaultDescription = pres
+        ? (pres.questionerNames.length > 0 ? `${labels.questioners}: ${pres.questionerNames.join(', ')}` : '')
+        : `${labels.presenter}: ${presentations.map((item) => item.presenterName).join(', ')}`;
+      const templateContext = {
+        ...options.templateContext,
+        sessionDate: session.date,
+        sessionStartTime: startTime,
+        sessionEndTime: endTime,
+        eventStart: new Date(meetingStart + startMinute * 60_000).toISOString(),
+        eventEnd: new Date(meetingStart + endMinute * 60_000).toISOString(),
+        timeZone,
+        presenter: pres?.presenterName ?? '',
+        presenters: presentations.map((item) => item.presenterName),
+        questioners: pres?.questionerNames ?? [...new Set(presentations.flatMap((item) => item.questionerNames))],
+      };
+      const rendered = options.contentTemplate?.trim()
+        ? renderTemplate(options.contentTemplate, templateContext, { strict: true })
+        : undefined;
+      if (rendered?.errors.length) throw new Error(`Invalid ICS content template: ${rendered.errors[0]!.message}`);
+      const description = rendered ? rendered.output : defaultDescription;
 
       events.push([
         'BEGIN:VEVENT',
