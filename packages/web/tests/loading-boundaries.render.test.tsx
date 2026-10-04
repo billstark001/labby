@@ -1,6 +1,7 @@
 import 'preact/debug';
 import { render } from 'preact';
 import { act } from 'preact/test-utils';
+import { EditorView } from '@codemirror/view';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const source = vi.hoisted(() => ({
@@ -11,15 +12,18 @@ const source = vi.hoisted(() => ({
   }),
   settingsGet: (): Promise<unknown> => Promise.resolve({ timezone: 'UTC' }),
   keywords: [] as unknown[],
+  configs: [] as unknown[],
+  persons: [] as unknown[],
+  schedules: [] as unknown[],
 }));
 
 vi.mock('@/db', () => {
   const emptyStore = { list: async () => ({ items: [], total: 0 }) };
   const db = {
     emailTasks: { get: (id: string) => source.taskGet(id), ...emptyStore },
-    configs: emptyStore,
-    persons: emptyStore,
-    schedules: emptyStore,
+    configs: { list: async () => ({ items: source.configs, total: source.configs.length }) },
+    persons: { list: async () => ({ items: source.persons, total: source.persons.length }) },
+    schedules: { list: async () => ({ items: source.schedules, total: source.schedules.length }) },
     personTags: emptyStore,
     keywords: { list: async () => ({ items: source.keywords, total: source.keywords.length }) },
     systemSettings: { get: () => source.settingsGet() },
@@ -55,6 +59,9 @@ afterEach(async () => {
   source.personsList = async () => ({ items: [], total: 0 });
   source.personBundle = async () => ({ keywords: [], personTags: [], referencedPersonIds: [] });
   source.keywords = [];
+  source.configs = [];
+  source.persons = [];
+  source.schedules = [];
   source.settingsGet = async () => ({ timezone: 'UTC' });
 });
 
@@ -101,6 +108,70 @@ it('previews the same public ICS URL as the copy-link action', async () => {
 
   expect(container.textContent).toContain(`${window.location.origin}/public/email-tasks/task-1/schedule.ics`);
   expect(container.textContent).not.toContain('example.com/public/email-tasks');
+});
+
+it('shows ICS settings only while enabled and preserves the template across toggles', async () => {
+  source.taskGet = async () => ({
+    id: 'task-1', configId: 'config-1', daysOfWeek: [1], emails: [], recentTimes: 0,
+    templateText: 'hello', metadata: { serveScheduleIcs: true, icsContentTemplate: 'Zoom room' },
+  });
+  const container = mount();
+  await act(() => render(<EmailTaskEditPage taskId="task-1" />, container));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  const icsLabel = [...container.querySelectorAll('label')].find(element => element.textContent === i18n.t('emailTaskServeScheduleIcs'))!;
+  const checkbox = icsLabel.parentElement!.querySelector('input[type="checkbox"]')!;
+  expect(container.querySelector('#ics-link-mode')).not.toBeNull();
+  expect(EditorView.findFromDOM(container.querySelector('.cm-editor')!)?.state.doc.toString()).toBe('Zoom room');
+  expect([...container.querySelectorAll('button')].filter(button => button.textContent === i18n.t('emailTaskInsertIcsLink'))).toHaveLength(1);
+
+  await act(() => checkbox.click());
+  expect(container.querySelector('#ics-link-mode')).toBeNull();
+  await act(() => checkbox.click());
+  expect(container.querySelector('#ics-link-mode')).not.toBeNull();
+  expect(EditorView.findFromDOM(container.querySelector('.cm-editor')!)?.state.doc.toString()).toBe('Zoom room');
+});
+
+it('uses one stable task-enabled checkbox label with checked meaning enabled', async () => {
+  source.taskGet = async () => ({
+    id: 'task-1', configId: 'config-1', daysOfWeek: [1], emails: [], recentTimes: 0,
+    disabled: true, templateText: 'hello', metadata: {},
+  });
+  const container = mount();
+  await act(() => render(<EmailTaskEditPage taskId="task-1" />, container));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  const label = [...container.querySelectorAll('label')].find(element => element.textContent === i18n.t('emailTaskEnabled'))!;
+  const checkbox = label.querySelector('input[type="checkbox"]')!;
+  expect(checkbox.checked).toBe(false);
+  await act(() => checkbox.click());
+  expect(checkbox.checked).toBe(true);
+  expect(label.textContent).toBe(i18n.t('emailTaskEnabled'));
+});
+
+it('opens a separate ICS preview and an ICS variable reference', async () => {
+  source.taskGet = async () => ({
+    id: 'task-1', configId: 'config-1', daysOfWeek: [1], emails: [], recentTimes: 0,
+    templateText: 'hello', metadata: { serveScheduleIcs: true, icsContentTemplate: 'Join {{ sessionDate }}' },
+  });
+  source.configs = [{ id: 'config-1', daysOfWeek: [1], timeRange: ['09:00', '10:00'], timezone: 'Asia/Tokyo', metadata: {} }];
+  source.persons = [{ id: 'alice', name: 'Alice', metadata: {}, keywordIds: [] }];
+  source.schedules = [{ id: 'plan-1', configId: 'config-1', createdAt: Date.UTC(2026, 0, 1), sessions: [
+    { date: '2026-01-05', presentations: [{ presenterId: 'alice', questionerIds: [] }] },
+  ] }];
+  const container = mount();
+  await act(() => render(<EmailTaskEditPage taskId="task-1" />, container));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+
+  const preview = [...container.querySelectorAll('button')].find(button => button.textContent === i18n.t('emailTaskIcsPreview'))!;
+  await act(() => preview.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('DESCRIPTION:Join 2026-01-05');
+  await act(() => (document.querySelector('[role="dialog"] button[aria-label]') as HTMLButtonElement).click());
+
+  const icsEditorGroup = preview.closest('div[class]')?.parentElement;
+  const variables = [...(icsEditorGroup?.querySelectorAll('button') ?? [])].find(button => button.textContent === i18n.t('templateVariableReference'))!;
+  await act(() => variables.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('sessionDate');
 });
 
 it('waits for person relations before publishing a person row', async () => {

@@ -4,8 +4,10 @@ import {
   EMAIL_TASK_TIMEZONE_SCHEDULE,
   EMAIL_TASK_TIMEZONE_SYSTEM,
   EMAIL_TEMPLATE_VARIABLE_DOCS,
+  ICS_TEMPLATE_VARIABLE_DOCS,
   SYSTEM_DEFAULT_TIMEZONE,
   buildEmailTemplateScheduleVariables,
+  buildScheduleIcs,
   getEnvironmentTimeZone,
   normalizeTimeZone,
   renderTemplate,
@@ -15,6 +17,7 @@ import {
   type ScheduleConfig,
   type SchedulePlan,
   type ScheduleDateGranularity,
+  type ScheduleIcsMode,
   type TemplateFormat,
 } from '@labby/core';
 
@@ -116,13 +119,18 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
   const [dateGranularity, setDateGranularity] = useState<ScheduleDateGranularity>('date');
   const [notes, setNotes] = useState('');
   const [serveScheduleIcs, setServeScheduleIcs] = useState(false);
+  const [icsLinkMode, setIcsLinkMode] = useState<ScheduleIcsMode>('presenters');
+  const [icsContentTemplate, setIcsContentTemplate] = useState('');
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  const [showIcsPreviewDialog, setShowIcsPreviewDialog] = useState(false);
+  const [icsPreview, setIcsPreview] = useState({ text: '', error: '' });
   const [sendNowOpen, setSendNowOpen] = useState(false);
   const [sendRecipientsText, setSendRecipientsText] = useState('');
   const [sendingNow, setSendingNow] = useState(false);
   const [sendNowError, setSendNowError] = useState('');
   const [showDaysDialog, setShowDaysDialog] = useState(false);
   const [showVarDialog, setShowVarDialog] = useState(false);
+  const [varDialogSource, setVarDialogSource] = useState<'email' | 'ics'>('email');
   const [showAttachmentDialog, setShowAttachmentDialog] = useState(false);
   const [docLanguage, setDocLanguage] = useState<'en' | 'zh-CN' | 'ja-JP'>(i18n.lang.value);
   const [isDirty, setIsDirty] = useState(false);
@@ -249,6 +257,8 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
     setDateGranularity(((task.metadata?.dateGranularity as ScheduleDateGranularity | undefined) ?? 'date'));
     setNotes(task.notes ?? '');
     setServeScheduleIcs((task.metadata?.serveScheduleIcs as boolean | undefined) ?? false);
+    setIcsLinkMode(task.metadata?.icsLinkMode === 'meeting' ? 'meeting' : 'presenters');
+    setIcsContentTemplate(typeof task.metadata?.icsContentTemplate === 'string' ? task.metadata.icsContentTemplate : '');
     const metadataAttachmentTypes = task.metadata?.attachmentTypes;
     if (Array.isArray(metadataAttachmentTypes)) {
       const nextTypes = metadataAttachmentTypes
@@ -278,6 +288,8 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
     setDateGranularity('date');
     setNotes('');
     setServeScheduleIcs(false);
+    setIcsLinkMode('presenters');
+    setIcsContentTemplate('');
     setAttachmentTypes(['schedule-semester-csv', 'schedule-semester-ics']);
     setIsDirty(false);
   }
@@ -358,6 +370,8 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         dateGranularity,
         dateLocale: injectionLanguage,
         serveScheduleIcs,
+        icsLinkMode,
+        icsContentTemplate,
         attachmentTypes,
         timezone: explicitTimezone,
         timezoneSource,
@@ -468,6 +482,42 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
     setTemplateText((prev) => `${prev}\n\n[${label}]({{ scheduleIcsUrl }})`.trim());
   }
 
+  function openVariableReference(source: 'email' | 'ics'): void {
+    setVarDialogSource(source);
+    setDocLanguage(i18n.lang.value);
+    setShowVarDialog(true);
+  }
+
+  function openIcsPreview(): void {
+    if (!latestScheduleForConfig) {
+      setIcsPreview({ text: '', error: t('emailTaskIcsPreviewNoSchedule') });
+    } else {
+      try {
+        const personMap = new Map(persons.map((person) => [person.id, person]));
+        const labels = injectionLanguage === 'zh-CN'
+          ? { presenter: '主讲', questioners: '提问', meeting: '组会' }
+          : injectionLanguage === 'ja-JP'
+            ? { presenter: '発表者', questioners: '質問者', meeting: 'グループミーティング' }
+            : { presenter: 'Presenter', questioners: 'Questioners', meeting: 'Group meeting' };
+        const text = buildScheduleIcs(latestScheduleForConfig, personMap, (person) => person.name?.trim() || Object.values(person.names ?? {}).find((name) => name.trim()) || `ID:${person.id}`, selectedConfig, labels, {
+          timeZone: resolvedPreviewScheduleTimezone,
+          mode: icsLinkMode,
+          contentTemplate: icsContentTemplate,
+          templateContext: {
+            taskId: selectedTaskId || 'task-preview',
+            configId: configId || 'config-preview',
+            scheduleIcsUrl: serveScheduleIcs && selectedTaskId ? getPublicEmailTaskIcsUrl(selectedTaskId) : undefined,
+            ...injectedScheduleVariables,
+          },
+        });
+        setIcsPreview({ text, error: '' });
+      } catch (error) {
+        setIcsPreview({ text: '', error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    setShowIcsPreviewDialog(true);
+  }
+
   if (!ready) return <ContentSkeleton rows={8} />;
 
   return (
@@ -512,14 +562,14 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         </div>
 
         <div class={s.formGroup}>
-          <label class={s.label}>{t('disabled')}</label>
-          <label class={s.flexGapSm}>
+          <label class={s.checkboxRow}>
             <input
+              class={s.checkboxRowInput}
               type="checkbox"
-              checked={isDisabled}
-              onChange={(e) => { setIsDirty(true); setIsDisabled((e.target as HTMLInputElement).checked); }}
+              checked={!isDisabled}
+              onChange={(e) => { setIsDirty(true); setIsDisabled(!(e.target as HTMLInputElement).checked); }}
             />
-            <span class={`${s.text12} ${s.textMuted}`}>{isDisabled ? t('disabled') : t('enable')}</span>
+            <span class={s.label}>{t('emailTaskEnabled')}</span>
           </label>
         </div>
 
@@ -668,11 +718,28 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
             <Button variant="secondary" busy={action.pendingKey === 'copy-ics'} disabled={!selectedTaskId || !serveScheduleIcs || !capability.canAutoSend} onClick={() => void action.run('copy-ics', copyPublicIcsLink)}>
               {t('emailTaskCopyIcsLink')}
             </Button>
-            <Button variant="ghost" onClick={insertIcsLinkSnippet}>
-              {t('emailTaskInsertIcsLink')}
-            </Button>
           </div>
         </div>
+
+        {serveScheduleIcs && <>
+          <div class={s.formGroup}>
+            <label class={s.label} for="ics-link-mode">{t('emailTaskIcsLinkMode')}</label>
+            <select id="ics-link-mode" class={s.input} value={icsLinkMode} onChange={(e) => { setIsDirty(true); setIcsLinkMode((e.target as HTMLSelectElement).value as ScheduleIcsMode); }}>
+              <option value="presenters">{t('emailTaskIcsLinkModePresenters')}</option>
+              <option value="meeting">{t('emailTaskIcsLinkModeMeeting')}</option>
+            </select>
+          </div>
+
+          <div class={s.formGroup}>
+            <label class={s.label}>{t('emailTaskIcsContentTemplate')}</label>
+            <CodeMirrorEditor value={icsContentTemplate} onChange={(value) => { setIsDirty(true); setIcsContentTemplate(value); }} />
+            <div class={`${s.text12} ${s.textMuted}`}>{t('emailTaskIcsContentTemplateHint')}</div>
+            <div class={s.flexGapSm}>
+              <Button variant="secondary" onClick={openIcsPreview}>{t('emailTaskIcsPreview')}</Button>
+              <Button variant="ghost" onClick={() => openVariableReference('ics')}>{t('templateVariableReference')}</Button>
+            </div>
+          </div>
+        </>}
 
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskAttachments')}</label>
@@ -699,7 +766,7 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
           <div class={s.flexGapSm}>
             <Button variant="ghost" onClick={insertScheduleTableSnippet}>{t('insertScheduleTableTemplate')}</Button>
             <Button variant="ghost" onClick={insertIcsLinkSnippet}>{t('emailTaskInsertIcsLink')}</Button>
-            <Button variant="ghost" onClick={() => { setDocLanguage(i18n.lang.value); setShowVarDialog(true); }}>
+            <Button variant="ghost" onClick={() => openVariableReference('email')}>
               {t('templateVariableReference')}
             </Button>
           </div>
@@ -775,6 +842,17 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
         </Dialog>
       )}
 
+      {showIcsPreviewDialog && (
+        <Dialog open={true} onClose={() => setShowIcsPreviewDialog(false)} title={t('emailTaskIcsPreview')}>
+          {icsPreview.error
+            ? <p role="alert" class={s.textDanger}>{icsPreview.error}</p>
+            : <div class={s.card}><pre class={s.preWrap}>{icsPreview.text}</pre></div>}
+          <div class={s.flexGapSm}>
+            <Button variant="secondary" onClick={() => setShowIcsPreviewDialog(false)}>{t('close')}</Button>
+          </div>
+        </Dialog>
+      )}
+
       {showDaysDialog && (
         <Dialog open={true} onClose={() => setShowDaysDialog(false)} title={t('selectWeekdays')}>
           <div class={s.formGroup}>
@@ -816,7 +894,12 @@ function EmailTaskEditor({ taskId, task, configs, persons, schedules, systemTime
               </tr>
             </thead>
             <tbody>
-              {EMAIL_TEMPLATE_VARIABLE_DOCS.map((item) => (
+              {(varDialogSource === 'ics'
+                ? [
+                  ...ICS_TEMPLATE_VARIABLE_DOCS,
+                  ...EMAIL_TEMPLATE_VARIABLE_DOCS.filter((item) => item.name === 'taskId' || item.name === 'configId' || item.name === 'scheduleIcsUrl' || item.name.startsWith('schedule')),
+                ]
+                : EMAIL_TEMPLATE_VARIABLE_DOCS).map((item) => (
                 <tr key={item.name}>
                   <td class={s.td}>{item.name}</td>
                   <td class={s.td}>{item.type}</td>

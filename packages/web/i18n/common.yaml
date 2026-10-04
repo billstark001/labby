@@ -1477,6 +1477,11 @@ emailTaskConfig:
   zh-CN: 配置 ID
   ja-JP: 設定 ID
 
+emailTaskEnabled:
+  en: Enable this email task
+  zh-CN: 启用此邮件任务
+  ja-JP: このメールタスクを有効にする
+
 emailTaskDays:
   en: Days of Week (0-6, comma-separated)
   zh-CN: 星期（0-6，逗号分隔）
@@ -1511,6 +1516,41 @@ emailTaskServeScheduleIcsHint:
   en: Expose this task's latest schedule as a public ICS endpoint when server env allows it.
   zh-CN: 当服务端环境允许时，将该任务最新排班公开为 ICS 端点。
   ja-JP: サーバー環境で許可されている場合、このタスクの最新スケジュールを公開 ICS エンドポイントとして公開します。
+
+emailTaskIcsLinkMode:
+  en: ICS link mode
+  zh-CN: ICS 链接模式
+  ja-JP: ICS リンクモード
+
+emailTaskIcsLinkModePresenters:
+  en: Show all presenters
+  zh-CN: 展示所有演讲者
+  ja-JP: すべての発表者を表示
+
+emailTaskIcsLinkModeMeeting:
+  en: Show group meeting only
+  zh-CN: 仅展示组会
+  ja-JP: グループミーティングのみ表示
+
+emailTaskIcsContentTemplate:
+  en: ICS event content
+  zh-CN: ICS 事件内容
+  ja-JP: ICS イベント内容
+
+emailTaskIcsContentTemplateHint:
+  en: "DESCRIPTION template for both modes. Use {{ presenter }}, {{ presenters }}, {{ questioners }}, {{ sessionDate }}, {{ eventStart }}, {{ eventEnd }}, and email schedule variables. Leave empty for the default description."
+  zh-CN: "两种模式共用的 DESCRIPTION 模板。可使用 {{ presenter }}、{{ presenters }}、{{ questioners }}、{{ sessionDate }}、{{ eventStart }}、{{ eventEnd }} 和邮件排班变量。留空则使用默认内容。"
+  ja-JP: "両モード共通の DESCRIPTION テンプレート。{{ presenter }}、{{ presenters }}、{{ questioners }}、{{ sessionDate }}、{{ eventStart }}、{{ eventEnd }} とメールのスケジュール変数を使用できます。空欄の場合は既定の内容を使用します。"
+
+emailTaskIcsPreview:
+  en: Preview ICS
+  zh-CN: 预览 ICS
+  ja-JP: ICS をプレビュー
+
+emailTaskIcsPreviewNoSchedule:
+  en: Generate a schedule for this configuration before previewing its ICS.
+  zh-CN: 请先为此配置生成排班，再预览 ICS。
+  ja-JP: ICS をプレビューする前に、この設定のスケジュールを生成してください。
 
 emailTaskCopyIcsLink:
   en: Copy ICS Link
