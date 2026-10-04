@@ -18,6 +18,7 @@ import type {
 } from "@labby/core";
 import {
   buildScheduleIcs,
+  buildEmailTemplateScheduleVariables,
   computeScheduleMetrics,
   createSolverDiagnostics,
   explainScheduleMetrics,
@@ -30,6 +31,7 @@ import {
   keywordVectorsToSimilarityLookup,
   SYSTEM_SETTINGS_ID,
   validateUnavailability,
+  type ScheduleIcsMode,
 } from "@labby/core";
 
 import { AuthService, UserRole, resolvePasetoKey } from "./lib/auth.js";
@@ -265,10 +267,27 @@ export async function createApp(options: CreateAppOptions): Promise<{ app: Hono;
       }
 
       const config = await store.getConfig(task.configId);
-      const personMap = new Map((await store.listPersons()).map((person) => [person.id, person]));
+      const persons = await store.listPersons();
+      const personMap = new Map(persons.map((person) => [person.id, person]));
       const systemSettings = await store.getSystemSettings();
-      const ics = buildScheduleIcs(latest, personMap, defaultDisplayName, config ?? undefined, undefined, {
-        timeZone: resolveScheduleTimezone(config ?? undefined, systemSettings),
+      const timeZone = resolveScheduleTimezone(config ?? undefined, systemSettings);
+      const locale = typeof task.metadata?.injectionLanguage === 'string' ? task.metadata.injectionLanguage : 'en';
+      const labels = locale === 'zh-CN'
+        ? { presenter: '主讲', questioners: '提问', meeting: '组会' }
+        : locale === 'ja-JP'
+          ? { presenter: '発表者', questioners: '質問者', meeting: 'グループミーティング' }
+          : { presenter: 'Presenter', questioners: 'Questioners', meeting: 'Group meeting' };
+      const mode: ScheduleIcsMode = task.metadata?.icsLinkMode === 'meeting' ? 'meeting' : 'presenters';
+      const ics = buildScheduleIcs(latest, personMap, defaultDisplayName, config ?? undefined, labels, {
+        timeZone,
+        mode,
+        contentTemplate: typeof task.metadata?.icsContentTemplate === 'string' ? task.metadata.icsContentTemplate : undefined,
+        templateContext: {
+          taskId: task.id,
+          configId: task.configId,
+          scheduleIcsUrl: new URL(c.req.url).toString(),
+          ...buildEmailTemplateScheduleVariables({ plan: latest, persons, config: config ?? undefined, locale, timeZone }),
+        },
       });
 
       c.header('Content-Type', 'text/calendar; charset=utf-8');

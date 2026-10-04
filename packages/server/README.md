@@ -142,6 +142,8 @@ Each email task can opt in via metadata (`serveScheduleIcs`) to expose its lates
 
 - `GET /public/email-tasks/:taskId/schedule.ics`
 
+The task's `icsLinkMode` metadata chooses one event per meeting (`meeting`) or one event per presenter (`presenters`, the default). Presenter events divide the meeting into minute-sized consecutive intervals. If a meeting has fewer minutes than presenters, each event still lasts at least one minute, so overlap is unavoidable. The optional `icsContentTemplate` renders the event `DESCRIPTION` using the email template `{{ expression }}` syntax. Both modes receive `sessionDate`, `sessionStartTime`, `sessionEndTime`, `eventStart`, `eventEnd`, `timeZone`, `presenter`, `presenters`, `questioners`, `taskId`, `configId`, `scheduleIcsUrl`, and the email schedule variables. An empty template retains the default description.
+
 Meeting times, email dispatch times, defaults, and ICS UTC conversion are defined in [the timezone rules](../../docs/timezone-semantics.md).
 
 ## Backup Subsystem

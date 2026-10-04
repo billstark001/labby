@@ -48,7 +48,7 @@ test('public email task ICS endpoint is available when a task opts in', async ()
       id: configId,
       daysOfWeek: [1],
       timeRange: ['09:00', '10:00'],
-      presentersPerSession: 1,
+      presentersPerSession: 2,
       questionersPerPresenter: 1,
       targetSimilarityRadius: 0.5,
       startDate: '2026-01-01',
@@ -80,7 +80,10 @@ test('public email task ICS endpoint is available when a task opts in', async ()
       sessions: [
         {
           date: '2026-01-05',
-          presentations: [{ presenterId: personAId, questionerIds: [personBId] }],
+          presentations: [
+            { presenterId: personAId, questionerIds: [personBId] },
+            { presenterId: personBId, questionerIds: [personAId] },
+          ],
         },
       ],
     };
@@ -120,8 +123,30 @@ test('public email task ICS endpoint is available when a task opts in', async ()
     assert.match(icsBody, /BEGIN:VCALENDAR/);
     assert.match(icsBody, /BEGIN:VEVENT/);
     assert.match(icsBody, /DTSTART:20260105T000000Z/);
+    assert.match(icsBody, /DTEND:20260105T003000Z/);
+    assert.match(icsBody, /DTSTART:20260105T003000Z/);
     assert.match(icsBody, /DTEND:20260105T010000Z/);
     assert.match(icsBody, /SUMMARY:Presenter: Alice/);
+    assert.match(icsBody, /SUMMARY:Presenter: Bob/);
+    assert.equal(icsBody.match(/BEGIN:VEVENT/g)?.length, 2);
+
+    await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {
+      method: 'PUT',
+      headers: makeHeaders(token),
+      body: JSON.stringify({ ...task, metadata: {
+        serveScheduleIcs: true,
+        icsLinkMode: 'meeting',
+        icsContentTemplate: 'Join https://zoom.example/join?date={{ sessionDate }}; {{ presenters[0] }} and {{ presenters[1] }}',
+      } }),
+    });
+    const meetingRes = await runtime.app.request(`/public/email-tasks/${taskId}/schedule.ics`);
+    assert.equal(meetingRes.status, 200);
+    const meetingBody = await meetingRes.text();
+    assert.equal(meetingBody.match(/BEGIN:VEVENT/g)?.length, 1);
+    assert.match(meetingBody, /SUMMARY:Group meeting/);
+    assert.match(meetingBody, /DTSTART:20260105T000000Z/);
+    assert.match(meetingBody, /DTEND:20260105T010000Z/);
+    assert.match(meetingBody, /DESCRIPTION:Join https:\/\/zoom.example\/join\?date=2026-01-05\\; Alice and Bob/);
 
     await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {
       method: 'PUT',
