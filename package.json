@@ -44,7 +44,8 @@
     "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {
-    "env-lane": "^0.4.2",
+    "@env-lane/core": "^0.5.0",
+    "env-lane": "^0.5.0",
     "typescript": "^7.0.2"
   }
 }

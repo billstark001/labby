@@ -31,6 +31,13 @@ command combines the shell with dotenv files.
 filenames Vite loads automatically. The checked-in scripts already select those modes with shell
 assignments. Other web variables should use Vite's conventional filenames shown above.
 
+## env-lane configuration
+
+The checked-in `env-lane.config.json5` is shared by the native env-lane v0.5.0 CLI and the
+`@env-lane/core` API used by deployment and sorting scripts. It requires no JS/TS config compiler.
+`pnpm-workspace.yaml` allows the `env-lane` install script to select the native CLI for the
+installation platform; keep install scripts enabled when installing dependencies.
+
 ## Deployment layering
 
 The env-lane configuration uses `.env` followed by `.env.{build}`. Later files override earlier

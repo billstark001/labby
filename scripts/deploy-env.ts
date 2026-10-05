@@ -1,4 +1,4 @@
-import { resolveInjectedEnv } from 'env-lane';
+import { resolveInjectedEnv } from '@env-lane/core';
 import path from 'node:path';
 import {
   parseGoogleOAuthClient,

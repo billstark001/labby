@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sortEnvFilesFromConfig } from "env-lane";
+import { sortEnvFilesFromConfig } from "@env-lane/core";
 
 const SORT_TARGETS = [
   "server",

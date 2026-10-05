@@ -1,6 +1,4 @@
-import { defineConfig } from 'env-lane';
-
-export default defineConfig({
+{
   selector: {
     envKey: 'ENV_BUILD',
     defaultBuild: 'local',
@@ -60,4 +58,4 @@ export default defineConfig({
       create: false,
     },
   },
-});
+}

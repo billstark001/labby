@@ -5,7 +5,19 @@ overrides:
   '@codemirror/state': 6.7.4
   '@codemirror/view': 6.43.11
 allowBuilds:
+  env-lane: true
   esbuild: true
 minimumReleaseAgeExclude:
   - lucide-preact@1.46.0
   - nodemailer@10.0.10
+  - '@env-lane/core@0.5.0'
+  - '@env-lane/native-darwin-arm64@0.5.0'
+  - '@env-lane/native-darwin-x64@0.5.0'
+  - '@env-lane/native-linux-arm64-gnu@0.5.0'
+  - '@env-lane/native-linux-arm64-musl@0.5.0'
+  - '@env-lane/native-linux-x64-gnu@0.5.0'
+  - '@env-lane/native-linux-x64-musl@0.5.0'
+  - '@env-lane/native-win32-arm64-msvc@0.5.0'
+  - '@env-lane/native-win32-x64-msvc@0.5.0'
+  - '@env-lane/native@0.5.0'
+  - env-lane@0.5.0

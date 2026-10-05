@@ -52,12 +52,12 @@ test('env-lane deployment plan preserves explicit empty values and deletion wins
   try {
     await writeFile(path.join(root, 'package.json'), '{"name":"fixture","private":true,"type":"module"}\n');
     await writeFile(
-      path.join(root, 'env-lane.config.mjs'),
-      `export default {
+      path.join(root, 'env-lane.config.json5'),
+      `{
         selector: { defaultBuild: 'local', builds: ['local', 'railway.production'], buildValidation: 'error' },
         workspace: { aliases: { server: '.' }, defaultTarget: 'server', includeRoot: true },
         dotenv: { order: ['.env', '.env.{build}'], includeProcessEnv: false }
-      };\n`,
+      }\n`,
     );
     await writeFile(path.join(root, '.env'), 'VALUE=base\nEMPTY=base\nDELETE_ME=present\nUNMANAGED=ignored\n');
     await writeFile(path.join(root, '.env.railway.production'), 'VALUE=override\nEMPTY=\n');
@@ -102,11 +102,11 @@ test('Railway credential expansion reads the JSON selected by the env lane', asy
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
   try {
     await writeFile(path.join(root, 'package.json'), '{"name":"fixture","private":true,"type":"module"}\n');
-    await writeFile(path.join(root, 'env-lane.config.mjs'), `export default {
+    await writeFile(path.join(root, 'env-lane.config.json5'), `{
       selector: { defaultBuild: 'local', builds: ['local', 'railway.production'], buildValidation: 'error' },
       workspace: { aliases: { server: '.' }, defaultTarget: 'server', includeRoot: true },
       dotenv: { order: ['.env', '.env.{build}'], includeProcessEnv: false }
-    };\n`);
+    }\n`);
     const baseCredential = path.join(root, 'google-base.json');
     const laneCredential = path.join(root, 'google-lane.json');
     const oauthClient = path.join(root, 'google-oauth-client.json');
