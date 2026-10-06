@@ -494,7 +494,16 @@ export const en = {
   "graphUpToDate": "Changes sync automatically",
   "rankingDragHint": "Drag to order from nearest to farthest. Equal ranks mean a tie; unknown items are excluded.",
   "rankingMoveUp": "Move nearer",
-  "rankingMoveDown": "Move farther"
+  "rankingMoveDown": "Move farther",
+  "editSessionDetails": "Edit meeting date, time and note",
+  "sessionReminderNotes": "Note for this meeting (optional)",
+  "sessionReminderNotesHint": "Available in reminder templates for this meeting only via {{ nextSessionNotes() }}.",
+  "sessionTimeOverride": "Override the time for this meeting only",
+  "sessionStartTime": "Start time",
+  "sessionEndTime": "End time",
+  "sessionTimeHint": "Uses the schedule timezone. An earlier end time means the following day. Uncheck to use the default time.",
+  "sessionTimeInvalid": "Enter valid, different start and end times.",
+  "manualEditVersionNote": "Manual edit · {0} meetings"
 } as const
 
 export const zhCN = {
@@ -991,7 +1000,16 @@ export const zhCN = {
   "graphUpToDate": "自动同步更改",
   "rankingDragHint": "拖动以按从近到远排序；相同名次表示并列，“未知”不会参与训练。",
   "rankingMoveUp": "移近一位",
-  "rankingMoveDown": "移远一位"
+  "rankingMoveDown": "移远一位",
+  "editSessionDetails": "编辑此次组会日期、时间与备注",
+  "sessionReminderNotes": "此次组会备注（可选）",
+  "sessionReminderNotesHint": "仅用于此次组会的提醒，可在模板中使用 {{ nextSessionNotes() }}。",
+  "sessionTimeOverride": "仅修改此次组会的时间",
+  "sessionStartTime": "开始时间",
+  "sessionEndTime": "结束时间",
+  "sessionTimeHint": "使用排班时区；结束时间早于开始时间表示次日结束。取消勾选恢复默认时间。",
+  "sessionTimeInvalid": "请输入有效且不同的开始和结束时间。",
+  "manualEditVersionNote": "手动调整排班 · 共 {0} 次组会"
 } as const
 
 export const jaJP = {
@@ -1488,7 +1506,16 @@ export const jaJP = {
   "graphUpToDate": "変更を自動同期",
   "rankingDragHint": "近い順にドラッグして並べ替えます。同順位は同率、不明は学習対象外です。",
   "rankingMoveUp": "近い方へ移動",
-  "rankingMoveDown": "遠い方へ移動"
+  "rankingMoveDown": "遠い方へ移動",
+  "editSessionDetails": "今回の日時・メモを編集",
+  "sessionReminderNotes": "今回のメモ（任意）",
+  "sessionReminderNotesHint": "今回のみの通知メモ。テンプレートで {{ nextSessionNotes() }} を使用できます。",
+  "sessionTimeOverride": "今回のみ時刻を変更",
+  "sessionStartTime": "開始時刻",
+  "sessionEndTime": "終了時刻",
+  "sessionTimeHint": "スケジュールのタイムゾーンを使用。終了が開始より早い場合は翌日。チェックを外すと既定時刻に戻ります。",
+  "sessionTimeInvalid": "有効な異なる開始・終了時刻を入力してください。",
+  "manualEditVersionNote": "手動編集 · 全 {0} 回"
 } as const
 
 export type Lang = 'en' | 'zh-CN' | 'ja-JP'

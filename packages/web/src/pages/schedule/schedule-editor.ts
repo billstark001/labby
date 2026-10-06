@@ -1,5 +1,15 @@
 import { nanoid } from 'nanoid';
-import type { SchedulePlan } from '@labby/core';
+import { copySessionDetails, resolveSessionTimeRange } from '@labby/core';
+import type {
+  Presentation,
+  SchedulePlan,
+  ScheduleTemplatePresentation,
+  ScheduleTemplateSession,
+  Session,
+  SessionDetails,
+  ScheduleConfig,
+  ScheduleSessionMutationRecord,
+} from '@labby/core';
 
 export type DraftPersonSlot =
   | { id: string; kind: 'fixed'; personId: string }
@@ -11,7 +21,7 @@ export interface DraftPresentation {
   questioners: DraftPersonSlot[];
 }
 
-export interface DraftSession {
+export interface DraftSession extends Pick<Session, 'notes' | 'timeRange'> {
   id: string;
   date: string;
   presentations: DraftPresentation[];
@@ -45,21 +55,78 @@ export function createAutoPresentation(questionerCount: number): DraftPresentati
   };
 }
 
-export function createScheduleDraft(plan: SchedulePlan): ScheduleDraft {
+function createDraftPresentation(presentation: Presentation): DraftPresentation {
   return {
-    ...structuredClone(plan),
-    sessions: plan.sessions.map(session => ({
-      id: nanoid(),
-      date: session.date,
-      presentations: session.presentations.map(presentation => ({
-        id: nanoid(),
-        presenter: fixedSlot(presentation.presenterId),
-        questioners: presentation.questionerIds.map(fixedSlot),
-      })),
-    })),
+    id: nanoid(),
+    presenter: fixedSlot(presentation.presenterId),
+    questioners: presentation.questionerIds.map(fixedSlot),
+  };
+}
+
+function createDraftSession(session: Session): DraftSession {
+  const draft: DraftSession = {
+    id: nanoid(),
+    date: session.date,
+    presentations: session.presentations.map(createDraftPresentation),
+  };
+  copySessionDetails(draft, session);
+  return draft;
+}
+
+export function createScheduleDraft(plan: SchedulePlan): ScheduleDraft {
+  const snapshot = structuredClone(plan);
+  return Object.assign(snapshot, {
+    sessions: plan.sessions.map(createDraftSession),
     discardedBefore: [],
     discardedAfter: [],
+  });
+}
+
+function templatePersonId(slot: DraftPersonSlot): string | null {
+  return slot.kind === 'fixed' ? slot.personId : null;
+}
+
+function createTemplatePresentation(presentation: DraftPresentation): ScheduleTemplatePresentation {
+  return {
+    presenterId: templatePersonId(presentation.presenter),
+    questionerIds: presentation.questioners.map(templatePersonId),
   };
+}
+
+function createTemplateSession(session: DraftSession): ScheduleTemplateSession {
+  const template: ScheduleTemplateSession = { date: session.date, presentations: session.presentations.map(createTemplatePresentation) };
+  copySessionDetails(template, session);
+  return template;
+}
+
+export function createScheduleTemplate(draft: ScheduleDraft): ScheduleTemplateSession[] {
+  return draft.sessions.map(createTemplateSession);
+}
+
+export interface SessionDetailsValues {
+  notes: string;
+  startTime: string;
+  endTime: string;
+  overrideTime: boolean;
+}
+
+export function getSessionDetailsValues(session: DraftSession, config: ScheduleConfig): SessionDetailsValues {
+  const [startTime, endTime] = resolveSessionTimeRange(session, config);
+  return { notes: session.notes ?? '', startTime, endTime, overrideTime: !!session.timeRange };
+}
+
+/** Apply date and occurrence settings together as one undoable operation. */
+export function updateSessionDetails(draft: ScheduleDraft, sessionId: string, date: string, details: SessionDetails): ScheduleDraft {
+  const previous = draft.sessions.find(session => session.id === sessionId);
+  if (!previous) return draft;
+  const rescheduled = rescheduleSession(draft, sessionId, date);
+  if (previous.date !== date && rescheduled === draft) return draft;
+  const recorded = recordSessionDateChange(rescheduled, previous.date, date);
+  const next = cloneDraft(recorded);
+  const session = next.sessions.find(session => session.id === sessionId)!;
+  copySessionDetails(session, details);
+  session.notes = session.notes?.trim() || undefined;
+  return next;
 }
 
 export function cloneDraft(draft: ScheduleDraft): ScheduleDraft {
@@ -286,14 +353,15 @@ export function nextConfiguredDateAfter(date: string, daysOfWeek: number[]): str
 export function recordSessionDateChange(draft: ScheduleDraft, removedDate: string, addedDate: string): ScheduleDraft {
   if (removedDate === addedDate) return draft;
   const next = cloneDraft(draft);
-  const existing = new Map((next.sessionMutations ?? []).map(item => [item.date, item]));
+  const existing = new Map<string, ScheduleSessionMutationRecord>();
+  for (const mutation of next.sessionMutations ?? []) existing.set(mutation.date, mutation);
   const removed = existing.get(removedDate);
   if (removed?.action === 'insert') existing.delete(removedDate);
   else existing.set(removedDate, { date: removedDate, action: 'delete', createdAt: Date.now() });
   const added = existing.get(addedDate);
   if (added?.action === 'delete') existing.delete(addedDate);
   else existing.set(addedDate, { date: addedDate, action: 'insert', createdAt: Date.now() });
-  next.sessionMutations = [...existing.values()].sort((a, b) => a.date.localeCompare(b.date));
+  next.sessionMutations = Array.from(existing.values()).sort((a, b) => a.date.localeCompare(b.date));
   return next;
 }
 

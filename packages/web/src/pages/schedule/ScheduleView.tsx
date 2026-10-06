@@ -1,3 +1,4 @@
+import { formatSessionDetailsSummary, type SessionDetails } from '@labby/core';
 import { useCallback, useState } from 'preact/hooks';
 import { ArrowDown, ArrowUp, Calendar, GripVertical, MoreHorizontal, Plus } from 'lucide-preact';
 import { CollisionPriority } from '@dnd-kit/abstract';
@@ -42,6 +43,11 @@ interface ScheduleViewProps {
   onSwapSession: (index: number, direction: -1 | 1) => void;
   onDeleteSession: (sessionId: string) => void;
   onShowMetricsForSession: (date: string) => void;
+}
+
+function SessionDetailsSummary({ session }: { session: SessionDetails }) {
+  const summary = formatSessionDetailsSummary(session);
+  return summary ? <span class={css.sessionSummary} title={summary}>{summary}</span> : null;
 }
 
 function slotLabel(slot: DraftPersonSlot, personMap: Map<string, Person>, autoLabel: string): string {
@@ -163,7 +169,7 @@ export function ScheduleView({
             <MenuSeparator />
             <MenuItem onSelect={() => onInsertSession(sessionIndex, 'before')}>{t('insertSessionBefore')}</MenuItem>
             <MenuItem onSelect={() => onInsertSession(sessionIndex + 1, 'after')}>{t('insertSessionAfter')}</MenuItem>
-            <MenuItem onSelect={() => onRescheduleSession(session.id)}>{t('rescheduleSession')}</MenuItem>
+            <MenuItem onSelect={() => onRescheduleSession(session.id)}>{t('editSessionDetails')}</MenuItem>
             <MenuItem onSelect={() => onPostponeSession(sessionIndex)}>{t('postponeSession')}</MenuItem>
             {sessionIndex > 0 && <MenuItem onSelect={() => onSwapSession(sessionIndex, -1)}>{t('swapPreviousSession')}</MenuItem>}
             {sessionIndex + 1 < draft.sessions.length && <MenuItem onSelect={() => onSwapSession(sessionIndex, 1)}>{t('swapNextSession')}</MenuItem>}
@@ -244,6 +250,7 @@ export function ScheduleView({
               <MenuTrigger><button type="button" class={css.moreButton} aria-label={t('scheduleActions')}><MoreHorizontal size={16} /></button></MenuTrigger>
               <MenuContent align="end">{dateMenu(sessionIndex)}</MenuContent>
             </Menu>
+            {!manualEditMode && <SessionDetailsSummary session={session} />}
           </div>
           {manualEditMode && <InsertRail dndManager={dndManager} sessionIndex={sessionIndex} presentationIndex={0} onInsert={() => onInsertPresentation(sessionIndex, 0)} />}
           {session.presentations.map((presentation, presentationIndex) => (

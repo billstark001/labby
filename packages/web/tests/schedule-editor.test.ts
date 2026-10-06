@@ -4,6 +4,8 @@ import type { SchedulePlan } from '@labby/core';
 import {
   addQuestioner,
   createScheduleDraft,
+  createScheduleTemplate,
+  updateSessionDetails,
   deleteSession,
   moveBoundary,
   movePresentationTo,
@@ -105,4 +107,50 @@ describe('schedule tape editor', () => {
     assert.equal(result.sessions[0]!.presentations[0]!.questioners.length, 0);
     assert.equal(result.sessions[1]!.presentations[0]!.questioners[0]!.kind, 'auto');
   });
+});
+
+
+test('single meeting notes and time overrides survive draft edits without sharing references', () => {
+  const original = plan();
+  original.sessions[0]!.notes = 'Room B';
+  original.sessions[0]!.timeRange = ['14:00', '16:00'];
+  const draft = createScheduleDraft(original);
+  draft.sessions[0]!.timeRange![0] = '14:30';
+  assert.equal(original.sessions[0]!.timeRange![0], '14:00');
+  const moved = rescheduleSession(draft, draft.sessions[0]!.id, '2026-04-02');
+  assert.equal(moved.sessions[0]!.notes, 'Room B');
+  assert.deepEqual(moved.sessions[0]!.timeRange, ['14:30', '16:00']);
+  const shifted = postponeSessionSuffix(moved, 0, '2026-04-22');
+  assert.equal(shifted.sessions[0]!.notes, 'Room B');
+  assert.equal(shifted.sessions[1]!.notes, undefined);
+});
+
+
+test('editing occurrence settings on the same date is undoable and reaches the solver template', () => {
+  const draft = createScheduleDraft(plan());
+  const session = draft.sessions[0]!;
+  const next = updateSessionDetails(draft, session.id, session.date, { notes: '  Room B  ', timeRange: ['15:00', '17:00'] });
+  assert.equal(session.notes, undefined);
+  assert.equal(next.sessions[0]!.notes, 'Room B');
+  assert.equal(next.sessionMutations, undefined);
+  const template = createScheduleTemplate(next);
+  assert.equal(template[0]!.notes, 'Room B');
+  template[0]!.timeRange![0] = '16:00';
+  assert.equal(next.sessions[0]!.timeRange![0], '15:00');
+  const cleared = updateSessionDetails(next, session.id, session.date, {});
+  assert.equal(cleared.sessions[0]!.notes, undefined);
+  assert.equal(cleared.sessions[0]!.timeRange, undefined);
+});
+
+test('a combined date and settings edit records the date change and rejects invalid moves atomically', () => {
+  const draft = createScheduleDraft(plan());
+  const id = draft.sessions[0]!.id;
+  const details = { notes: 'Room B' };
+  assert.equal(updateSessionDetails(draft, id, '2026-04-08', details), draft);
+  const next = updateSessionDetails(draft, id, '2026-04-02', details);
+  assert.equal(next.sessions[0]!.date, '2026-04-02');
+  assert.equal(next.sessions[0]!.notes, 'Room B');
+  assert.deepEqual(next.sessionMutations?.map(item => [item.date, item.action]), [
+    ['2026-04-01', 'delete'], ['2026-04-02', 'insert'],
+  ]);
 });

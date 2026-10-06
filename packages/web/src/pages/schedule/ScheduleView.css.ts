@@ -31,3 +31,5 @@ export const discardTitle = style({ display: 'flex', justifyContent: 'space-betw
 export const discardEmpty = style({ padding: `${vars.space.sm} ${vars.space.md}`, color: vars.color.textMuted, fontSize: vars.font.size.xs, textAlign: 'center' });
 export const dragInteraction = styleVariants({ drag: { cursor: 'grab', touchAction: 'none' }, clickable: { cursor: 'pointer', touchAction: 'auto' }, idle: { cursor: 'default', touchAction: 'auto' } });
 export const presenterCursor = styleVariants({ clickable: { cursor: 'pointer' }, idle: { cursor: 'default' } });
+
+export const sessionSummary = style({ position: 'relative', zIndex: 1, minWidth: 0, maxWidth: 'min(50%, 420px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: vars.color.surface, color: vars.color.textMuted, fontSize: vars.font.size.xs, padding: `0 ${vars.space.xs}` });

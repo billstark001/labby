@@ -1,3 +1,4 @@
+import { isValidSessionTimeRange, type SessionDetails } from '@labby/core';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { batch, useSignal } from '@preact/signals';
 import { Pencil, Redo2, Undo2 } from 'lucide-preact';
@@ -53,6 +54,9 @@ import { ScheduleView } from './ScheduleView';
 import {
   addQuestioner,
   createScheduleDraft,
+  createScheduleTemplate,
+  getSessionDetailsValues,
+  updateSessionDetails,
   deletePresentation,
   deleteQuestioner,
   deleteSession,
@@ -68,7 +72,6 @@ import {
   reorderPresentations,
   replacePresenter,
   replaceQuestioner,
-  rescheduleSession,
   shiftSessionSuffix,
   suggestedInsertDate,
   swapAdjacentSessions,
@@ -125,6 +128,10 @@ export function SchedulePage() {
   const [redoStack, setRedoStack] = useState<ScheduleDraft[]>([]);
   const [metricsDialog, setMetricsDialog] = useState<MetricsDialogState | null>(null);
   const [insertSessionIndex, setInsertSessionIndex] = useState<number | null>(null);
+  const [sessionNotes, setSessionNotes] = useState('');
+  const [sessionStartTime, setSessionStartTime] = useState('');
+  const [sessionEndTime, setSessionEndTime] = useState('');
+  const [overrideSessionTime, setOverrideSessionTime] = useState(false);
   const [rescheduleSessionId, setRescheduleSessionId] = useState<string | null>(null);
   const [insertedSessionDate, setInsertedSessionDate] = useState('');
   const [dateBounds, setDateBounds] = useState<{ min: string; max: string } | null>(null);
@@ -370,13 +377,7 @@ export function SchedulePage() {
       similarities: similarityLookupSignal.value,
       unavailabilities,
       constraints: constraintsSignal.value.filter(item => !item.configId || item.configId === config.id),
-      template: draft.sessions.map(session => ({
-        date: session.date,
-        presentations: session.presentations.map(presentation => ({
-          presenterId: presentation.presenter.kind === 'fixed' ? presentation.presenter.personId : null,
-          questionerIds: presentation.questioners.map(slot => slot.kind === 'fixed' ? slot.personId : null),
-        })),
-      })),
+      template: createScheduleTemplate(draft),
     });
   }
 
@@ -393,7 +394,7 @@ export function SchedulePage() {
         sessions,
         sessionMutations: draftSchedule.sessionMutations,
         sessionDateMeta: buildSessionDateMeta(sessions, draftSchedule.sessionMutations, draftSchedule.sessionDateMeta),
-        notes: `${draftSchedule.notes ?? current?.notes ?? ''}\n[batch-edit] committed=${new Date(createdAt).toISOString()}`.trim(),
+        notes: [draftSchedule.notes ?? current?.notes, t('manualEditVersionNote', String(sessions.length))].filter(Boolean).join('\n'),
       };
       await db.schedules.put(updated);
       if (await refreshScheduleScopedData(updated.configId)) currentScheduleSignal.value = updated;
@@ -695,7 +696,13 @@ export function SchedulePage() {
       min: previous ? moveIsoDay(previous, 1) : selectedConfig.startDate,
       max: following ? moveIsoDay(following, -1) : selectedConfig.endDate,
     });
-    setInsertedSessionDate(draftSchedule.sessions[index]!.date);
+    const session = draftSchedule.sessions[index]!;
+    setInsertedSessionDate(session.date);
+    const details = getSessionDetailsValues(session, selectedConfig);
+    setSessionNotes(details.notes);
+    setOverrideSessionTime(details.overrideTime);
+    setSessionStartTime(details.startTime);
+    setSessionEndTime(details.endTime);
     setRescheduleSessionId(sessionId);
   }
 
@@ -706,11 +713,15 @@ export function SchedulePage() {
       toast.error(t('mutationDateOutOfRange', dateBounds.min, dateBounds.max));
       return;
     }
-    updateDraft(draft => {
-      const previous = draft.sessions.find(session => session.id === rescheduleSessionId);
-      if (!previous || previous.date === date) return draft;
-      return recordSessionDateChange(rescheduleSession(draft, rescheduleSessionId, date), previous.date, date);
-    });
+    if (overrideSessionTime && !isValidSessionTimeRange([sessionStartTime, sessionEndTime])) {
+      toast.error(t('sessionTimeInvalid'));
+      return;
+    }
+    const details: SessionDetails = {
+      notes: sessionNotes,
+      timeRange: overrideSessionTime ? [sessionStartTime, sessionEndTime] : undefined,
+    };
+    updateDraft(draft => updateSessionDetails(draft, rescheduleSessionId, date, details));
     setRescheduleSessionId(null);
   }
 
@@ -984,7 +995,17 @@ export function SchedulePage() {
       />
       <InsertSessionDialog
         open={rescheduleSessionId !== null}
-        title={t('rescheduleSession')}
+        title={t('editSessionDetails')}
+        details={{
+          notes: sessionNotes,
+          startTime: sessionStartTime,
+          endTime: sessionEndTime,
+          overrideTime: overrideSessionTime,
+          onNotesChange: setSessionNotes,
+          onStartTimeChange: setSessionStartTime,
+          onEndTimeChange: setSessionEndTime,
+          onOverrideTimeChange: setOverrideSessionTime,
+        }}
         insertedSessionDate={insertedSessionDate}
         minDate={dateBounds?.min}
         maxDate={dateBounds?.max}

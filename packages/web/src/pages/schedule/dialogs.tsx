@@ -209,6 +209,16 @@ export function MetricsDialog({ state, onClose }: { state: MetricsDialogState | 
 interface InsertSessionDialogProps {
   open: boolean;
   title?: string;
+  details?: {
+    notes: string;
+    startTime: string;
+    endTime: string;
+    overrideTime: boolean;
+    onNotesChange: (value: string) => void;
+    onStartTimeChange: (value: string) => void;
+    onEndTimeChange: (value: string) => void;
+    onOverrideTimeChange: (value: boolean) => void;
+  };
   insertedSessionDate: string;
   minDate?: string;
   maxDate?: string;
@@ -220,6 +230,7 @@ interface InsertSessionDialogProps {
 export function InsertSessionDialog({
   open,
   title,
+  details,
   insertedSessionDate,
   minDate,
   maxDate,
@@ -242,6 +253,21 @@ export function InsertSessionDialog({
           onInput={event => onInsertedDateChange((event.target as HTMLInputElement).value)}
         />
       </div>
+      {details && <>
+        <div class={s.formGroup}>
+          <label class={s.label}><input type="checkbox" checked={details.overrideTime} onChange={event => details.onOverrideTimeChange((event.target as HTMLInputElement).checked)} /> {t('sessionTimeOverride')}</label>
+          {details.overrideTime && <div class={s.flexGapSm}>
+            <label class={s.label}>{t('sessionStartTime')}<input class={s.input} type="time" value={details.startTime} onInput={event => details.onStartTimeChange((event.target as HTMLInputElement).value)} /></label>
+            <label class={s.label}>{t('sessionEndTime')}<input class={s.input} type="time" value={details.endTime} onInput={event => details.onEndTimeChange((event.target as HTMLInputElement).value)} /></label>
+          </div>}
+          <p class={s.textMuted}>{t('sessionTimeHint')}</p>
+        </div>
+        <div class={s.formGroup}>
+          <label class={s.label} for="session-reminder-notes">{t('sessionReminderNotes')}</label>
+          <textarea id="session-reminder-notes" class={s.input} rows={3} value={details.notes} onInput={event => details.onNotesChange((event.target as HTMLTextAreaElement).value)} />
+          <p class={s.textMuted}>{t('sessionReminderNotesHint')}</p>
+        </div>
+      </>}
       <div class={s.flexGapSm}>
         <Button variant="primary" onClick={onApply}>{t('confirm')}</Button>
         <Button variant="secondary" onClick={onClose}>{t('cancel')}</Button>
