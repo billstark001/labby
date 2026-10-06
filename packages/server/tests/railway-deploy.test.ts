@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { parseRailwayDeployArguments, railwayScopeArgs, shouldDeployRailway, syncRailwayEnvironment } from '../../../scripts/railway-deploy.js';
+import { main, parseRailwayDeployArguments, railwayScopeArgs, shouldDeployRailway, syncRailwayEnvironment } from '../../../scripts/railway-deploy.js';
 
 test('Railway deploy scopes each target even when a different service is linked', () => {
   assert.deepEqual(railwayScopeArgs('server', {}), ['--service', 'labby-api']);
@@ -66,6 +66,37 @@ if (args[0] === 'variable' && args[1] === 'list') {
     assert.throws(() => syncRailwayEnvironment(executable, [], { SEALED: 'changed' }, [], ['SEALED']), /cannot be synchronized by CLI/);
     assert.equal((await readFile(record, 'utf8')).trim().split('\n').length, 2);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('Railway uploads the repository root when invoked from a workspace package', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'labby-railway-root-'));
+  const executable = path.join(directory, 'railway-mock');
+  const record = path.join(directory, 'upload.json');
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..');
+  const previousDirectory = process.cwd();
+  const previousCli = process.env.RAILWAY_CLI;
+  try {
+    await writeFile(executable, `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({
+  cwd: process.cwd(), args: process.argv.slice(2), hasDockerfile: fs.existsSync('Dockerfile'),
+}));
+`);
+    await chmod(executable, 0o700);
+    process.env.RAILWAY_CLI = executable;
+    process.chdir(path.join(repositoryRoot, 'packages/server'));
+    await main(['--full', '--target', 'server', '--no-env-sync']);
+    const upload = JSON.parse(await readFile(record, 'utf8')) as { cwd: string; args: string[]; hasDockerfile: boolean };
+    assert.equal(upload.cwd, repositoryRoot);
+    assert.equal(upload.hasDockerfile, true);
+    assert.equal(upload.args[0], 'up');
+  } finally {
+    process.chdir(previousDirectory);
+    if (previousCli === undefined) delete process.env.RAILWAY_CLI;
+    else process.env.RAILWAY_CLI = previousCli;
     await rm(directory, { recursive: true, force: true });
   }
 });

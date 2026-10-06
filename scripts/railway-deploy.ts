@@ -24,9 +24,10 @@ const TARGET_DEPLOY_PATTERNS: Record<RailwayServiceKind, RegExp[]> = {
   cron: [],
 };
 
-function run(command: string, args: string[], options: { capture?: boolean; input?: string; sensitive?: boolean } = {}): string {
+function run(command: string, args: string[], options: { capture?: boolean; input?: string; sensitive?: boolean; cwd?: string } = {}): string {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
+    cwd: options.cwd,
     input: options.input,
     stdio: options.capture ? ['pipe', 'pipe', 'pipe'] : 'inherit',
   });
@@ -150,9 +151,9 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const railway = process.env.RAILWAY_CLI?.trim() || 'railway';
   const scopeArgs = railwayScopeArgs(target);
   let envChanged = false;
+  const root = run('git', ['rev-parse', '--show-toplevel'], { capture: true });
 
   if (parsedEnv.env.sync) {
-    const root = run('git', ['rev-parse', '--show-toplevel'], { capture: true });
     const plan = await buildDeploymentEnvPlan({
       root,
       build: parsedEnv.env.build,
@@ -177,7 +178,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const railwayArgs = ['up', process.env.RAILWAY_DETACH === 'true' ? '--detach' : '--ci'];
   railwayArgs.push(...scopeArgs);
   console.info(`[railway] Starting ${incremental ? 'incremental' : 'full'} ${target} deployment.`);
-  run(railway, railwayArgs);
+  run(railway, railwayArgs, { cwd: root });
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
