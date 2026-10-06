@@ -152,6 +152,9 @@ it('uses one stable task-enabled checkbox label with checked meaning enabled', a
 });
 
 it('saves all ICS form values even when the public link is switched off', async () => {
+  source.configs = [{ id: 'config-1', daysOfWeek: [1], timeRange: ['09:00', '10:00'], timezone: 'UTC',
+    startDate: '2026-01-01', endDate: '2099-12-31', presentersPerSession: 1, questionersPerPresenter: 0,
+    targetSimilarityRadius: 0.5, metadata: {} }];
   source.taskGet = async () => ({
     id: 'task-1', configId: 'config-1', daysOfWeek: [1], emails: [], recentTimes: 0,
     templateText: 'hello', metadata: { serveScheduleIcs: true, icsContentTemplate: 'Old room' },

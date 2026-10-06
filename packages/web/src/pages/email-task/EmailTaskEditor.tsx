@@ -21,7 +21,7 @@ import { DAY_OPTIONS, useEmailTaskEditor, type EmailTaskEditorProps } from './us
 export function EmailTaskEditor(props: EmailTaskEditorProps) {
   const editor = useEmailTaskEditor(props);
   const {
-    t, action, capability, currentTask, ready, selectedTaskId, form, values,
+    t, action, capability, currentTask, ready, selectedTaskId, form, values, isDirty,
     setShowPreviewDialog, setSendNowOpen, setSendRecipientsText, setSendNowError,
     setShowDaysDialog, setShowAttachmentDialog,
     configs, resolvedPreviewTimezone, previewResult, previewSubject,
@@ -51,6 +51,11 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
           {selectedTaskId && <Button variant="danger" disabled={action.pendingKey !== null} onClick={() => confirmDialog(t('confirmDelete'), t('deleteHistory'), removeTask)}>{t('delete')}</Button>}
         </div>
       </div>
+
+      <p role="status" class={isDirty ? s.textDanger : s.textMuted}>
+        {action.pendingKey === 'save' ? t('emailTaskSaving') : isDirty ? t('emailTaskUnsaved') : t('emailTaskNoUnsavedChanges')}
+      </p>
+      {action.error && <p role="alert" class={s.textDanger}>{t('emailTaskActionFailed')}: {action.error}</p>}
 
       {!capability.canAutoSend && (
         <div class={`${s.card} ${s.mb16}`}>
@@ -250,10 +255,10 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
 
         <div class={s.flexGapSm}>
           <Button variant="primary" busy={action.pendingKey === 'save'} disabled={action.pendingKey !== null} onClick={() => void action.run('save', saveTask)}>{t('save')}</Button>
-          <Button variant="secondary" onClick={() => currentTask ? applyTaskToForm(currentTask) : resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
+          <Button variant="secondary" disabled={action.pendingKey !== null} onClick={() => currentTask ? applyTaskToForm(currentTask) : resetForm(configId || configs[0]?.id)}>{t('cancel')}</Button>
           {capability.canAutoSend && selectedTaskId && (
             <>
-              <Button variant="secondary" onClick={() => {
+              <Button variant="secondary" disabled={isDirty || action.pendingKey !== null} onClick={() => {
                 setSendRecipientsText((currentTask?.emails ?? []).join(', '));
                 setSendNowError('');
                 setSendNowOpen(true);

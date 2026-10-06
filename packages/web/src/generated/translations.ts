@@ -503,7 +503,13 @@ export const en = {
   "sessionEndTime": "End time",
   "sessionTimeHint": "Uses the schedule timezone. An earlier end time means the following day. Uncheck to use the default time.",
   "sessionTimeInvalid": "Enter valid, different start and end times.",
-  "manualEditVersionNote": "Manual edit · {0} meetings"
+  "manualEditVersionNote": "Manual edit · {0} meetings",
+  "emailTaskSaved": "Email task saved",
+  "emailTaskSaving": "Saving…",
+  "emailTaskUnsaved": "You have unsaved changes",
+  "emailTaskNoUnsavedChanges": "No unsaved changes",
+  "emailTaskInvalidSettings": "Enter a valid send time and a non-negative integer send limit.",
+  "emailTaskActionFailed": "Operation failed; your edits have been retained"
 } as const
 
 export const zhCN = {
@@ -1009,7 +1015,13 @@ export const zhCN = {
   "sessionEndTime": "结束时间",
   "sessionTimeHint": "使用排班时区；结束时间早于开始时间表示次日结束。取消勾选恢复默认时间。",
   "sessionTimeInvalid": "请输入有效且不同的开始和结束时间。",
-  "manualEditVersionNote": "手动调整排班 · 共 {0} 次组会"
+  "manualEditVersionNote": "手动调整排班 · 共 {0} 次组会",
+  "emailTaskSaved": "邮件任务已保存",
+  "emailTaskSaving": "正在保存…",
+  "emailTaskUnsaved": "有更改尚未保存",
+  "emailTaskNoUnsavedChanges": "没有未保存的更改",
+  "emailTaskInvalidSettings": "请填写有效的发送时间及非负整数的发送次数上限。",
+  "emailTaskActionFailed": "操作失败，当前编辑已保留"
 } as const
 
 export const jaJP = {
@@ -1515,7 +1527,13 @@ export const jaJP = {
   "sessionEndTime": "終了時刻",
   "sessionTimeHint": "スケジュールのタイムゾーンを使用。終了が開始より早い場合は翌日。チェックを外すと既定時刻に戻ります。",
   "sessionTimeInvalid": "有効な異なる開始・終了時刻を入力してください。",
-  "manualEditVersionNote": "手動編集 · 全 {0} 回"
+  "manualEditVersionNote": "手動編集 · 全 {0} 回",
+  "emailTaskSaved": "メールタスクを保存しました",
+  "emailTaskSaving": "保存中…",
+  "emailTaskUnsaved": "未保存の変更があります",
+  "emailTaskNoUnsavedChanges": "未保存の変更はありません",
+  "emailTaskInvalidSettings": "有効な送信時刻と0以上の整数の送信回数上限を入力してください。",
+  "emailTaskActionFailed": "操作に失敗しました。編集内容は保持されています"
 } as const
 
 export type Lang = 'en' | 'zh-CN' | 'ja-JP'

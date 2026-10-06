@@ -22,7 +22,7 @@ import { i18n } from '@/i18n';
 import { sendEmailTaskNow, setEmailTaskSkipNext } from '@/api-server/email-tasks';
 import { getEmailTaskCapability } from '@/lib/email-task-capability';
 import { getPublicEmailTaskIcsUrl } from '@/lib/email-task-ics';
-import { navigate } from '@/lib/router';
+import { navigate, registerNavigationGuard } from '@/lib/router';
 import { usePendingAction } from '@/lib/use-pending-action';
 import { emptyEmailTaskFormValues, emailTaskFormValuesFromTask, type EmailTaskFormValues } from './emailTaskFormValues';
 
@@ -75,18 +75,28 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   const [ready, setReady] = useState(false);
 
   const [selectedTaskId, setSelectedTaskId] = useState<string>(taskId ?? '');
+  const draftTaskIdRef = useRef(taskId ?? crypto.randomUUID());
+  const [initialConfigId] = useState(() => {
+    let rememberedConfigId: string | null = null;
+    try { rememberedConfigId = localStorage.getItem('schedule.lastSelectedConfigId'); } catch { /* Storage may be unavailable. */ }
+    return configs.find(config => config.id === rememberedConfigId)?.id ?? configs[0]?.id ?? '';
+  });
+  const savingRef = useRef(false);
   const defaultValuesRef = useRef(task
     ? emailTaskFormValuesFromTask(task, i18n.lang.value)
-    : emptyEmailTaskFormValues(configs[0]?.id ?? '', i18n.lang.value));
+    : emptyEmailTaskFormValues(initialConfigId, i18n.lang.value));
   const form = useForm({
     defaultValues: defaultValuesRef.current,
   });
   function resetToValues(nextValues: EmailTaskFormValues): void {
-    defaultValuesRef.current = nextValues;
-    form.reset(nextValues);
+    defaultValuesRef.current = structuredClone(nextValues);
+    setSavedValues(defaultValuesRef.current);
+    form.reset(structuredClone(nextValues));
   }
   const values = useSelector(form.store, (state) => state.values);
-  const isDirty = useSelector(form.store, (state) => state.isDirty);
+  const [savedValues, setSavedValues] = useState(defaultValuesRef.current);
+  const isDirty = JSON.stringify(values) !== JSON.stringify(savedValues);
+  const hasUnsavedChanges = () => JSON.stringify(form.state.values) !== JSON.stringify(defaultValuesRef.current);
   const {
     configId, taskTimezone, templateText, templateFormat, injectionLanguage, dateGranularity,
     subjectTemplate, senderNameTemplate, attachmentTypes, icsLinkMode, icsContentTemplate,
@@ -188,114 +198,120 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   );
 
   function applyTaskToForm(task: EmailTask): void {
+    draftTaskIdRef.current = task.id;
     setSelectedTaskId(task.id);
     resetToValues(emailTaskFormValuesFromTask(task, i18n.lang.value));
   }
 
   function resetForm(nextConfigId?: string): void {
+    draftTaskIdRef.current = crypto.randomUUID();
     setSelectedTaskId('');
     resetToValues(emptyEmailTaskFormValues(nextConfigId ?? configs[0]?.id ?? '', i18n.lang.value));
   }
 
   useEffect(() => {
     if (task) applyTaskToForm(task);
-    else resetForm(configs[0]?.id);
+    else resetForm(initialConfigId);
     setReady(true);
   }, []);
 
-  const skipNextHashChangeRef = useRef(false);
-
   useEffect(() => {
-    if (!isDirty) return;
-
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges() && !savingRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
     };
-
-    const handleHashChange = (e: HashChangeEvent) => {
-      // Skip if this event was triggered by our own programmatic navigation
-      if (skipNextHashChangeRef.current) {
-        skipNextHashChangeRef.current = false;
-        return;
-      }
-      // Revert the navigation first, then ask for confirmation
-      skipNextHashChangeRef.current = true;
-      window.history.pushState(null, '', e.oldURL);
-      confirmDialog(t('unsavedChangesWarning'), '', () => {
-        // User confirmed leaving - navigate to the new URL and mark clean
-        resetToValues(form.state.values);
-        skipNextHashChangeRef.current = true;
-        window.history.pushState(null, '', e.newURL);
-      }, undefined, t('confirm'));
-    };
-
+    const unregister = registerNavigationGuard((_path, proceed) => {
+      if (savingRef.current) return false;
+      if (!hasUnsavedChanges()) return true;
+      confirmDialog(t('unsavedChangesWarning'), '', proceed, undefined, t('confirm'));
+      return false;
+    });
     window.addEventListener('beforeunload', handleBeforeUnload);
-    window.addEventListener('hashchange', handleHashChange);
     return () => {
+      unregister();
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      window.removeEventListener('hashchange', handleHashChange);
     };
-  }, [isDirty]);
+  }, []);
 
   async function saveTask(): Promise<void> {
+    if (savingRef.current) return;
+    const snapshot = structuredClone(form.state.values);
     const {
       configId, isDisabled, selectedDays, sendTime, taskTimezone, emailsText, recentTimes,
       senderNameTemplate, subjectTemplate, templateText, templateFormat, injectionLanguage,
       dateGranularity, notes, serveScheduleIcs, icsLinkMode, icsContentTemplate, attachmentTypes,
-    } = form.state.values;
-    if (!configId) return;
-    if (taskId && !await db.emailTasks.get(taskId)) {
-      toast.error(t('emailTaskNotFound'));
-      return;
+    } = snapshot;
+    if (!configId || !configs.some(config => config.id === configId)) throw new Error(t('selectConfigFirst'));
+    if (!Number.isSafeInteger(recentTimes) || recentTimes < 0 || !/^([01]\d|2[0-3]):[0-5]\d$/.test(sendTime)) {
+      throw new Error(t('emailTaskInvalidSettings'));
     }
-    const nextId = selectedTaskId || crypto.randomUUID();
-    const timezoneSource = taskTimezone === EMAIL_TASK_TIMEZONE_SCHEDULE
-      ? 'schedule'
-      : taskTimezone === EMAIL_TASK_TIMEZONE_SYSTEM
-        ? 'system'
-        : taskTimezone === SYSTEM_DEFAULT_TIMEZONE
-          ? 'default'
-          : 'task';
-    const explicitTimezone = timezoneSource === 'task' ? taskTimezone : undefined;
-    const savedTask: EmailTask = {
-      id: nextId,
-      configId,
-      disabled: isDisabled,
-      notes: notes.trim() || undefined,
-      daysOfWeek: [...selectedDays].sort((a, b) => a - b),
-      sendTime,
-      timezone: explicitTimezone,
-      emails: parseEmails(emailsText),
-      recentTimes,
-      senderNameTemplate,
-      subjectTemplate,
-      templateText,
-      modifiedAt: Date.now(),
-      metadata: {
-        format: templateFormat,
-        injectionLanguage,
-        dateGranularity,
-        dateLocale: injectionLanguage,
-        serveScheduleIcs,
-        icsLinkMode,
-        icsContentTemplate,
-        attachmentTypes,
-        timezone: explicitTimezone,
-        timezoneSource,
+    savingRef.current = true;
+    try {
+      const existing = selectedTaskId ? await db.emailTasks.get(selectedTaskId) : undefined;
+      if (selectedTaskId && !existing) throw new Error(t('emailTaskNotFound'));
+      const nextId = selectedTaskId || draftTaskIdRef.current;
+      const timezoneSource = taskTimezone === EMAIL_TASK_TIMEZONE_SCHEDULE
+        ? 'schedule'
+        : taskTimezone === EMAIL_TASK_TIMEZONE_SYSTEM
+          ? 'system'
+          : taskTimezone === SYSTEM_DEFAULT_TIMEZONE
+            ? 'default'
+            : 'task';
+      const explicitTimezone = timezoneSource === 'task' ? taskTimezone : undefined;
+      const savedTask: EmailTask = {
+        ...existing,
+        id: nextId,
+        configId,
+        disabled: isDisabled,
+        notes: notes.trim() || undefined,
+        daysOfWeek: [...selectedDays].sort((a, b) => a - b),
         sendTime,
-      },
-    };
-    await db.emailTasks.put(savedTask);
-    setCurrentTask(savedTask);
-    resetToValues(form.state.values);
-    setSelectedTaskId(nextId);
-    navigate(`/email-tasks/edit/${nextId}`);
+        timezone: explicitTimezone,
+        emails: parseEmails(emailsText),
+        recentTimes,
+        senderNameTemplate,
+        subjectTemplate,
+        templateText,
+        modifiedAt: Date.now(),
+        metadata: {
+          ...existing?.metadata,
+          format: templateFormat,
+          injectionLanguage,
+          dateGranularity,
+          dateLocale: injectionLanguage,
+          serveScheduleIcs,
+          icsLinkMode,
+          icsContentTemplate,
+          attachmentTypes,
+          timezone: explicitTimezone,
+          timezoneSource,
+          sendTime,
+        },
+      };
+      await db.emailTasks.put(savedTask);
+      setCurrentTask(savedTask);
+      const liveValues = structuredClone(form.state.values);
+      resetToValues(snapshot);
+      // Retain edits made while the request was pending, with the saved snapshot as baseline.
+      for (const key of Object.keys(snapshot) as (keyof EmailTaskFormValues)[]) {
+        if (JSON.stringify(liveValues[key]) !== JSON.stringify(snapshot[key])) {
+          form.setFieldValue(key, liveValues[key]);
+        }
+      }
+      setSelectedTaskId(nextId);
+      toast.success(t('emailTaskSaved'));
+      savingRef.current = false;
+      if (!hasUnsavedChanges()) navigate(`/email-tasks/edit/${nextId}`);
+    } finally {
+      savingRef.current = false;
+    }
   }
 
   async function removeTask(): Promise<void> {
     if (!selectedTaskId) return;
     await db.emailTasks.delete(selectedTaskId);
+    resetToValues(form.state.values);
     navigate('/email-tasks');
   }
 
@@ -358,8 +374,11 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
     const nextDisabled = !current.disabled;
     await db.emailTasks.put({ ...current, disabled: nextDisabled, modifiedAt: Date.now() });
     setCurrentTask(await db.emailTasks.get(selectedTaskId));
-    if (form.state.isDirty) form.setFieldValue('isDisabled', nextDisabled);
-    else resetToValues({ ...form.state.values, isDisabled: nextDisabled });
+    const liveValues = structuredClone(form.state.values);
+    resetToValues({ ...defaultValuesRef.current, isDisabled: nextDisabled });
+    for (const key of Object.keys(liveValues) as (keyof EmailTaskFormValues)[]) {
+      if (key !== 'isDisabled') form.setFieldValue(key, liveValues[key]);
+    }
   }
 
   function toggleDay(day: number): void {
@@ -421,7 +440,7 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   }
 
   return {
-    t, action, capability, currentTask, ready, selectedTaskId, form, values,
+    t, action, capability, currentTask, ready, selectedTaskId, form, values, isDirty,
     showPreviewDialog, setShowPreviewDialog, showIcsPreviewDialog, setShowIcsPreviewDialog, icsPreview,
     sendNowOpen, setSendNowOpen, sendRecipientsText, setSendRecipientsText, sendingNow, sendNowError, setSendNowError,
     showDaysDialog, setShowDaysDialog, showVarDialog, setShowVarDialog, varDialogSource,

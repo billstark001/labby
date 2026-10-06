@@ -19,7 +19,15 @@ function getCurrentPath(): string {
 
 const route = signal<AppRoute>(getCurrentPath() as AppRoute);
 
-export function navigate(path: AppRoute | string): void {
+type NavigationGuard = (path: string, proceed: () => void) => boolean;
+let navigationGuard: NavigationGuard | undefined;
+
+export function registerNavigationGuard(guard: NavigationGuard): () => void {
+  navigationGuard = guard;
+  return () => { if (navigationGuard === guard) navigationGuard = undefined; };
+}
+
+function commitNavigation(path: string): void {
   const normalized = normalizePath(path) as AppRoute;
   const targetHash = `#${normalized}`;
 
@@ -32,6 +40,13 @@ export function navigate(path: AppRoute | string): void {
   }
 
   window.location.hash = targetHash;
+  route.value = normalized;
+}
+
+export function navigate(path: AppRoute | string): void {
+  const normalized = normalizePath(path);
+  if (normalized !== route.value && navigationGuard?.(normalized, () => commitNavigation(normalized)) === false) return;
+  commitNavigation(normalized);
 }
 
 export function useSyncRoute(): void {
@@ -39,6 +54,10 @@ export function useSyncRoute(): void {
     const syncRoute = () => {
       const normalized = normalizePath(window.location.hash);
       const targetHash = `#${normalized}`;
+      if (normalized !== route.value && navigationGuard?.(normalized, () => commitNavigation(normalized)) === false) {
+        window.history.replaceState(null, '', `#${route.value}`);
+        return;
+      }
 
       // Silently rewrite non-canonical hashes (e.g. missing leading slash)
       // using replaceState so we don't fire a second 'hashchange' event

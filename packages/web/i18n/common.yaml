@@ -2457,3 +2457,33 @@ manualEditVersionNote:
   en: 'Manual edit · {0} meetings'
   zh-CN: '手动调整排班 · 共 {0} 次组会'
   ja-JP: '手動編集 · 全 {0} 回'
+
+emailTaskSaved:
+  en: Email task saved
+  zh-CN: 邮件任务已保存
+  ja-JP: メールタスクを保存しました
+
+emailTaskSaving:
+  en: Saving…
+  zh-CN: 正在保存…
+  ja-JP: 保存中…
+
+emailTaskUnsaved:
+  en: You have unsaved changes
+  zh-CN: 有更改尚未保存
+  ja-JP: 未保存の変更があります
+
+emailTaskNoUnsavedChanges:
+  en: No unsaved changes
+  zh-CN: 没有未保存的更改
+  ja-JP: 未保存の変更はありません
+
+emailTaskInvalidSettings:
+  en: Enter a valid send time and a non-negative integer send limit.
+  zh-CN: 请填写有效的发送时间及非负整数的发送次数上限。
+  ja-JP: 有効な送信時刻と0以上の整数の送信回数上限を入力してください。
+
+emailTaskActionFailed:
+  en: Operation failed; your edits have been retained
+  zh-CN: 操作失败，当前编辑已保留
+  ja-JP: 操作に失敗しました。編集内容は保持されています
