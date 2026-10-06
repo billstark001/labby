@@ -20,6 +20,7 @@ export const DEFAULT_TEMPLATE_PRESETS: DefaultTemplatePreset[] = [
       '- Sessions: {{ sessionCount }}',
       '',
       '{{ summary }}',
+      '{{ nextSessionNotes() }}',
     ].join('\n'),
   },
   {
@@ -35,6 +36,7 @@ export const DEFAULT_TEMPLATE_PRESETS: DefaultTemplatePreset[] = [
       '    <p style="margin:0 0 8px 0;color:#334155;">Generated at: {{ now }}</p>',
       '    <p style="margin:0 0 8px 0;color:#334155;">Sessions: {{ sessionCount }}</p>',
       '    <p style="margin:12px 0 0 0;color:#0f172a;">{{ summary }}</p>',
+      '    <p>{{ nextSessionNotes() }}</p>',
       '  </article>',
       '</section>',
     ].join('\n'),
@@ -50,6 +52,7 @@ export const DEFAULT_TEMPLATE_PRESETS: DefaultTemplatePreset[] = [
       'Hi, this is your next reminder.',
       '',
       '{{ summary }}',
+      '{{ nextSessionNotes() }}',
       '',
       'Sent at {{ now }}',
     ].join('\n'),

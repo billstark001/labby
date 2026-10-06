@@ -130,13 +130,21 @@ test('public email task ICS endpoint is available when a task opts in', async ()
     assert.match(icsBody, /SUMMARY:Presenter: Bob/);
     assert.equal(icsBody.match(/BEGIN:VEVENT/g)?.length, 2);
 
+    const updatedSchedule: SchedulePlan = { ...schedule, sessions: schedule.sessions.map(session => ({
+      ...session, notes: 'Room B', timeRange: ['14:30', '15:30'],
+    })) };
+    const updateResponse = await runtime.app.request(`/api/v1/db/schedules/${scheduleId}`, {
+      method: 'PUT', headers: makeHeaders(token), body: JSON.stringify(updatedSchedule),
+    });
+    assert.ok(updateResponse.status === 200 || updateResponse.status === 201);
+
     await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {
       method: 'PUT',
       headers: makeHeaders(token),
       body: JSON.stringify({ ...task, metadata: {
         serveScheduleIcs: true,
         icsLinkMode: 'meeting',
-        icsContentTemplate: 'Join https://zoom.example/join?date={{ sessionDate }}; {{ presenters[0] }} and {{ presenters[1] }}',
+        icsContentTemplate: 'Join https://zoom.example/join?date={{ sessionDate }}; {{ presenters[0] }} and {{ presenters[1] }}; {{ sessionNotes }}',
       } }),
     });
     const meetingRes = await runtime.app.request(`/public/email-tasks/${taskId}/schedule.ics`);
@@ -144,8 +152,9 @@ test('public email task ICS endpoint is available when a task opts in', async ()
     const meetingBody = await meetingRes.text();
     assert.equal(meetingBody.match(/BEGIN:VEVENT/g)?.length, 1);
     assert.match(meetingBody, /SUMMARY:Group meeting/);
-    assert.match(meetingBody, /DTSTART:20260105T000000Z/);
-    assert.match(meetingBody, /DTEND:20260105T010000Z/);
+    assert.match(meetingBody, /Room B/);
+    assert.match(meetingBody, /DTSTART:20260105T053000Z/);
+    assert.match(meetingBody, /DTEND:20260105T063000Z/);
     assert.match(meetingBody, /DESCRIPTION:Join https:\/\/zoom.example\/join\?date=2026-01-05\\; Alice and Bob/);
 
     await runtime.app.request(`/api/v1/db/email-tasks/${taskId}`, {

@@ -1,4 +1,5 @@
-import type { Person, ScheduleConfig, SchedulePlan } from '../types.js';
+import { resolveSessionTimeRange, type SessionTimeRange } from '../schedule/session.js';
+import type { Person, ScheduleConfig, SchedulePlan, Session } from '../types.js';
 import { getEnvironmentTimeZone, getTimeZoneOffsetMinutes, normalizeTimeZone } from '../timezone.js';
 import { renderTemplate } from './renderer.js';
 
@@ -57,6 +58,9 @@ export interface EmailTemplateVariableDoc {
 }
 
 export const ICS_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
+  { name: 'sessionNotes', type: 'string', descriptions: {
+    en: 'Optional note for this calendar event’s meeting.', 'zh-CN': '当前日历事件对应组会的单次备注（未设置时为空）。', 'ja-JP': 'この予定のミーティングのメモ（未設定時は空文字列）。',
+  } },
   { name: 'sessionDate', type: 'string', descriptions: {
     en: 'Meeting date in YYYY-MM-DD format.', 'zh-CN': '组会日期，格式为 YYYY-MM-DD。', 'ja-JP': 'ミーティングの日付（YYYY-MM-DD）。',
   } },
@@ -105,6 +109,7 @@ interface NextSessionSummary {
   dateText: string;
   timeText: string;
   dateTimeText: string;
+  notes: string;
 }
 
 const DEFAULT_TABLE_LABELS: ScheduleTableLabels = {
@@ -194,15 +199,15 @@ function formatTimeLabel(timeStr: string, locale: string): string {
   }).format(date);
 }
 
-function formatTimeRangeLabel(config: ScheduleConfig | undefined, locale: string): string {
-  const [start = '09:00', end = '10:00'] = config?.timeRange ?? [];
+function formatTimeRangeLabel(timeRange: SessionTimeRange, locale: string): string {
+  const [start, end] = timeRange;
   const startLabel = formatTimeLabel(start, locale);
   const endLabel = formatTimeLabel(end, locale);
   return `${startLabel} - ${endLabel}`;
 }
 
 function pickNextSession(plan: SchedulePlan, anchorDate?: string): SchedulePlan['sessions'][number] | null {
-  const sorted = [...plan.sessions].sort((left, right) => left.date.localeCompare(right.date));
+  const sorted = plan.sessions.slice().sort((left, right) => left.date.localeCompare(right.date));
   if (sorted.length === 0) return null;
   const anchor = anchorDate ?? new Date().toISOString().slice(0, 10);
   return sorted.find((session) => session.date >= anchor) ?? sorted[sorted.length - 1] ?? null;
@@ -219,6 +224,7 @@ function buildNextSessionSummary(
       dateText: '',
       timeText: '',
       dateTimeText: '',
+      notes: '',
     };
   }
 
@@ -226,17 +232,19 @@ function buildNextSessionSummary(
     locale,
     granularity: options.granularity === 'month-day' || options.granularity === 'month-day-time' ? 'month-day' : 'date',
     includeWeekday: options.includeWeekday ?? true,
-  }, options.config);
-  const timeText = formatTimeRangeLabel(options.config, locale);
+    timeZone: options.config?.timezone ?? options.timeZone,
+  }, options.config?.timeRange);
+  const timeText = formatTimeRangeLabel(resolveSessionTimeRange(next, options.config), locale);
 
   return {
     dateText,
     timeText,
     dateTimeText: `${dateText} ${timeText}`.trim(),
+    notes: next.date >= (options.anchorDate ?? new Date().toISOString().slice(0, 10)) ? next.notes ?? '' : '',
   };
 }
 
-function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = {}, config?: ScheduleConfig): string {
+function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = {}, timeRange?: SessionTimeRange): string {
   const locale = normalizeLocale(options.locale);
   const granularity = options.granularity ?? 'date';
   const includeWeekday = options.includeWeekday ?? false;
@@ -260,7 +268,7 @@ function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = 
   const dateText = new Intl.DateTimeFormat(locale, formatOptions).format(date);
 
   if (granularity === 'date-time' || granularity === 'month-day-time') {
-    const timeText = config?.timeRange?.join('-') ?? '';
+    const timeText = timeRange?.join('-') ?? '';
     return timeText ? `${dateText} ${timeText}` : dateText;
   }
 
@@ -269,7 +277,7 @@ function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = 
 
 function pickSessions(plan: SchedulePlan, options: ScheduleRowBuildOptions = {}): SchedulePlan['sessions'] {
   const mode = options.mode ?? 'semester';
-  const sorted = [...plan.sessions].sort((left, right) => left.date.localeCompare(right.date));
+  const sorted = plan.sessions.slice().sort((left, right) => left.date.localeCompare(right.date));
 
   if (mode === 'semester') {
     return sorted;
@@ -310,56 +318,70 @@ function pickSessions(plan: SchedulePlan, options: ScheduleRowBuildOptions = {})
   });
 }
 
+type PersonNameResolver = (id: string) => string;
+
+function createPersonNameResolver(personMap: Map<string, Person>, displayName: (person: Person) => string): PersonNameResolver {
+  return function resolveName(id: string): string {
+    const person = personMap.get(id);
+    return person ? displayName(person) : fallbackEntityId(id);
+  };
+}
+
 export function buildScheduleRows(
   plan: SchedulePlan,
   personMap: Map<string, Person>,
   displayName: (person: Person) => string,
   options: ScheduleRowBuildOptions = {},
 ): ScheduleRow[] {
-  const sessions = pickSessions(plan, options);
-  return sessions.flatMap((session) =>
-    session.presentations.map((presentation) => {
-      const presenter = personMap.get(presentation.presenterId);
-      const questioners = presentation.questionerIds.map((questionerId) => {
-        const person = personMap.get(questionerId);
-        return person ? displayName(person) : fallbackEntityId(questionerId);
-      });
-
-      return {
+  const rows: ScheduleRow[] = [];
+  const resolveName = createPersonNameResolver(personMap, displayName);
+  for (const session of pickSessions(plan, options)) {
+    const times = session.timeRange ?? options.config?.timeRange;
+    const dateLabel = formatDateLabel(session.date, options.dateDisplay, times);
+    for (const presentation of session.presentations) {
+      rows.push({
         dateIso: session.date,
-        dateLabel: formatDateLabel(session.date, options.dateDisplay, options.config),
-        presenter: presenter ? displayName(presenter) : fallbackEntityId(presentation.presenterId),
-        questioners,
-      };
-    }),
-  );
+        dateLabel,
+        presenter: resolveName(presentation.presenterId),
+        questioners: presentation.questionerIds.map(resolveName),
+      });
+    }
+  }
+  return rows;
+}
+
+function renderHtmlRow(row: ScheduleRow): string {
+  return `<tr>\n  <td>${escapeHtml(row.dateLabel)}</td>\n  <td>${escapeHtml(row.presenter)}</td>\n  <td>${escapeHtml(row.questioners.join(', '))}</td>\n</tr>`;
+}
+
+function renderMarkdownRow(row: ScheduleRow): string {
+  return `| ${escapeMarkdown(row.dateLabel)} | ${escapeMarkdown(row.presenter)} | ${escapeMarkdown(row.questioners.join(', '))} |`;
+}
+
+function renderBulletRow(row: ScheduleRow): string {
+  return `- ${escapeMarkdown(row.dateLabel)}\n  - presenter: ${escapeMarkdown(row.presenter)}\n  - questioners: ${escapeMarkdown(row.questioners.join(', '))}`;
+}
+
+function renderPlainTextRow(row: ScheduleRow): string {
+  return `${row.dateLabel}\t${row.presenter}\t${row.questioners.join(', ')}`;
 }
 
 export function buildScheduleTableHtml(rows: ScheduleRow[], labels: ScheduleTableLabels = DEFAULT_TABLE_LABELS): string {
-  const body = rows
-    .map((row) => `<tr>\n  <td>${escapeHtml(row.dateLabel)}</td>\n  <td>${escapeHtml(row.presenter)}</td>\n  <td>${escapeHtml(row.questioners.join(', '))}</td>\n</tr>`)
-    .join('\n');
-
+  const body = rows.map(renderHtmlRow).join('\n');
   return `<table>\n<thead>\n<tr>\n  <th>${escapeHtml(labels.date)}</th>\n  <th>${escapeHtml(labels.presenter)}</th>\n  <th>${escapeHtml(labels.questioners)}</th>\n</tr>\n</thead>\n<tbody>\n${body}\n</tbody>\n</table>`;
 }
 
 export function buildScheduleTableMarkdown(rows: ScheduleRow[], labels: ScheduleTableLabels = DEFAULT_TABLE_LABELS): string {
   const header = `| ${escapeMarkdown(labels.date)} | ${escapeMarkdown(labels.presenter)} | ${escapeMarkdown(labels.questioners)} |`;
-  const sep = '| --- | --- | --- |';
-  const body = rows.map((row) => `| ${escapeMarkdown(row.dateLabel)} | ${escapeMarkdown(row.presenter)} | ${escapeMarkdown(row.questioners.join(', '))} |`);
-  return [header, sep, ...body].join('\n');
+  return [header, '| --- | --- | --- |'].concat(rows.map(renderMarkdownRow)).join('\n');
 }
 
 export function buildScheduleBulletListMarkdown(rows: ScheduleRow[]): string {
-  if (rows.length === 0) return '- (no sessions)';
-  return rows
-    .map((row) => `- ${escapeMarkdown(row.dateLabel)}\n  - presenter: ${escapeMarkdown(row.presenter)}\n  - questioners: ${escapeMarkdown(row.questioners.join(', '))}`)
-    .join('\n');
+  return rows.length ? rows.map(renderBulletRow).join('\n') : '- (no sessions)';
 }
 
 export function buildSchedulePlainText(rows: ScheduleRow[]): string {
-  const lines = rows.map((row) => `${row.dateLabel}\t${row.presenter}\t${row.questioners.join(', ')}`);
-  return ['Date\tPresenter\tQuestioners', ...lines].join('\n');
+  return ['Date\tPresenter\tQuestioners'].concat(rows.map(renderPlainTextRow)).join('\n');
 }
 
 export function buildScheduleCsvText(rows: ScheduleRow[]): string {
@@ -396,6 +418,43 @@ function escapeIcsText(text: string): string {
     .replaceAll(';', '\\;');
 }
 
+interface IcsPresentation {
+  presenterId: string;
+  presenterName: string;
+  questionerNames: string[];
+}
+
+function buildIcsPresentations(session: Session, resolveName: PersonNameResolver): IcsPresentation[] {
+  const presentations: IcsPresentation[] = [];
+  for (const presentation of session.presentations) {
+    presentations.push({
+      presenterId: presentation.presenterId,
+      presenterName: resolveName(presentation.presenterId),
+      questionerNames: presentation.questionerIds.map(resolveName),
+    });
+  }
+  return presentations;
+}
+
+function getPresenterName(presentation: IcsPresentation): string {
+  return presentation.presenterName;
+}
+
+function uniqueQuestionerNames(presentations: IcsPresentation[]): string[] {
+  const names = new Set<string>();
+  for (const presentation of presentations) {
+    for (const name of presentation.questionerNames) names.add(name);
+  }
+  return Array.from(names);
+}
+
+function renderIcsDescription(template: string | undefined, context: Record<string, unknown>, fallback: string, notes?: string): string {
+  if (!template?.trim()) return notes ? [fallback, notes].filter(Boolean).join('\n') : fallback;
+  const rendered = renderTemplate(template, context, { strict: true });
+  if (rendered.errors.length) throw new Error(`Invalid ICS content template: ${rendered.errors[0]!.message}`);
+  return rendered.output;
+}
+
 export function buildScheduleIcs(
   plan: SchedulePlan,
   personMap: Map<string, Person>,
@@ -404,24 +463,16 @@ export function buildScheduleIcs(
   labels: { presenter: string; questioners: string; meeting?: string } = { presenter: 'Presenter', questioners: 'Questioners' },
   options: { timeZone?: string; mode?: ScheduleIcsMode; contentTemplate?: string; templateContext?: Record<string, unknown> } = {},
 ): string {
-  const startTime = config?.timeRange[0] ?? '09:00';
-  const endTime = config?.timeRange[1] ?? '10:00';
   const timeZone = normalizeTimeZone(config?.timezone) ?? normalizeTimeZone(options.timeZone) ?? getEnvironmentTimeZone();
   const dtStamp = new Date(plan.createdAt).toISOString().slice(0, 19).replaceAll('-', '').replaceAll(':', '') + 'Z';
 
   const events: string[] = [];
+  const resolveName = createPersonNameResolver(personMap, displayName);
   for (const session of plan.sessions) {
-    const presentations = session.presentations.map((pres) => {
-      const presenter = personMap.get(pres.presenterId);
-      return {
-        ...pres,
-        presenterName: presenter ? displayName(presenter) : fallbackEntityId(pres.presenterId),
-        questionerNames: pres.questionerIds.map((qid) => {
-          const questioner = personMap.get(qid);
-          return questioner ? displayName(questioner) : fallbackEntityId(qid);
-        }),
-      };
-    });
+    const [startTime, endTime] = resolveSessionTimeRange(session, config);
+    const presentations = buildIcsPresentations(session, resolveName);
+    const presenterNames = presentations.map(getPresenterName);
+    const questionerNames = uniqueQuestionerNames(presentations);
     const endDate = endTime <= startTime
       ? new Date(Date.parse(`${session.date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
       : session.date;
@@ -443,24 +494,20 @@ export function buildScheduleIcs(
       const summary = pres ? `${labels.presenter}: ${pres.presenterName}` : (labels.meeting ?? 'Group meeting');
       const defaultDescription = pres
         ? (pres.questionerNames.length > 0 ? `${labels.questioners}: ${pres.questionerNames.join(', ')}` : '')
-        : `${labels.presenter}: ${presentations.map((item) => item.presenterName).join(', ')}`;
-      const templateContext = {
-        ...options.templateContext,
+        : `${labels.presenter}: ${presenterNames.join(', ')}`;
+      const templateContext = Object.assign({}, options.templateContext, {
         sessionDate: session.date,
+        sessionNotes: session.notes ?? '',
         sessionStartTime: startTime,
         sessionEndTime: endTime,
         eventStart: new Date(meetingStart + startMinute * 60_000).toISOString(),
         eventEnd: new Date(meetingStart + endMinute * 60_000).toISOString(),
         timeZone,
         presenter: pres?.presenterName ?? '',
-        presenters: presentations.map((item) => item.presenterName),
-        questioners: pres?.questionerNames ?? [...new Set(presentations.flatMap((item) => item.questionerNames))],
-      };
-      const rendered = options.contentTemplate?.trim()
-        ? renderTemplate(options.contentTemplate, templateContext, { strict: true })
-        : undefined;
-      if (rendered?.errors.length) throw new Error(`Invalid ICS content template: ${rendered.errors[0]!.message}`);
-      const description = rendered ? rendered.output : defaultDescription;
+        presenters: presenterNames,
+        questioners: pres?.questionerNames ?? questionerNames,
+      });
+      const description = renderIcsDescription(options.contentTemplate, templateContext, defaultDescription, session.notes);
 
       events.push([
         'BEGIN:VEVENT',
@@ -482,9 +529,7 @@ export function buildScheduleIcs(
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-TIMEZONE:${timeZone}`,
-    ...events,
-    'END:VCALENDAR',
-  ].filter(Boolean).join('\r\n') + '\r\n';
+  ].concat(events, 'END:VCALENDAR').filter(Boolean).join('\r\n') + '\r\n';
 }
 
 export function buildScheduleTemplateBlocks(
@@ -522,6 +567,8 @@ function emptyVariables(): Record<string, unknown> {
     scheduleOnceTableHtml: EMPTY_BLOCKS.tableHtml,
     scheduleOnceTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
     scheduleOnceBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
+    scheduleNextSessionNotes: '',
+    nextSessionNotes: () => '',
     scheduleNextSessionDateText: '',
     scheduleNextSessionTimeText: '',
     scheduleNextSessionDateTimeText: '',
@@ -532,6 +579,28 @@ function emptyVariables(): Record<string, unknown> {
   };
 }
 
+function buildPersonMap(persons: Person[]): Map<string, Person> {
+  const result = new Map<string, Person>();
+  for (const person of persons) result.set(person.id, person);
+  return result;
+}
+
+function createRowBuildOptions(options: BuildEmailTemplateScheduleVariablesOptions, mode: ScheduleExportMode, windowUnit?: ScheduleWindowUnit): ScheduleRowBuildOptions {
+  return {
+    config: options.config,
+    anchorDate: options.anchorDate,
+    mode,
+    windowUnit,
+    windowCount: 1,
+    dateDisplay: {
+      locale: normalizeLocale(options.locale),
+      granularity: options.granularity,
+      includeWeekday: options.includeWeekday,
+      timeZone: options.config?.timezone ?? options.timeZone,
+    },
+  };
+}
+
 export function buildEmailTemplateScheduleVariables(
   options: BuildEmailTemplateScheduleVariablesOptions,
 ): Record<string, unknown> {
@@ -539,54 +608,24 @@ export function buildEmailTemplateScheduleVariables(
   if (!plan) return emptyVariables();
 
   const locale = normalizeLocale(options.locale);
-  const personMap = options.personMap ?? new Map((options.persons ?? []).map((person) => [person.id, person]));
+  const personMap = options.personMap ?? buildPersonMap(options.persons ?? []);
   const displayName = options.displayName ?? ((person: Person) => defaultDisplayName(person, locale));
   const labels: ScheduleTableLabels = {
-    ...DEFAULT_TABLE_LABELS,
-    ...(options.labels ?? {}),
+    date: options.labels?.date ?? DEFAULT_TABLE_LABELS.date,
+    presenter: options.labels?.presenter ?? DEFAULT_TABLE_LABELS.presenter,
+    questioners: options.labels?.questioners ?? DEFAULT_TABLE_LABELS.questioners,
   };
 
-  const common = {
-    config: options.config,
-    anchorDate: options.anchorDate,
-    dateDisplay: {
-      locale,
-      granularity: options.granularity,
-      includeWeekday: options.includeWeekday,
-      timeZone: options.config?.timezone ?? options.timeZone,
-    } satisfies ScheduleDateDisplayOptions,
+  const buildBlocks = (mode: ScheduleExportMode, windowUnit?: ScheduleWindowUnit): ScheduleTemplateBlocks => {
+    const rowOptions = createRowBuildOptions(options, mode, windowUnit);
+    return buildScheduleTemplateBlocks(plan, personMap, displayName, rowOptions, labels);
   };
 
-  const semester = buildScheduleTemplateBlocks(plan, personMap, displayName, {
-    ...common,
-    mode: 'semester',
-  }, labels);
-
-  const week = buildScheduleTemplateBlocks(plan, personMap, displayName, {
-    ...common,
-    mode: 'window',
-    windowUnit: 'week',
-    windowCount: 1,
-  }, labels);
-
-  const month = buildScheduleTemplateBlocks(plan, personMap, displayName, {
-    ...common,
-    mode: 'window',
-    windowUnit: 'month',
-    windowCount: 1,
-  }, labels);
-
-  const quarter = buildScheduleTemplateBlocks(plan, personMap, displayName, {
-    ...common,
-    mode: 'window',
-    windowUnit: 'quarter',
-    windowCount: 1,
-  }, labels);
-
-  const once = buildScheduleTemplateBlocks(plan, personMap, displayName, {
-    ...common,
-    mode: 'once',
-  }, labels);
+  const semester = buildBlocks('semester');
+  const week = buildBlocks('window', 'week');
+  const month = buildBlocks('window', 'month');
+  const quarter = buildBlocks('window', 'quarter');
+  const once = buildBlocks('once');
 
   const nextSession = buildNextSessionSummary(plan, options);
   const getNextSessionDateText = () => nextSession.dateText;
@@ -609,6 +648,8 @@ export function buildEmailTemplateScheduleVariables(
     scheduleOnceTableHtml: once.tableHtml,
     scheduleOnceTableMarkdown: once.tableMarkdown,
     scheduleOnceBulletedListMarkdown: once.listMarkdown,
+    scheduleNextSessionNotes: nextSession.notes,
+    nextSessionNotes: () => nextSession.notes,
     scheduleNextSessionDateText: getNextSessionDateText(),
     scheduleNextSessionTimeText: getNextSessionTimeText(),
     scheduleNextSessionDateTimeText: getNextSessionDateTimeText(),
@@ -620,6 +661,12 @@ export function buildEmailTemplateScheduleVariables(
 }
 
 export const EMAIL_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
+  { name: 'scheduleNextSessionNotes', type: 'string', descriptions: {
+    en: 'Optional note for the next meeting; empty when unset.', 'zh-CN': '下一次组会的单次备注（未设置时为空）。', 'ja-JP': '次回ミーティングのメモ（未設定時は空文字列）。',
+  } },
+  { name: 'nextSessionNotes', type: '() => string', descriptions: {
+    en: 'Next meeting note. Use {{ nextSessionNotes() }}.', 'zh-CN': '求值获得下一次组会的当次备注：{{ nextSessionNotes() }}。', 'ja-JP': '次回のメモ。使用例: {{ nextSessionNotes() }}。',
+  } },
   {
     name: 'recipient',
     type: 'string',

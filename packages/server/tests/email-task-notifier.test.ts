@@ -65,7 +65,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
       id: id('plan-1'),
       createdAt: Date.now(),
       configId: id('cfg-1'),
-      sessions: [{ date: '2099-01-05', presentations: [] }],
+      sessions: [{ date: '2099-01-05', notes: 'Bring slides', timeRange: ['14:30', '16:00'], presentations: [] }],
     });
 
     await store.putEmailTask({
@@ -74,7 +74,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
       daysOfWeek: [1, 3],
       emails: ['a@example.com', 'b@example.com'],
       recentTimes: 1,
-      templateText: 'Hi {{ recipient }} / {{ sessionCount }}',
+      templateText: 'Hi {{ recipient }} / {{ sessionCount }} / {{ nextSessionNotes() }} / {{ nextSessionTimeText() }}',
       sentCounts: { 'a@example.com': 1 },
       metadata: {},
     });
@@ -94,6 +94,8 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0]?.to, ['b@example.com']);
     assert.ok((sent[0]?.text ?? '').includes('b@example.com'));
+    assert.match(sent[0]?.text ?? '', /Bring slides/);
+    assert.match(sent[0]?.text ?? '', /14:30 - 16:00/);
     assert.equal(sent[0]?.attachments?.length, 2);
     assert.ok(sent[0]?.attachments?.some((item) => item.filename.endsWith('.csv')));
     assert.ok(sent[0]?.attachments?.some((item) => item.filename.endsWith('.ics')));

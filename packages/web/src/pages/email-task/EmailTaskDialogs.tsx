@@ -109,7 +109,7 @@ export function EmailTaskDialogs({ editor }: EmailTaskDialogProps) {
               {(varDialogSource === 'ics'
                 ? [
                   ...ICS_TEMPLATE_VARIABLE_DOCS,
-                  ...EMAIL_TEMPLATE_VARIABLE_DOCS.filter((item) => item.name === 'taskId' || item.name === 'configId' || item.name === 'scheduleIcsUrl' || item.name.startsWith('schedule')),
+                  ...EMAIL_TEMPLATE_VARIABLE_DOCS.filter((item) => item.name === 'taskId' || item.name === 'configId' || item.name === 'scheduleIcsUrl' || item.name.startsWith('schedule') || item.name === 'nextSessionNotes'),
                 ]
                 : EMAIL_TEMPLATE_VARIABLE_DOCS).map((item) => (
                 <tr key={item.name}>
