@@ -74,7 +74,7 @@ test('EmailTaskNotifier syncs jobs and sends per-recipient with independent coun
       daysOfWeek: [1, 3],
       emails: ['a@example.com', 'b@example.com'],
       recentTimes: 1,
-      templateText: 'Hi {{ recipient }} / {{ sessionCount }} / {{ nextSessionNotes() }} / {{ nextSessionTimeText() }}',
+      templateText: 'Hi {{ recipient }} / {{ sessionCount }} / {{ nextSession.notes }} / {{ nextSession.time }}',
       sentCounts: { 'a@example.com': 1 },
       metadata: {},
     });
@@ -390,7 +390,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
       id: id('plan-template-errors'),
       createdAt: Date.now(),
       configId: id('cfg-template-errors'),
-      sessions: [{ date: '2026-01-05', presentations: [] }],
+      sessions: [{ date: '2099-01-05', presentations: [] }],
     });
 
     await store.putEmailTask({
@@ -399,7 +399,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
       daysOfWeek: [1],
       emails: ['helper@example.com'],
       recentTimes: 0,
-      templateText: 'Next {{ nextSessionDateText() }}',
+      templateText: 'Next {{ nextSession.date }}',
       metadata: {},
     });
 
@@ -412,7 +412,7 @@ test('EmailTaskNotifier allows schedule helper functions and fails manual send o
 
     await notifier.runTaskNow(id('task-template-helper'), ['helper@example.com']);
     assert.equal(sent.length, 1);
-    assert.match(sent[0]?.text ?? '', /2026/);
+    assert.match(sent[0]?.text ?? '', /2099/);
 
     await store.putEmailTask({
       id: id('task-template-error'),
@@ -532,10 +532,10 @@ test('email send timezone does not change schedule times in templates or ICS', a
       startDate: '2026-01-01', endDate: '2099-01-31', metadata: {} });
     await store.putPerson({ id: id('timezone-presenter'), name: 'Presenter', names: { en: 'Presenter' }, metadata: {}, keywordIds: [] });
     await store.putSchedule({ id: id('timezone-plan'), configId, createdAt: Date.UTC(2026, 0, 1),
-      sessions: [{ date: '2026-01-05', presentations: [{ presenterId: id('timezone-presenter'), questionerIds: [] }] }] });
+      sessions: [{ date: '2099-01-05', presentations: [{ presenterId: id('timezone-presenter'), questionerIds: [] }] }] });
     await store.putEmailTask({ id: taskId, configId, daysOfWeek: [1], sendTime: '12:00', timezone: 'Asia/Shanghai',
       emails: ['test@example.com'], recentTimes: 0,
-      templateText: '{{ runTimezone }}|{{ nextSessionTimeText() }}',
+      templateText: '{{ runTimezone }}|{{ nextSession.time }}',
       metadata: { timezoneSource: 'task', attachmentTypes: ['schedule-semester-ics'] } });
     const notifier = new EmailTaskNotifier({ scheduler: scheduler as unknown as any, mailer, store });
     await notifier.syncJobs();
@@ -544,7 +544,7 @@ test('email send timezone does not change schedule times in templates or ICS', a
     await notifier.runTaskNow(taskId, ['test@example.com']);
     assert.match(sent[0]?.text ?? '', /^Asia\/Shanghai\|.*09:00.*11:00/);
     const ics = sent[0]?.attachments?.find(item => item.filename.endsWith('.ics'))?.content.toString('utf8') ?? '';
-    assert.match(ics, /DTSTART:20260105T000000Z/);
-    assert.match(ics, /DTEND:20260105T020000Z/);
+    assert.match(ics, /DTSTART:20990105T000000Z/);
+    assert.match(ics, /DTEND:20990105T020000Z/);
   } finally { await store.close(); }
 });

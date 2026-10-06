@@ -109,11 +109,13 @@ export function EmailTaskDialogs({ editor }: EmailTaskDialogProps) {
               {(varDialogSource === 'ics'
                 ? [
                   ...ICS_TEMPLATE_VARIABLE_DOCS,
-                  ...EMAIL_TEMPLATE_VARIABLE_DOCS.filter((item) => item.name === 'taskId' || item.name === 'configId' || item.name === 'scheduleIcsUrl' || item.name.startsWith('schedule') || item.name === 'nextSessionNotes'),
+                  ...EMAIL_TEMPLATE_VARIABLE_DOCS.filter((item) => item.name === 'taskId' || item.name === 'configId' || item.name === 'scheduleIcsUrl' || item.name.startsWith('schedule') || item.name === 'nextSession' || item.name.startsWith('nextSession.')),
                 ]
                 : EMAIL_TEMPLATE_VARIABLE_DOCS).map((item) => (
                 <tr key={item.name}>
-                  <td class={s.td}>{item.name}</td>
+                  <td class={s.td}><code title={item.name} style={{ paddingInlineStart: `${Math.max(0, item.name.split('.').length - 1) * 16}px` }}>
+                    {item.name.includes('.') ? `↳ ${item.name.split('.').at(-1)}` : item.name}
+                  </code></td>
                   <td class={s.td}>{item.type}</td>
                   <td class={s.td}>{item.descriptions[docLanguage]}</td>
                 </tr>

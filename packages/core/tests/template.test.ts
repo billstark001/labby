@@ -66,8 +66,8 @@ describe('template renderer', () => {
   });
 
   test('allows functions provided by template context', () => {
-    const rendered = renderTemplate('Next: {{ nextSessionDateText() }}', {
-      nextSessionDateText: () => '2026-06-08',
+    const rendered = renderTemplate('Next: {{ nextSession.date() }}', {
+      nextSession: { date: () => '2026-06-08' },
     });
     expect(rendered.errors).toHaveLength(0);
     expect(rendered.output).toBe('Next: 2026-06-08');
@@ -93,8 +93,8 @@ test('next-session time uses 24-hour clock in all template languages', () => {
         targetSimilarityRadius: 0.5, startDate: '2026-01-01', endDate: '2026-01-31', metadata: {},
       },
       locale,
-      anchorDate: '2026-01-01',
+      anchorTime: Date.parse('2026-01-01T00:00:00Z'),
     });
-    expect(variables.scheduleNextSessionTimeText).toBe('00:30 - 13:05');
+    expect(variables.nextSession.time).toBe('00:30 - 13:05');
   }
 });

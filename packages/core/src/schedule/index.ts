@@ -21,6 +21,7 @@ import type {
 } from '../types.js';
 import { restoreSessionDetails } from './session.js';
 export * from './session.js';
+export * from './selection.js';
 
 import {
   buildConstraintGuidance,

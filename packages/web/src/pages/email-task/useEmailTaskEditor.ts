@@ -133,6 +133,12 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   const resolvedPreviewScheduleTimezone = normalizeTimeZone(selectedConfig?.timezone)
     ?? normalizeTimeZone(systemTimezone) ?? getEnvironmentTimeZone();
 
+  const [previewTime, setPreviewTime] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setPreviewTime(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const injectedScheduleVariables = useMemo(
     () => buildEmailTemplateScheduleVariables({
       plan: latestScheduleForConfig,
@@ -140,19 +146,14 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
       config: selectedConfig,
       locale: injectionLanguage,
       granularity: dateGranularity,
-      anchorDate: new Intl.DateTimeFormat('en-CA', {
-        timeZone: resolvedPreviewScheduleTimezone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(new Date()),
+      anchorTime: previewTime,
       timeZone: resolvedPreviewScheduleTimezone,
     }),
-    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity, resolvedPreviewScheduleTimezone],
+    [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, dateGranularity, resolvedPreviewScheduleTimezone, previewTime],
   );
 
   const previewContext = useMemo(() => {
-    const now = new Date();
+    const now = new Date(previewTime);
     const nowLocal = formatPreviewDateTime(injectionLanguage, resolvedPreviewTimezone, now);
     return {
       recipient: 'preview@example.com',
@@ -162,13 +163,14 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
       nowIsoUtc: now.toISOString(),
       nowLocal,
       runTimezone: resolvedPreviewTimezone,
-      sessionCount: 4,
+      sessionCount: latestScheduleForConfig?.sessions.length ?? 0,
+      latestCreatedAt: latestScheduleForConfig?.createdAt ?? null,
       summary: 'This is a local preview. In frontend-only mode, emails are not auto-sent.',
       language: injectionLanguage,
       scheduleIcsUrl: serveScheduleIcs && selectedTaskId ? getPublicEmailTaskIcsUrl(selectedTaskId) : undefined,
       ...injectedScheduleVariables,
     };
-  }, [configId, selectedTaskId, injectionLanguage, resolvedPreviewTimezone, serveScheduleIcs, injectedScheduleVariables]);
+  }, [configId, selectedTaskId, injectionLanguage, resolvedPreviewTimezone, serveScheduleIcs, injectedScheduleVariables, previewTime, latestScheduleForConfig]);
 
   const previewResult = useMemo(
     () => renderTemplateToHtml(templateText, previewContext, { format: templateFormat }),
@@ -367,11 +369,10 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
   }
 
   function insertScheduleTableSnippet(): void {
-    if (form.state.values.templateFormat === 'html') {
-      form.setFieldValue('templateText', (previous) => `${previous}\n\n<table border="1" cellpadding="6" cellspacing="0">\n  <thead><tr><th>Date</th><th>Presenter</th><th>Questioners</th></tr></thead>\n  <tbody>\n    <tr><td>{{ now }}</td><td>{{ recipient }}</td><td>{{ summary }}</td></tr>\n  </tbody>\n</table>`.trim());
-      return;
-    }
-    form.setFieldValue('templateText', (previous) => `${previous}\n\n| Date | Presenter | Questioners |\n| --- | --- | --- |\n| {{ now }} | {{ recipient }} | {{ summary }} |`.trim());
+    const snippet = form.state.values.templateFormat === 'html'
+      ? '{{ schedule.tableHtml() }}'
+      : '{{ schedule.tableMarkdown() }}';
+    form.setFieldValue('templateText', previous => `${previous}\n\n${snippet}`.trim());
   }
 
   function insertIcsLinkSnippet(): void {

@@ -508,7 +508,7 @@ export class EmailTaskNotifier {
       config,
       locale,
       granularity,
-      anchorDate,
+      anchorTime: runAt,
       timeZone: scheduleTimeZone,
     });
     const scheduleIcsUrl = this.buildTaskIcsUrl(task);

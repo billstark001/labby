@@ -1,7 +1,9 @@
 import { resolveSessionTimeRange, type SessionTimeRange } from '../schedule/session.js';
+import { pickSessions, resolveScheduleTimeZone, scheduleLocalInstant, type ScheduleSelectionOptions, type ScheduleSelectionUnit } from '../schedule/selection.js';
 import type { Person, ScheduleConfig, SchedulePlan, Session } from '../types.js';
 import { getEnvironmentTimeZone, getTimeZoneOffsetMinutes, normalizeTimeZone } from '../timezone.js';
 import { renderTemplate } from './renderer.js';
+import { escapeHtml, registerHtmlFunction } from './html-functions.js';
 
 export interface ScheduleTableLabels {
   date: string;
@@ -9,8 +11,6 @@ export interface ScheduleTableLabels {
   questioners: string;
 }
 
-export type ScheduleExportMode = 'semester' | 'window' | 'once';
-export type ScheduleWindowUnit = 'week' | 'month' | 'quarter';
 export type ScheduleDateGranularity = 'date' | 'date-time' | 'month-day' | 'month-day-time';
 export type ScheduleIcsMode = 'presenters' | 'meeting';
 
@@ -21,14 +21,8 @@ export interface ScheduleDateDisplayOptions {
   timeZone?: string;
 }
 
-export interface ScheduleRowBuildOptions {
-  mode?: ScheduleExportMode;
-  windowUnit?: ScheduleWindowUnit;
-  windowCount?: number;
-  anchorDate?: string;
-  onceIndex?: number;
+export interface ScheduleRowBuildOptions extends ScheduleSelectionOptions {
   dateDisplay?: ScheduleDateDisplayOptions;
-  config?: ScheduleConfig;
 }
 
 export interface ScheduleRow {
@@ -98,7 +92,7 @@ export interface BuildEmailTemplateScheduleVariablesOptions {
   locale?: string;
   granularity?: ScheduleDateGranularity;
   includeWeekday?: boolean;
-  anchorDate?: string;
+  anchorTime?: number;
   labels?: Partial<ScheduleTableLabels>;
   displayName?: (person: Person) => string;
   /** Resolved schedule timezone; the email dispatch timezone does not format meetings. */
@@ -106,9 +100,9 @@ export interface BuildEmailTemplateScheduleVariablesOptions {
 }
 
 interface NextSessionSummary {
-  dateText: string;
-  timeText: string;
-  dateTimeText: string;
+  date: string;
+  time: string;
+  dateTime: string;
   notes: string;
 }
 
@@ -118,26 +112,8 @@ const DEFAULT_TABLE_LABELS: ScheduleTableLabels = {
   questioners: 'Questioners',
 };
 
-const EMPTY_BLOCKS: ScheduleTemplateBlocks = {
-  rows: [],
-  tableHtml: '<table><thead><tr><th>Date</th><th>Presenter</th><th>Questioners</th></tr></thead><tbody></tbody></table>',
-  tableMarkdown: '| Date | Presenter | Questioners |\n| --- | --- | --- |',
-  listMarkdown: '- (no sessions)',
-  plainText: 'Date\tPresenter\tQuestioners',
-  csv: 'date,presenter,questioners',
-};
-
 function fallbackEntityId(id?: string): string {
   return `ID:${id ?? '<empty>'}`;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 function escapeMarkdown(text: string): string {
@@ -206,24 +182,17 @@ function formatTimeRangeLabel(timeRange: SessionTimeRange, locale: string): stri
   return `${startLabel} - ${endLabel}`;
 }
 
-function pickNextSession(plan: SchedulePlan, anchorDate?: string): SchedulePlan['sessions'][number] | null {
-  const sorted = plan.sessions.slice().sort((left, right) => left.date.localeCompare(right.date));
-  if (sorted.length === 0) return null;
-  const anchor = anchorDate ?? new Date().toISOString().slice(0, 10);
-  return sorted.find((session) => session.date >= anchor) ?? sorted[sorted.length - 1] ?? null;
-}
-
 function buildNextSessionSummary(
   plan: SchedulePlan,
   options: BuildEmailTemplateScheduleVariablesOptions,
 ): NextSessionSummary {
   const locale = normalizeLocale(options.locale);
-  const next = pickNextSession(plan, options.anchorDate);
+  const next = pickSessions(plan, { ...options, unit: 'session', amount: 1 })[0];
   if (!next) {
     return {
-      dateText: '',
-      timeText: '',
-      dateTimeText: '',
+      date: '',
+      time: '',
+      dateTime: '',
       notes: '',
     };
   }
@@ -232,15 +201,15 @@ function buildNextSessionSummary(
     locale,
     granularity: options.granularity === 'month-day' || options.granularity === 'month-day-time' ? 'month-day' : 'date',
     includeWeekday: options.includeWeekday ?? true,
-    timeZone: options.config?.timezone ?? options.timeZone,
+    timeZone: resolveScheduleTimeZone(options),
   }, options.config?.timeRange);
   const timeText = formatTimeRangeLabel(resolveSessionTimeRange(next, options.config), locale);
 
   return {
-    dateText,
-    timeText,
-    dateTimeText: `${dateText} ${timeText}`.trim(),
-    notes: next.date >= (options.anchorDate ?? new Date().toISOString().slice(0, 10)) ? next.notes ?? '' : '',
+    date: dateText,
+    time: timeText,
+    dateTime: `${dateText} ${timeText}`.trim(),
+    notes: next.notes ?? '',
   };
 }
 
@@ -273,49 +242,6 @@ function formatDateLabel(dateIso: string, options: ScheduleDateDisplayOptions = 
   }
 
   return dateText;
-}
-
-function pickSessions(plan: SchedulePlan, options: ScheduleRowBuildOptions = {}): SchedulePlan['sessions'] {
-  const mode = options.mode ?? 'semester';
-  const sorted = plan.sessions.slice().sort((left, right) => left.date.localeCompare(right.date));
-
-  if (mode === 'semester') {
-    return sorted;
-  }
-
-  if (sorted.length === 0) {
-    return sorted;
-  }
-
-  const anchorDate = options.anchorDate ?? new Date().toISOString().slice(0, 10);
-
-  if (mode === 'once') {
-    if (typeof options.onceIndex === 'number' && options.onceIndex >= 0) {
-      const target = sorted[options.onceIndex];
-      return target ? [target] : [];
-    }
-
-    const next = sorted.find((session) => session.date >= anchorDate);
-    return next ? [next] : [sorted[sorted.length - 1]];
-  }
-
-  const unit = options.windowUnit ?? 'month';
-  const count = Math.max(1, options.windowCount ?? 1);
-  const start = parseDate(anchorDate);
-  const end = new Date(start);
-
-  if (unit === 'week') {
-    end.setDate(end.getDate() + 7 * count);
-  } else if (unit === 'month') {
-    end.setMonth(end.getMonth() + count);
-  } else {
-    end.setMonth(end.getMonth() + 3 * count);
-  }
-
-  return sorted.filter((session) => {
-    const date = parseDate(session.date);
-    return date >= start && date < end;
-  });
 }
 
 type PersonNameResolver = (id: string) => string;
@@ -396,16 +322,6 @@ export function buildScheduleCsvText(rows: ScheduleRow[]): string {
   return lines.join('\n');
 }
 
-/** Convert a schedule-local date and time to a UTC instant. */
-function icsInstant(dateStr: string, timeStr: string, timeZone: string): number {
-  const localAsUtc = Date.parse(`${dateStr}T${timeStr}:00Z`);
-  let offset = getTimeZoneOffsetMinutes(timeZone, new Date(localAsUtc)) ?? 0;
-  let instant = localAsUtc - offset * 60_000;
-  offset = getTimeZoneOffsetMinutes(timeZone, new Date(instant)) ?? offset;
-  instant = localAsUtc - offset * 60_000;
-  return instant;
-}
-
 function icsDateTime(instant: number): string {
   return `${new Date(instant).toISOString().slice(0, 19).replaceAll('-', '').replaceAll(':', '')}Z`;
 }
@@ -476,8 +392,8 @@ export function buildScheduleIcs(
     const endDate = endTime <= startTime
       ? new Date(Date.parse(`${session.date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
       : session.date;
-    const meetingStart = icsInstant(session.date, startTime, timeZone);
-    const meetingEnd = icsInstant(endDate, endTime, timeZone);
+    const meetingStart = scheduleLocalInstant(session.date, startTime, timeZone);
+    const meetingEnd = scheduleLocalInstant(endDate, endTime, timeZone);
     const durationMinutes = Math.max(1, Math.round((meetingEnd - meetingStart) / 60_000));
     const mode = options.mode === 'meeting' ? 'meeting' : 'presenters';
     const eventCount = mode === 'meeting' ? 1 : presentations.length;
@@ -550,63 +466,28 @@ export function buildScheduleTemplateBlocks(
   };
 }
 
-function emptyVariables(): Record<string, unknown> {
-  return {
-    scheduleSemesterTableHtml: EMPTY_BLOCKS.tableHtml,
-    scheduleSemesterTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
-    scheduleSemesterBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
-    scheduleWeekTableHtml: EMPTY_BLOCKS.tableHtml,
-    scheduleWeekTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
-    scheduleWeekBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
-    scheduleMonthTableHtml: EMPTY_BLOCKS.tableHtml,
-    scheduleMonthTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
-    scheduleMonthBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
-    scheduleQuarterTableHtml: EMPTY_BLOCKS.tableHtml,
-    scheduleQuarterTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
-    scheduleQuarterBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
-    scheduleOnceTableHtml: EMPTY_BLOCKS.tableHtml,
-    scheduleOnceTableMarkdown: EMPTY_BLOCKS.tableMarkdown,
-    scheduleOnceBulletedListMarkdown: EMPTY_BLOCKS.listMarkdown,
-    scheduleNextSessionNotes: '',
-    nextSessionNotes: () => '',
-    scheduleNextSessionDateText: '',
-    scheduleNextSessionTimeText: '',
-    scheduleNextSessionDateTimeText: '',
-    nextSessionDateText: () => '',
-    nextSessionTimeText: () => '',
-    nextSessionDateTimeText: () => '',
-    scheduleRowsJson: '[]',
-  };
-}
-
 function buildPersonMap(persons: Person[]): Map<string, Person> {
   const result = new Map<string, Person>();
   for (const person of persons) result.set(person.id, person);
   return result;
 }
 
-function createRowBuildOptions(options: BuildEmailTemplateScheduleVariablesOptions, mode: ScheduleExportMode, windowUnit?: ScheduleWindowUnit): ScheduleRowBuildOptions {
-  return {
-    config: options.config,
-    anchorDate: options.anchorDate,
-    mode,
-    windowUnit,
-    windowCount: 1,
-    dateDisplay: {
-      locale: normalizeLocale(options.locale),
-      granularity: options.granularity,
-      includeWeekday: options.includeWeekday,
-      timeZone: options.config?.timezone ?? options.timeZone,
-    },
+export interface EmailTemplateScheduleVariables extends Record<string, unknown> {
+  schedule: {
+    tableHtml: (unit?: ScheduleSelectionUnit, amount?: number) => string;
+    tableMarkdown: (unit?: ScheduleSelectionUnit, amount?: number) => string;
+    bulletedListMarkdown: (unit?: ScheduleSelectionUnit, amount?: number) => string;
+    json: (unit?: ScheduleSelectionUnit, amount?: number) => string;
   };
+  nextSession: NextSessionSummary;
 }
 
 export function buildEmailTemplateScheduleVariables(
   options: BuildEmailTemplateScheduleVariablesOptions,
-): Record<string, unknown> {
-  const plan = options.plan;
-  if (!plan) return emptyVariables();
-
+): EmailTemplateScheduleVariables {
+  // One timestamp per context keeps all formats and nextSession in agreement.
+  const anchorTime = options.anchorTime ?? Date.now();
+  const plan = options.plan ?? { id: '', configId: '', createdAt: anchorTime, sessions: [] };
   const locale = normalizeLocale(options.locale);
   const personMap = options.personMap ?? buildPersonMap(options.persons ?? []);
   const displayName = options.displayName ?? ((person: Person) => defaultDisplayName(person, locale));
@@ -615,58 +496,25 @@ export function buildEmailTemplateScheduleVariables(
     presenter: options.labels?.presenter ?? DEFAULT_TABLE_LABELS.presenter,
     questioners: options.labels?.questioners ?? DEFAULT_TABLE_LABELS.questioners,
   };
-
-  const buildBlocks = (mode: ScheduleExportMode, windowUnit?: ScheduleWindowUnit): ScheduleTemplateBlocks => {
-    const rowOptions = createRowBuildOptions(options, mode, windowUnit);
-    return buildScheduleTemplateBlocks(plan, personMap, displayName, rowOptions, labels);
-  };
-
-  const semester = buildBlocks('semester');
-  const week = buildBlocks('window', 'week');
-  const month = buildBlocks('window', 'month');
-  const quarter = buildBlocks('window', 'quarter');
-  const once = buildBlocks('once');
-
-  const nextSession = buildNextSessionSummary(plan, options);
-  const getNextSessionDateText = () => nextSession.dateText;
-  const getNextSessionTimeText = () => nextSession.timeText;
-  const getNextSessionDateTimeText = () => nextSession.dateTimeText;
-
+  const buildRows = (unit: ScheduleSelectionUnit = 'semester', amount = 1): ScheduleRow[] => buildScheduleRows(
+    plan, personMap, displayName, {
+      unit, amount, anchorTime, config: options.config, timeZone: options.timeZone,
+      dateDisplay: { locale, granularity: options.granularity, includeWeekday: options.includeWeekday,
+        timeZone: resolveScheduleTimeZone(options) },
+    },
+  );
   return {
-    scheduleSemesterTableHtml: semester.tableHtml,
-    scheduleSemesterTableMarkdown: semester.tableMarkdown,
-    scheduleSemesterBulletedListMarkdown: semester.listMarkdown,
-    scheduleWeekTableHtml: week.tableHtml,
-    scheduleWeekTableMarkdown: week.tableMarkdown,
-    scheduleWeekBulletedListMarkdown: week.listMarkdown,
-    scheduleMonthTableHtml: month.tableHtml,
-    scheduleMonthTableMarkdown: month.tableMarkdown,
-    scheduleMonthBulletedListMarkdown: month.listMarkdown,
-    scheduleQuarterTableHtml: quarter.tableHtml,
-    scheduleQuarterTableMarkdown: quarter.tableMarkdown,
-    scheduleQuarterBulletedListMarkdown: quarter.listMarkdown,
-    scheduleOnceTableHtml: once.tableHtml,
-    scheduleOnceTableMarkdown: once.tableMarkdown,
-    scheduleOnceBulletedListMarkdown: once.listMarkdown,
-    scheduleNextSessionNotes: nextSession.notes,
-    nextSessionNotes: () => nextSession.notes,
-    scheduleNextSessionDateText: getNextSessionDateText(),
-    scheduleNextSessionTimeText: getNextSessionTimeText(),
-    scheduleNextSessionDateTimeText: getNextSessionDateTimeText(),
-    nextSessionDateText: getNextSessionDateText,
-    nextSessionTimeText: getNextSessionTimeText,
-    nextSessionDateTimeText: getNextSessionDateTimeText,
-    scheduleRowsJson: JSON.stringify(semester.rows),
+    schedule: {
+      tableHtml: registerHtmlFunction((unit: ScheduleSelectionUnit = 'semester', amount = 1) => buildScheduleTableHtml(buildRows(unit, amount), labels)),
+      tableMarkdown: (unit = 'semester', amount = 1) => buildScheduleTableMarkdown(buildRows(unit, amount), labels),
+      bulletedListMarkdown: (unit = 'semester', amount = 1) => buildScheduleBulletListMarkdown(buildRows(unit, amount)),
+      json: (unit = 'semester', amount = 1) => JSON.stringify(buildRows(unit, amount)),
+    },
+    nextSession: buildNextSessionSummary(plan, { ...options, anchorTime }),
   };
 }
 
 export const EMAIL_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
-  { name: 'scheduleNextSessionNotes', type: 'string', descriptions: {
-    en: 'Optional note for the next meeting; empty when unset.', 'zh-CN': '下一次组会的单次备注（未设置时为空）。', 'ja-JP': '次回ミーティングのメモ（未設定時は空文字列）。',
-  } },
-  { name: 'nextSessionNotes', type: '() => string', descriptions: {
-    en: 'Next meeting note. Use {{ nextSessionNotes() }}.', 'zh-CN': '求值获得下一次组会的当次备注：{{ nextSessionNotes() }}。', 'ja-JP': '次回のメモ。使用例: {{ nextSessionNotes() }}。',
-  } },
   {
     name: 'recipient',
     type: 'string',
@@ -748,130 +596,36 @@ export const EMAIL_TEMPLATE_VARIABLE_DOCS: EmailTemplateVariableDoc[] = [
       'ja-JP': 'サーバー設定とタスク設定が有効な場合に使える公開 ICS URL。',
     },
   },
-  {
-    name: 'scheduleSemesterTableHtml',
-    type: 'string(html)',
-    descriptions: {
-      en: 'HTML table for full semester schedule.',
-      'zh-CN': '整个学期的 HTML 表格。',
-      'ja-JP': '学期全体の HTML テーブル。',
-    },
-  },
-  {
-    name: 'scheduleSemesterTableMarkdown',
-    type: 'string(markdown)',
-    descriptions: {
-      en: 'Markdown table for full semester schedule.',
-      'zh-CN': '整个学期的 Markdown 表格。',
-      'ja-JP': '学期全体の Markdown テーブル。',
-    },
-  },
-  {
-    name: 'scheduleSemesterBulletedListMarkdown',
-    type: 'string(markdown)',
-    descriptions: {
-      en: 'Markdown bulleted list for full semester schedule.',
-      'zh-CN': '整个学期的 Markdown 项目符号列表。',
-      'ja-JP': '学期全体の Markdown 箇条書き。',
-    },
-  },
-  {
-    name: 'scheduleWeekTableMarkdown',
-    type: 'string(markdown)',
-    descriptions: {
-      en: 'Markdown table for one-week window schedule.',
-      'zh-CN': '一周窗口的 Markdown 表格。',
-      'ja-JP': '1週間ウィンドウの Markdown テーブル。',
-    },
-  },
-  {
-    name: 'scheduleMonthTableMarkdown',
-    type: 'string(markdown)',
-    descriptions: {
-      en: 'Markdown table for one-month window schedule.',
-      'zh-CN': '一个月窗口的 Markdown 表格。',
-      'ja-JP': '1か月ウィンドウの Markdown テーブル。',
-    },
-  },
-  {
-    name: 'scheduleQuarterTableMarkdown',
-    type: 'string(markdown)',
-    descriptions: {
-      en: 'Markdown table for one-quarter window schedule.',
-      'zh-CN': '一个季度窗口的 Markdown 表格。',
-      'ja-JP': '1四半期ウィンドウの Markdown テーブル。',
-    },
-  },
-  {
-    name: 'scheduleOnceTableMarkdown',
-    type: 'string(markdown)',
-    descriptions: {
-      en: 'Markdown table for a single next schedule occurrence.',
-      'zh-CN': '单次排班（下一次）的 Markdown 表格。',
-      'ja-JP': '単発（次回1回分）の Markdown テーブル。',
-    },
-  },
-  {
-    name: 'scheduleRowsJson',
-    type: 'string(json)',
-    descriptions: {
-      en: 'JSON array of rendered schedule rows.',
-      'zh-CN': '已渲染排班行的 JSON 数组。',
-      'ja-JP': 'レンダリング済み行の JSON 配列。',
-    },
-  },
-  {
-    name: 'scheduleNextSessionDateText',
-    type: 'string',
-    descriptions: {
-      en: 'Human-friendly date for the next scheduled session.',
-      'zh-CN': '下一次组会的人类友好日期文本。',
-      'ja-JP': '次回セッションの日付（人間向け表示）。',
-    },
-  },
-  {
-    name: 'scheduleNextSessionTimeText',
-    type: 'string',
-    descriptions: {
-      en: 'Human-friendly time range for the next scheduled session.',
-      'zh-CN': '下一次组会的人类友好时间范围文本。',
-      'ja-JP': '次回セッションの時間帯（人間向け表示）。',
-    },
-  },
-  {
-    name: 'scheduleNextSessionDateTimeText',
-    type: 'string',
-    descriptions: {
-      en: 'Combined human-friendly date and time for the next session.',
-      'zh-CN': '下一次组会的人类友好日期+时间文本。',
-      'ja-JP': '次回セッションの日時（人間向け表示）。',
-    },
-  },
-  {
-    name: 'nextSessionDateText',
-    type: '() => string',
-    descriptions: {
-      en: 'Function form of next session date text. Use as {{ nextSessionDateText() }}.',
-      'zh-CN': '函数形式的下一次组会日期。用法：{{ nextSessionDateText() }}。',
-      'ja-JP': '次回セッション日付の関数形式。使用例: {{ nextSessionDateText() }}。',
-    },
-  },
-  {
-    name: 'nextSessionTimeText',
-    type: '() => string',
-    descriptions: {
-      en: 'Function form of next session time text. Use as {{ nextSessionTimeText() }}.',
-      'zh-CN': '函数形式的下一次组会时间。用法：{{ nextSessionTimeText() }}。',
-      'ja-JP': '次回セッション時間の関数形式。使用例: {{ nextSessionTimeText() }}。',
-    },
-  },
-  {
-    name: 'nextSessionDateTimeText',
-    type: '() => string',
-    descriptions: {
-      en: 'Function form of next session date+time text. Use as {{ nextSessionDateTimeText() }}.',
-      'zh-CN': '函数形式的下一次组会日期+时间。用法：{{ nextSessionDateTimeText() }}。',
-      'ja-JP': '次回セッション日時の関数形式。使用例: {{ nextSessionDateTimeText() }}。',
-    },
-  },
+  { name: 'schedule', type: 'object', descriptions: {
+    en: 'Schedule exports. semester(s) includes the whole plan; session(s), week(s), month(s), quarter(s) select upcoming meeting starts. All functions default to ("semester", 1); amount is a positive integer.',
+    'zh-CN': '排班导出。semester(s) 包含整个排班；session(s)、week(s)、month(s)、quarter(s) 按开始时间选择接下来的组会。所有函数默认参数为 ("semester", 1)，amount 为正整数。',
+    'ja-JP': 'スケジュール出力。semester(s) は全予定、session(s)、week(s)、month(s)、quarter(s) は今後の開始時刻を選択。既定引数は ("semester", 1)、amount は正の整数。',
+  } },
+  ...[
+    ['tableHtml', 'HTML', 'HTML', 'HTML'],
+    ['tableMarkdown', 'Markdown table', 'Markdown 表格', 'Markdown テーブル'],
+    ['bulletedListMarkdown', 'Markdown bulleted list', 'Markdown 项目符号列表', 'Markdown 箇条書き'],
+    ['json', 'JSON row array', 'JSON 排班行数组', 'JSON 行配列'],
+  ].map(([name, en, zh, ja]) => ({ name: `schedule.${name}`, type: '(unit = "semester", amount = 1) => string', descriptions: {
+    en: `${en}. Example: {{ schedule.${name}("sessions", 2) }}.`,
+    'zh-CN': `${zh}。示例：{{ schedule.${name}("sessions", 2) }}。`,
+    'ja-JP': `${ja}。例: {{ schedule.${name}("sessions", 2) }}。`,
+  } })),
+  { name: 'nextSession', type: 'object', descriptions: {
+    en: 'Next meeting whose start has not passed in the schedule timezone; all fields are empty when none remains.',
+    'zh-CN': '按排班时区筛选尚未开始的下一次组会；没有未来组会时，所有字段为空。',
+    'ja-JP': 'スケジュールのタイムゾーンで開始時刻を過ぎていない次回。残りの予定がない場合は全項目が空文字列。',
+  } },
+  { name: 'nextSession.date', type: 'string', descriptions: {
+    en: 'Formatted meeting date.', 'zh-CN': '格式化后的组会日期。', 'ja-JP': '整形済み日付。',
+  } },
+  { name: 'nextSession.time', type: 'string', descriptions: {
+    en: 'Meeting time range (24-hour clock).', 'zh-CN': '组会时间范围（24 小时制）。', 'ja-JP': '時間帯（24時間制）。',
+  } },
+  { name: 'nextSession.dateTime', type: 'string', descriptions: {
+    en: 'Formatted meeting date and time range.', 'zh-CN': '格式化后的组会日期及时间范围。', 'ja-JP': '整形済み日時。',
+  } },
+  { name: 'nextSession.notes', type: 'string', descriptions: {
+    en: 'Meeting note; empty when unset.', 'zh-CN': '当次组会备注，未设置时为空。', 'ja-JP': '次回のメモ（未設定時は空文字列）。',
+  } },
 ];

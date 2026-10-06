@@ -46,6 +46,5 @@ export {
   type ScheduleIcsMode,
   type ScheduleRowBuildOptions,
   type ScheduleTableLabels,
-  type ScheduleExportMode,
-  type ScheduleWindowUnit,
+  type EmailTemplateScheduleVariables,
 } from './schedule-render.js';

@@ -2430,9 +2430,9 @@ sessionReminderNotes:
   zh-CN: 此次组会备注（可选）
   ja-JP: 今回のメモ（任意）
 sessionReminderNotesHint:
-  en: Available in reminder templates for this meeting only via {{ nextSessionNotes() }}.
-  zh-CN: 仅用于此次组会的提醒，可在模板中使用 {{ nextSessionNotes() }}。
-  ja-JP: 今回のみの通知メモ。テンプレートで {{ nextSessionNotes() }} を使用できます。
+  en: Available in reminder templates for this meeting only via {{ nextSession.notes }}.
+  zh-CN: 仅用于此次组会的提醒，可在模板中使用 {{ nextSession.notes }}。
+  ja-JP: 今回のみの通知メモ。テンプレートで {{ nextSession.notes }} を使用できます。
 sessionTimeOverride:
   en: Override the time for this meeting only
   zh-CN: 仅修改此次组会的时间

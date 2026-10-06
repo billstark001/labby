@@ -1,4 +1,5 @@
 import { marked } from 'marked';
+import { escapeHtml, isHtmlFunction } from './html-functions.js';
 import { defaultCallPermissionPolicy, type JSCallPermissionPolicy } from 'pure-expr/expr';
 import {
   renderTemplate as renderPureTemplate,
@@ -75,20 +76,42 @@ function toPureFormat(format: RenderTemplateOptions['format']): PureRenderTempla
   return format === 'html' ? 'html' : 'text';
 }
 
+function htmlContext(context: Record<string, unknown>, fragments: Map<string, string>): Record<string, unknown> {
+  const copies = new WeakMap<object, unknown>();
+  const copy = (value: unknown): unknown => {
+    if (isHtmlFunction(value)) return (...args: unknown[]) => {
+      const html = value(...args);
+      fragments.set(escapeHtml(html), html);
+      return html;
+    };
+    if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+    if (copies.has(value)) return copies.get(value);
+    const result: Record<string, unknown> = {};
+    copies.set(value, result);
+    for (const [key, child] of Object.entries(value)) result[key] = copy(child);
+    return result;
+  };
+  return copy(context) as Record<string, unknown>;
+}
+
 export function renderTemplate(
   source: string,
   context: Record<string, unknown>,
   options: RenderTemplateOptions = {},
 ): TemplateRenderResult {
   const { format, evalOptions, ...rest } = options;
-  return renderPureTemplate(source, context, {
+  const fragments = new Map<string, string>();
+  const renderContext = format === 'html' ? htmlContext(context, fragments) : context;
+  const rendered = renderPureTemplate(source, renderContext, {
     ...rest,
     format: toPureFormat(format),
     evalOptions: {
       ...evalOptions,
-      isCallableAllowed: buildContextCallPolicy(context, evalOptions?.isCallableAllowed),
+      isCallableAllowed: buildContextCallPolicy(renderContext, evalOptions?.isCallableAllowed),
     },
   });
+  for (const [escaped, html] of fragments) rendered.output = rendered.output.replaceAll(escaped, () => html);
+  return rendered;
 }
 
 export function renderTemplateToHtml(

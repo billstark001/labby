@@ -48,10 +48,9 @@ test('one-occurrence overrides affect mail time text, export rows and both ICS m
     { ...plan.sessions[0]!, notes: 'Bring slides, please; thank you\nRoom B', timeRange: ['14:30', '15:30'] },
     { ...plan.sessions[0]!, date: '2026-01-12' },
   ] };
-  const variables = buildEmailTemplateScheduleVariables({ plan: customized, config, persons, anchorDate: '2026-01-04' });
-  expect(variables.scheduleNextSessionTimeText).toBe('14:30 - 15:30');
-  expect(variables.scheduleNextSessionNotes).toBe(customized.sessions[0]!.notes);
-  expect((variables.nextSessionNotes as () => string)()).toBe(customized.sessions[0]!.notes);
+  const variables = buildEmailTemplateScheduleVariables({ plan: customized, config, persons, anchorTime: Date.parse('2026-01-04T00:00:00Z') });
+  expect(variables.nextSession.time).toBe('14:30 - 15:30');
+  expect(variables.nextSession.notes).toBe(customized.sessions[0]!.notes);
   const rows = buildScheduleRows(customized, personMap, person => person.name, { config, dateDisplay: { granularity: 'date-time' } });
   expect(rows[0]!.dateLabel).toContain('14:30-15:30');
   expect(rows[3]!.dateLabel).toContain('09:00-10:01');
@@ -67,11 +66,11 @@ test('one-occurrence overrides affect mail time text, export rows and both ICS m
     expect(templated).toContain('DESCRIPTION:14:30 15:30 Bring slides');
     expect(templated).toContain('DESCRIPTION:09:00 10:01 ');
   }
-  const later = buildEmailTemplateScheduleVariables({ plan: customized, config, anchorDate: '2026-01-06' });
-  expect(later.scheduleNextSessionNotes).toBe('');
-  expect(later.scheduleNextSessionTimeText).toBe('09:00 - 10:01');
-  expect(buildEmailTemplateScheduleVariables({ plan: { ...plan, sessions: [customized.sessions[0]!] }, anchorDate: '2026-01-06' }).scheduleNextSessionNotes).toBe('');
-  expect((buildEmailTemplateScheduleVariables({}).nextSessionNotes as () => string)()).toBe('');
+  const later = buildEmailTemplateScheduleVariables({ plan: customized, config, anchorTime: Date.parse('2026-01-06T00:00:00Z') });
+  expect(later.nextSession.notes).toBe('');
+  expect(later.nextSession.time).toBe('09:00 - 10:01');
+  expect(buildEmailTemplateScheduleVariables({ plan: { ...plan, sessions: [customized.sessions[0]!] }, anchorTime: Date.parse('2026-01-06T00:00:00Z') }).nextSession.notes).toBe('');
+  expect(buildEmailTemplateScheduleVariables({}).nextSession.notes).toBe('');
 });
 
 test('an overnight override ends on the following day', () => {

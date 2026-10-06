@@ -15,7 +15,7 @@ describe('default template presets', () => {
       now: '2026-01-01T00:00:00.000Z',
       sessionCount: 3,
       summary: 'ok',
-      nextSessionNotes: () => '',
+      nextSession: { notes: '' },
     };
 
     for (const preset of DEFAULT_TEMPLATE_PRESETS) {
