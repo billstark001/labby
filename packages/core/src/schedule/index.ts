@@ -19,6 +19,9 @@ import type {
   SolverDiagnostics,
   ScheduleQualityReport,
 } from '../types.js';
+import { restoreSessionDetails } from './session.js';
+export * from './session.js';
+
 import {
   buildConstraintGuidance,
   buildCostContext,
@@ -161,7 +164,8 @@ export function solveFull(input: SolverInput): Session[] {
  * previous plan via a Hamming penalty.
  */
 export function solveIncremental(input: IncrementalSolverInput): Session[] {
-  return solver.solveIncremental(input);
+  const sessions = solver.solveIncremental(input);
+  return restoreSessionDetails(sessions, input.sessions);
 }
 
 // #endregion

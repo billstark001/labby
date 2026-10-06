@@ -1,6 +1,8 @@
 import type {
   ConstrainedSolverInput,
   ScheduleTemplatePresentation,
+  ScheduleTemplateSession,
+  Presentation,
   Session,
 } from '../types.js';
 import {
@@ -10,6 +12,7 @@ import {
   noOverlapForbidden,
   validateScheduleAssignments,
 } from './constraints.js';
+import { copySessionDetails } from './session.js';
 import { ANNEALING_CONFIG } from './annealing-strategies.js';
 import { buildUnavailMap, isWholeGroupClosure } from './utils.js';
 
@@ -22,6 +25,35 @@ function randomItem<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]!;
 }
 
+function emptyPersonId(id: string | null): string {
+  return id ?? '';
+}
+
+function createTemplatePresentation(presentation: ScheduleTemplatePresentation): Presentation {
+  return {
+    presenterId: emptyPersonId(presentation.presenterId),
+    questionerIds: presentation.questionerIds.map(emptyPersonId),
+  };
+}
+
+function createTemplateSession(template: ScheduleTemplateSession): Session {
+  const session: Session = { date: template.date, presentations: template.presentations.map(createTemplatePresentation) };
+  copySessionDetails(session, template);
+  return session;
+}
+
+function isAutoSlot(id: string | null): boolean {
+  return id === null;
+}
+
+function createSlotMask(presentation: ScheduleTemplatePresentation): SlotMask {
+  return { presenterAuto: isAutoSlot(presentation.presenterId), questionerAuto: presentation.questionerIds.map(isAutoSlot) };
+}
+
+function createSessionSlotMasks(session: ScheduleTemplateSession): SlotMask[] {
+  return session.presentations.map(createSlotMask);
+}
+
 export function solveConstrained(input: ConstrainedSolverInput): Session[] {
   const activeIds = input.persons.filter(person => !person.disabled).map(person => person.id);
   const activeSet = new Set(activeIds);
@@ -32,18 +64,8 @@ export function solveConstrained(input: ConstrainedSolverInput): Session[] {
   const unavailability = buildUnavailMap(input.unavailabilities ?? [], input.config.id, input.persons, input.template.map(session => session.date));
   const closed = input.template.find(session => isWholeGroupClosure(session.date, input.unavailabilities ?? [], input.config.id));
   if (closed) throw new Error(`Session falls on a whole-group closure: ${closed.date}`);
-  const masks: SlotMask[][] = input.template.map(session => session.presentations.map(presentation => ({
-    presenterAuto: presentation.presenterId === null,
-    questionerAuto: presentation.questionerIds.map(id => id === null),
-  })));
-
-  const sessions: Session[] = input.template.map(session => ({
-    date: session.date,
-    presentations: session.presentations.map(presentation => ({
-      presenterId: presentation.presenterId ?? '',
-      questionerIds: presentation.questionerIds.map(id => id ?? ''),
-    })),
-  }));
+  const masks = input.template.map(createSessionSlotMasks);
+  const sessions = input.template.map(createTemplateSession);
 
   const presenterCandidates = (
     sessionIndex: number,

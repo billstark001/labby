@@ -317,6 +317,10 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     };
 
     const prevSessions = withSeed(11, () => solveFull(baseInput));
+    for (const session of prevSessions) {
+      session.notes = `Note for ${session.date}`;
+      session.timeRange = ['15:00', '17:00'];
+    }
     const previousPlan: SchedulePlan = {
       id: 'test-plan',
       createdAt: Date.now(),
@@ -340,6 +344,10 @@ describe('Scheduling algorithm (black-box precise tests)', () => {
     const frozenPrev = previousPlan.sessions.filter((s: Session) => s.date < changeDate);
     const frozenNext = nextPlan.sessions.filter((s: Session) => s.date < changeDate);
     expect(frozenNext).toEqual(frozenPrev);
+    for (const session of nextSessions) {
+      expect(session.notes).toBe(`Note for ${session.date}`);
+      expect(session.timeRange).toEqual(['15:00', '17:00']);
+    }
   });
 
   test('questioners-only incremental mode keeps dates and presenters while reshuffling questioners', () => {

@@ -191,7 +191,9 @@ export function mutateSessions(
     }
 
     const tailIndex = mergedSessions.length - 1;
-    mergedSessions[tailIndex] = generateSession(mergedSessions[tailIndex]!.date, mergedSessions.slice(0, tailIndex));
+    const tail = mergedSessions[tailIndex]!;
+    const generated = generateSession(tail.date, mergedSessions.slice(0, tailIndex));
+    tail.presentations = generated.presentations;
   } else {
     const generated = generateSession(options.date, sortedSessions.slice(0, insertIndex));
     mergedSessions = sortSessionsByDate([...sortedSessions, generated]);

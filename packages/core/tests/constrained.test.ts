@@ -30,6 +30,8 @@ describe('solveConstrained', () => {
       similarities,
       template: [{
         date: '2026-04-06',
+        notes: 'Room B',
+        timeRange: ['15:00', '17:00'],
         presentations: [
           { presenterId: 'p1', questionerIds: ['p2', null] },
           { presenterId: null, questionerIds: [null] },
@@ -37,6 +39,8 @@ describe('solveConstrained', () => {
       }],
     });
 
+    expect(result[0]!.notes).toBe('Room B');
+    expect(result[0]!.timeRange).toEqual(['15:00', '17:00']);
     expect(result[0]!.presentations).toHaveLength(2);
     expect(result[0]!.presentations[0]!.presenterId).toBe('p1');
     expect(result[0]!.presentations[0]!.questionerIds[0]).toBe('p2');

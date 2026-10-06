@@ -280,6 +280,10 @@ export interface PersonUnavailability {
 
 /** One seminar session on a calendar date. */
 export interface Session {
+  /** Optional reminder note for this occurrence only. */
+  notes?: string;
+  /** Schedule-local start/end override; omitted to inherit the config. */
+  timeRange?: [string, string];
   date: string; // ISO date YYYY-MM-DD
   presentations: Presentation[];
 }
@@ -324,7 +328,7 @@ export interface ScheduleTemplatePresentation {
   questionerIds: ScheduleTemplatePersonId[];
 }
 
-export interface ScheduleTemplateSession {
+export interface ScheduleTemplateSession extends Pick<Session, 'notes' | 'timeRange'> {
   date: string;
   presentations: ScheduleTemplatePresentation[];
 }

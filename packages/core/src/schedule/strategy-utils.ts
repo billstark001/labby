@@ -1,3 +1,4 @@
+import { cloneSession } from './session.js';
 import type { ScheduleConfig, Session } from '../types.js';
 import type { ConstraintGuidance, CostContext } from './constraints.js';
 
@@ -17,13 +18,7 @@ export interface StrategyContext {
 }
 
 export function cloneSessions(sessions: Session[]): Session[] {
-  return sessions.map(session => ({
-    date: session.date,
-    presentations: session.presentations.map(presentation => ({
-      presenterId: presentation.presenterId,
-      questionerIds: [...presentation.questionerIds],
-    })),
-  }));
+  return sessions.map(cloneSession);
 }
 
 export function hammingDistance(a: Session[], b: Session[]): number {
