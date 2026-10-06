@@ -2,7 +2,7 @@ import { EMAIL_TEMPLATE_VARIABLE_DOCS, ICS_TEMPLATE_VARIABLE_DOCS } from '@labby
 import { Button, Dialog } from '@/components/ui';
 import * as s from '@/styles/components.css';
 import { AttachmentSettingsDialog } from './AttachmentSettingsDialog';
-import { EmailPreviewContent } from './TemplatePreview';
+import { EmailPreviewContent, TemplateErrors } from './TemplatePreview';
 import { DAY_OPTIONS, type useEmailTaskEditor } from './useEmailTaskEditor';
 
 type EmailTaskDialogProps = { editor: ReturnType<typeof useEmailTaskEditor> };
@@ -45,6 +45,7 @@ export function EmailTaskDialogs({ editor }: EmailTaskDialogProps) {
       {showPreviewDialog && (
         <Dialog open={true} onClose={() => setShowPreviewDialog(false)} title={t('openNextEmailPreview')}>
           <div class={s.formGroup}>
+            <TemplateErrors errors={previewResult.errors} />
             <EmailPreviewContent html={previewResult.html} />
             <div class={s.flexGapSm}>
               <Button variant="secondary" busy={action.pendingKey === 'copy'} onClick={() => void action.run('copy', copyNextEmail)}>{t('copyNextEmailManually')}</Button>

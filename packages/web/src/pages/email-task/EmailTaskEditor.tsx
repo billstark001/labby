@@ -10,7 +10,6 @@ import { NumericInput } from '@/components/ui/NumericInput';
 import { confirmDialog } from '@/components/ui/Dialog';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { navigate } from '@/lib/router';
-import { getScheduleConfigLabel } from '@/lib/scheduleConfigLabel';
 import * as s from '@/styles/components.css';
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { EmailPreviewContent, TemplateErrors } from './TemplatePreview';
@@ -21,7 +20,7 @@ import { DAY_OPTIONS, useEmailTaskEditor, type EmailTaskEditorProps } from './us
 export function EmailTaskEditor(props: EmailTaskEditorProps) {
   const editor = useEmailTaskEditor(props);
   const {
-    t, action, capability, currentTask, ready, selectedTaskId, form, values, isDirty,
+    t, action, capability, currentTask, ready, selectedTaskId, form, values, isDirty, icsPreviewResult,
     setShowPreviewDialog, setSendNowOpen, setSendRecipientsText, setSendNowError,
     setShowDaysDialog, setShowAttachmentDialog,
     configs, resolvedPreviewTimezone, previewResult, previewSubject,
@@ -35,6 +34,7 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
     dateGranularity, notes,
   } = values;
 
+  const icsError = (values.serveScheduleIcs || values.attachmentTypes.includes('schedule-semester-ics')) ? icsPreviewResult.error : '';
   if (!ready) return <ContentSkeleton rows={8} />;
 
   return (
@@ -52,6 +52,11 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
         </div>
       </div>
 
+      <TemplateErrors errors={[
+        ...previewSenderName.errors.map(error => ({ ...error, message: `${t('senderNameTemplate')}: ${error.message}` })),
+        ...previewSubject.errors.map(error => ({ ...error, message: `${t('emailTaskSubjectTemplate')}: ${error.message}` })),
+        ...previewResult.errors.map(error => ({ ...error, message: `${t('emailTemplateEditor')}: ${error.message}` })),
+      ]} icsError={icsError} />
       <p role="status" class={isDirty ? s.textDanger : s.textMuted}>
         {action.pendingKey === 'save' ? t('emailTaskSaving') : isDirty ? t('emailTaskUnsaved') : t('emailTaskNoUnsavedChanges')}
       </p>
@@ -75,12 +80,7 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
       <div class={s.card}>
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTaskConfig')}</label>
-          <select class={s.input} value={configId} onChange={(e) => { form.setFieldValue('configId', (e.target as HTMLSelectElement).value); }}>
-            <option value="">{t('selectConfigFirst')}</option>
-            {configs.map((config) => (
-              <option key={config.id} value={config.id}>{getScheduleConfigLabel(config)}</option>
-            ))}
-          </select>
+          <code>{configId || '—'}</code>
         </div>
 
         <div class={s.formGroup}>
@@ -143,7 +143,6 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
             placeholder="{{ configId }}"
           />
           <div class={`${s.text12} ${s.textMuted}`}>{t('senderNamePreview')}: {previewSenderName.output || '—'}</div>
-          <TemplateErrors errors={previewSenderName.errors} />
         </div>
 
         <div class={s.formGroup}>
@@ -166,7 +165,6 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
           />
           <div class={`${s.text12} ${s.textMuted}`}>{t('emailTaskSubjectTemplateHint')}</div>
           <div class={`${s.text12} ${s.textMuted}`}>{t('emailSubjectPreview')}: {previewSubject.output}</div>
-          <TemplateErrors errors={previewSubject.errors} />
         </div>
 
         <div class={s.formGroup}>
@@ -214,16 +212,6 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
           </select>
         </div>
 
-        <EmailTaskIcsSettings editor={editor} />
-
-        <div class={s.formGroup}>
-          <label class={s.label}>{t('emailTaskAttachments')}</label>
-          <div class={s.flexGapSm}>
-            <Button variant="secondary" onClick={() => setShowAttachmentDialog(true)}>{t('emailTaskAttachmentDialogOpen')}</Button>
-            <span class={`${s.text12} ${s.textMuted}`}>{attachmentSummary}</span>
-          </div>
-        </div>
-
         <div class={s.formGroup}>
           <label class={s.label}>{t('notes')}</label>
           <textarea
@@ -232,6 +220,16 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
             value={notes}
             onInput={(e) => { form.setFieldValue('notes', (e.target as HTMLTextAreaElement).value); }}
           />
+        </div>
+
+        <EmailTaskIcsSettings editor={editor} />
+
+        <div class={s.formGroup}>
+          <label class={s.label}>{t('emailTaskAttachments')}</label>
+          <div class={s.flexGapSm}>
+            <Button variant="secondary" onClick={() => setShowAttachmentDialog(true)}>{t('emailTaskAttachmentDialogOpen')}</Button>
+            <span class={`${s.text12} ${s.textMuted}`}>{attachmentSummary}</span>
+          </div>
         </div>
 
         <div class={s.formGroup}>
@@ -250,7 +248,6 @@ export function EmailTaskEditor(props: EmailTaskEditorProps) {
         <div class={s.formGroup}>
           <label class={s.label}>{t('emailTemplatePreview')}</label>
           <EmailPreviewContent html={previewResult.html} />
-          <TemplateErrors errors={previewResult.errors} />
         </div>
 
         <div class={s.flexGapSm}>

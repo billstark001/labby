@@ -409,9 +409,9 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
     setShowVarDialog(true);
   }
 
-  function openIcsPreview(): void {
+  const icsPreviewResult = useMemo(() => {
     if (!latestScheduleForConfig) {
-      setIcsPreview({ text: '', error: t('emailTaskIcsPreviewNoSchedule') });
+      return { text: '', error: '' };
     } else {
       try {
         const personMap = new Map(persons.map((person) => [person.id, person]));
@@ -431,16 +431,21 @@ export function useEmailTaskEditor({ taskId, task, configs, persons, schedules, 
             ...injectedScheduleVariables,
           },
         });
-        setIcsPreview({ text, error: '' });
+        return { text, error: '' };
       } catch (error) {
-        setIcsPreview({ text: '', error: error instanceof Error ? error.message : String(error) });
+        return { text: '', error: error instanceof Error ? error.message : String(error) };
       }
     }
+  }, [latestScheduleForConfig, persons, selectedConfig, injectionLanguage, icsLinkMode, icsContentTemplate,
+    resolvedPreviewScheduleTimezone, selectedTaskId, configId, serveScheduleIcs, injectedScheduleVariables]);
+
+  function openIcsPreview(): void {
+    setIcsPreview(latestScheduleForConfig ? icsPreviewResult : { text: '', error: t('emailTaskIcsPreviewNoSchedule') });
     setShowIcsPreviewDialog(true);
   }
 
   return {
-    t, action, capability, currentTask, ready, selectedTaskId, form, values, isDirty,
+    t, action, capability, currentTask, ready, selectedTaskId, form, values, isDirty, icsPreviewResult,
     showPreviewDialog, setShowPreviewDialog, showIcsPreviewDialog, setShowIcsPreviewDialog, icsPreview,
     sendNowOpen, setSendNowOpen, sendRecipientsText, setSendRecipientsText, sendingNow, sendNowError, setSendNowError,
     showDaysDialog, setShowDaysDialog, showVarDialog, setShowVarDialog, varDialogSource,

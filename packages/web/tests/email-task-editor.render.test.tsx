@@ -4,6 +4,7 @@ import { act } from 'preact/test-utils';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { EmailTask, ScheduleConfig } from '@labby/core';
 import { useEmailTaskEditor, type EmailTaskEditorProps } from '../src/pages/email-task/useEmailTaskEditor';
+import { EmailTaskEditor } from '../src/pages/email-task/EmailTaskEditor';
 import { navigate, useRoute, useSyncRoute } from '../src/lib/router';
 import { i18n } from '../src/i18n';
 
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), delete: vi.fn(), c
 vi.mock('@/db', () => ({ useDatabase: () => ({ emailTasks: { get: mocks.get, put: mocks.put, delete: mocks.delete } }) }));
 vi.mock('@/components/ui/Dialog', async importOriginal => ({ ...await importOriginal<object>(), confirmDialog: mocks.confirm }));
 vi.mock('@/components/ui', async importOriginal => ({ ...await importOriginal<object>(), toast: { success: mocks.success, error: mocks.error } }));
+vi.mock('../src/pages/email-task/CodeMirrorEditor', () => ({ CodeMirrorEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <textarea value={value} onInput={event => onChange(event.currentTarget.value)} /> }));
 
 const config: ScheduleConfig = { id: 'cfg', daysOfWeek: [1], timeRange: ['09:00', '10:00'], timezone: 'Asia/Tokyo',
   startDate: '2026-01-01', endDate: '2099-12-31', presentersPerSession: 1, questionersPerPresenter: 0,
@@ -125,6 +127,17 @@ test('a new task saved while editing continues uses the same ID on the next save
   await act(async () => { await editor.saveTask(); });
   expect(mocks.put.mock.calls[1][0].id).toBe(id);
   expect(window.location.hash).toBe(`#/email-tasks/edit/${id}`);
+});
+
+test('render errors appear above the fields, and notes precede ICS settings', async () => {
+  props = { ...props, task: { ...task, templateText: '{{ missing }}' } };
+  await act(() => render(<EmailTaskEditor {...props} />, container));
+  const alert = container.querySelector('[role="alert"]')!;
+  expect(alert.textContent).toContain('Template rendering failed');
+  expect(alert.compareDocumentPosition(container.querySelector('input')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(container.querySelector('select[value="cfg"]')).toBeNull();
+  const text = container.textContent!;
+  expect(text.indexOf(i18n.t('notes'))).toBeLessThan(text.indexOf(i18n.t('emailTaskServeScheduleIcs')));
 });
 
 test('a new task keeps one ID across an uncertain save failure and retry', async () => {

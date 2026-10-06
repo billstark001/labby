@@ -2458,6 +2458,16 @@ manualEditVersionNote:
   zh-CN: '手动调整排班 · 共 {0} 次组会'
   ja-JP: '手動編集 · 全 {0} 回'
 
+emailTemplateWarningTitle:
+  en: Template rendering failed
+  zh-CN: 模板渲染异常
+  ja-JP: テンプレートの描画に失敗しました
+
+emailTemplateWarningBody:
+  en: Some template expressions could not be evaluated. The preview may be incomplete and sending may fail. Review the errors below and use the variable reference to update the template.
+  zh-CN: 部分模板表达式无法求值，预览可能不完整，发送也可能失败。请检查以下错误，并参照变量说明修正模板。
+  ja-JP: 一部の式を評価できませんでした。プレビューが不完全になり、送信に失敗する可能性があります。以下のエラーと変数一覧を確認してください。
+
 emailTaskSaved:
   en: Email task saved
   zh-CN: 邮件任务已保存
