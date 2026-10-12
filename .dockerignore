@@ -14,6 +14,7 @@ run/
 *.db-wal
 
 # Environment files (including provider overrides and nested package files)
+.env-lane-cache/
 .env
 .env.*
 **/.env

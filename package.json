@@ -37,15 +37,15 @@
     "railway:plan": "node scripts/railway-config.mjs plan",
     "railway:apply": "node scripts/railway-config.mjs apply",
     "railway:cron": "node packages/server/dist/cron/railway-dispatch.js",
-    "env:sort": "node scripts/sort-env.mjs",
-    "env:sort:check": "node scripts/sort-env.mjs --check",
+    "env:sort": "env-lane sort",
+    "env:sort:check": "env-lane sort --check",
     "typecheck": "pnpm --filter @labby/db... build && pnpm -r typecheck",
     "test": "pnpm --filter @labby/db... build && pnpm -r test",
     "lint": "pnpm -r --if-present lint"
   },
   "devDependencies": {
-    "@env-lane/core": "^0.5.0",
-    "env-lane": "^0.5.0",
+    "@env-lane/core": "^0.5.2",
+    "env-lane": "^0.5.2",
     "typescript": "^7.0.2"
   }
 }

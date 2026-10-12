@@ -33,8 +33,8 @@ assignments. Other web variables should use Vite's conventional filenames shown 
 
 ## env-lane configuration
 
-The checked-in `env-lane.config.json5` is shared by the native env-lane v0.5.0 CLI and the
-`@env-lane/core` API used by deployment and sorting scripts. It requires no JS/TS config compiler.
+The checked-in `env-lane.config.json5` is shared by the native env-lane v0.5.2 CLI and the
+`@env-lane/core` API used by deployment scripts. It requires no JS/TS config compiler.
 `pnpm-workspace.yaml` allows the `env-lane` install script to select the native CLI for the
 installation platform; keep install scripts enabled when installing dependencies.
 
@@ -59,9 +59,12 @@ paths because its attached identity and secret mounts follow a separate deployme
 
 ## Sorting
 
-Templates define the intended key and comment order. Sorting preserves values and comments; keys
+Templates define the intended key and comment order. Sorting preserves local values and notes; keys
 not present in a template are appended under an unlisted-variable section where configured.
 Missing private env files are skipped and are never created by sorting.
+The native CLI stores template ancestry in `.env-lane-cache`; subsequent template changes update
+untouched defaults and comments while preserving local edits. `--check` never writes files or state
+and exits nonzero for drift or unresolved conflicts.
 
 ```sh
 # Rewrite every existing configured env file.
@@ -73,11 +76,12 @@ pnpm env:sort:check
 # Limit either operation to one target.
 pnpm env:sort server
 pnpm env:sort railway-production
+pnpm env:sort:check railway-production
 ```
 
 Configured targets are `server`, `server-local`, `railway-production`, `railway-cron-production`,
-and `cloudrun-production`. Every target is rooted in `packages/server`. Sorting changes layout only; it does not alter
-which files a command loads or their precedence. The repository wrapper deliberately selects each
-target's explicitly configured file; raw `env-lane sort TARGET` also infers every selector build and
-would reuse that target's template for those inferred files, which is not appropriate when provider
-files have different templates.
+and `cloudrun-production`. Every target is rooted in `packages/server`. `env:sort` and
+`env:sort:check` call the native CLI directly. Shared `sort.default.targets` and
+`sort.default.suffixes: ['default']` constrain batch sorting to each target's explicit file and
+template, without inferring extra files from selector builds. Unknown targets or suffixes fail
+before writing. Sorting does not alter which files a command loads or their precedence.

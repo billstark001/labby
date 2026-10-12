@@ -171,11 +171,11 @@ importers:
   .:
     devDependencies:
       '@env-lane/core':
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.5.2
+        version: 0.5.2
       env-lane:
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.5.2
+        version: 0.5.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -270,8 +270,8 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
       env-lane:
-        specifier: ^0.5.0
-        version: 0.5.0
+        specifier: ^0.5.2
+        version: 0.5.2
       tsx:
         specifier: ^4.23.13
         version: 4.23.13
@@ -560,56 +560,56 @@ packages:
   '@emotion/hash@0.9.2':
     resolution: {integrity: sha512-MyqliTZGuOm3+5ZRSaaBGP3USLw6+EGykkwZns2EPC5g8jJ4z9OrdZY9apkl3+UP9+sdz76YYkwCKP5gh8iY3g==}
 
-  '@env-lane/core@0.5.0':
-    resolution: {integrity: sha512-VreWMAmO27y4z3eJyZRxTqfX8K/YXnx7lKDkxOKQmA4kpMhsexcGMp7G3cqFbdqN1GQ8BHd5zQKEsRlSlTyhgg==}
+  '@env-lane/core@0.5.2':
+    resolution: {integrity: sha512-mKfMrGhtpqMMWByU5g24h+sDoN1TCbvJGJpjJ8A33gnim8lyFvAwPA7L/jRv8D0eXnnCeBj042ZBbfgJ2rofBw==}
     engines: {node: '>=22'}
 
-  '@env-lane/native-darwin-arm64@0.5.0':
-    resolution: {integrity: sha512-y9C6s4YFylF/scp++elkiy7Fo4PEY6mDD0PUQ8nojsTAjZTWPQnKnvYVKPhHa3hD1ynU7EhyXgAOfy1IQQnzkQ==}
+  '@env-lane/native-darwin-arm64@0.5.2':
+    resolution: {integrity: sha512-HdFtyQrSJDk1VteOe9wb11UihVBZRt1J8WiO8Hl1x55Oic5gKkiKTLDKCvnePG8zcq6KycsW3h5vL/n1Dx6wkQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@env-lane/native-darwin-x64@0.5.0':
-    resolution: {integrity: sha512-lXhn2YII3GQqwHwsEK0Tl744kAn0SyKNqTrFRhIDNXtu269aeCeoDaRAAFDVuQqrFCqKsPF9zM6TVO4PkVue3g==}
+  '@env-lane/native-darwin-x64@0.5.2':
+    resolution: {integrity: sha512-E8tDVHVOn8SpJUMOci/Ln+3aHJaxt/c1XNv4flk26qQ8ebEFDRRL1jZczk2kH9AoodXs3MapjBCr48ok8tgCCg==}
     cpu: [x64]
     os: [darwin]
 
-  '@env-lane/native-linux-arm64-gnu@0.5.0':
-    resolution: {integrity: sha512-Wn+ZPLJkUkn51fogSDVu+ONtotxj3STIsizPgr306d0uC1sRovL+CjY+WwInGg04DyJtWeW8mnNcwISViEjQ8w==}
+  '@env-lane/native-linux-arm64-gnu@0.5.2':
+    resolution: {integrity: sha512-F1I0djs9TSZ85O4tJshfSioyvA3ADp+7pvJRXxANCe8kkzzwzJ6aDRzjEbrKhFOuzjNBtBJLvWUvAIUNOGMCaQ==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@env-lane/native-linux-arm64-musl@0.5.0':
-    resolution: {integrity: sha512-zpMQ3adZCe0TQ6oRVi8Z8BR968p49BDqWnv2RiTgg+yH77WSI69oXCKqu8KHXmHrbFPBvgwLrO/QGsOLuzf/nw==}
+  '@env-lane/native-linux-arm64-musl@0.5.2':
+    resolution: {integrity: sha512-nftFKFIvvHGeENsI+wQfUpk0b0tGs9LDGNoKeGGP6+t0v+iJoe7/guAhRHSOUKiMsDYUDrsNti7Xiq9puokCzg==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@env-lane/native-linux-x64-gnu@0.5.0':
-    resolution: {integrity: sha512-oqVlsw9sYXj7LbF4w2rExEhZb3a2b6RVO+9+Ki/HvUClNdpitlDpWFmSCP4go/c2seuDKr1Yx3SfC1SvcyfVWQ==}
+  '@env-lane/native-linux-x64-gnu@0.5.2':
+    resolution: {integrity: sha512-WZ66vDhUBfrKDzAXfFkLqOEfZ8GLggjSjYxSGAIRAxalchab9onojZPcqSohHErKcO41rn3+BEmFgz/W6n+7Gw==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@env-lane/native-linux-x64-musl@0.5.0':
-    resolution: {integrity: sha512-jwdTN0yV7zYiHMkMPhw7DuahW4j0hQ/oYrAtPYYE6dxSJTAMrwF9qS0dKSZ3XV/b5Hkn8qqdBGZrUHbcPOMeRA==}
+  '@env-lane/native-linux-x64-musl@0.5.2':
+    resolution: {integrity: sha512-WFJ3QRYJEizpGNmIw4t/+r8s5HL5/UNuvb1tx7lITmEbt7gKzzm5tZ5+JD5p3nkHSo3lG7zDXlw5mQvKoDtYGg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@env-lane/native-win32-arm64-msvc@0.5.0':
-    resolution: {integrity: sha512-32dEoYWBH7VSIwmZ3acX9zgIFljqZxD4POOlqI5IGcR8vSMVrVK18k57KTRB02jfj4J0cYPwSS5vMZn1hU0O+Q==}
+  '@env-lane/native-win32-arm64-msvc@0.5.2':
+    resolution: {integrity: sha512-3o+9uJro7voxuGlQV8DsZe4lEVYlyxSwneD0WHl1ElxKFze9OIuzsVNsdSdh6CAXUbV3AL0GKvh6jgzjd4OLOw==}
     cpu: [arm64]
     os: [win32]
 
-  '@env-lane/native-win32-x64-msvc@0.5.0':
-    resolution: {integrity: sha512-2VJTkcqgVvNnD7hFMmP57mtj6qeaOQLT2L1izqK29a4QFldbJuTBIy9bSOjZy6MS6Sse5KTPRu0oxgXyVNyD4g==}
+  '@env-lane/native-win32-x64-msvc@0.5.2':
+    resolution: {integrity: sha512-IshlDdtOlmeFVwEilXtdnU6vwOM/0pw9ZMJ1WlQg+2S48AQ4f46nX0nlERycLTSHfqMkgcdS9QjEIjLQUvv1Gg==}
     cpu: [x64]
     os: [win32]
 
-  '@env-lane/native@0.5.0':
-    resolution: {integrity: sha512-r5iSmOBylNhzOxpdJlzRStqMtqmz6qOjSxBmXTNrbf2K9VaaXhUH3vGxQpK8HyjUONYHx3fSzPgkfMaC5cROUg==}
+  '@env-lane/native@0.5.2':
+    resolution: {integrity: sha512-b5wj4qbk4pa56s5dFgplZSfkYlPdRKmPxisPlyOakkf7L6tfqr2JGt8OfwwjGPXpORGiqa+DRzMoP7QyjOdmsQ==}
     engines: {node: '>=22'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2310,8 +2310,8 @@ packages:
     resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
     engines: {node: '>=0.12'}
 
-  env-lane@0.5.0:
-    resolution: {integrity: sha512-QD9Ejqx04DyIigPTFH5xf63myRUwDX9UdVdKCFw/HdwB+p6Y1v9IRIAfHj3fBiMfxdkEsFYho/cXUn2JLHr2UQ==}
+  env-lane@0.5.2:
+    resolution: {integrity: sha512-C0cPK7dNdGEZO357OaInPR1xzby+IWpGA4aVN04mzOq9MmiWcuFeevK0lqYthoD3zhEPS0DzzKliEvaT79290A==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -3529,48 +3529,48 @@ snapshots:
 
   '@emotion/hash@0.9.2': {}
 
-  '@env-lane/core@0.5.0':
+  '@env-lane/core@0.5.2':
     dependencies:
-      '@env-lane/native': 0.5.0
+      '@env-lane/native': 0.5.2
       c12: 3.3.4
       cross-spawn: 7.0.6
     transitivePeerDependencies:
       - magicast
 
-  '@env-lane/native-darwin-arm64@0.5.0':
+  '@env-lane/native-darwin-arm64@0.5.2':
     optional: true
 
-  '@env-lane/native-darwin-x64@0.5.0':
+  '@env-lane/native-darwin-x64@0.5.2':
     optional: true
 
-  '@env-lane/native-linux-arm64-gnu@0.5.0':
+  '@env-lane/native-linux-arm64-gnu@0.5.2':
     optional: true
 
-  '@env-lane/native-linux-arm64-musl@0.5.0':
+  '@env-lane/native-linux-arm64-musl@0.5.2':
     optional: true
 
-  '@env-lane/native-linux-x64-gnu@0.5.0':
+  '@env-lane/native-linux-x64-gnu@0.5.2':
     optional: true
 
-  '@env-lane/native-linux-x64-musl@0.5.0':
+  '@env-lane/native-linux-x64-musl@0.5.2':
     optional: true
 
-  '@env-lane/native-win32-arm64-msvc@0.5.0':
+  '@env-lane/native-win32-arm64-msvc@0.5.2':
     optional: true
 
-  '@env-lane/native-win32-x64-msvc@0.5.0':
+  '@env-lane/native-win32-x64-msvc@0.5.2':
     optional: true
 
-  '@env-lane/native@0.5.0':
+  '@env-lane/native@0.5.2':
     optionalDependencies:
-      '@env-lane/native-darwin-arm64': 0.5.0
-      '@env-lane/native-darwin-x64': 0.5.0
-      '@env-lane/native-linux-arm64-gnu': 0.5.0
-      '@env-lane/native-linux-arm64-musl': 0.5.0
-      '@env-lane/native-linux-x64-gnu': 0.5.0
-      '@env-lane/native-linux-x64-musl': 0.5.0
-      '@env-lane/native-win32-arm64-msvc': 0.5.0
-      '@env-lane/native-win32-x64-msvc': 0.5.0
+      '@env-lane/native-darwin-arm64': 0.5.2
+      '@env-lane/native-darwin-x64': 0.5.2
+      '@env-lane/native-linux-arm64-gnu': 0.5.2
+      '@env-lane/native-linux-arm64-musl': 0.5.2
+      '@env-lane/native-linux-x64-gnu': 0.5.2
+      '@env-lane/native-linux-x64-musl': 0.5.2
+      '@env-lane/native-win32-arm64-msvc': 0.5.2
+      '@env-lane/native-win32-x64-msvc': 0.5.2
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
@@ -4962,10 +4962,10 @@ snapshots:
 
   entities@7.0.1: {}
 
-  env-lane@0.5.0:
+  env-lane@0.5.2:
     dependencies:
-      '@env-lane/core': 0.5.0
-      '@env-lane/native': 0.5.0
+      '@env-lane/core': 0.5.2
+      '@env-lane/native': 0.5.2
     transitivePeerDependencies:
       - magicast
 
